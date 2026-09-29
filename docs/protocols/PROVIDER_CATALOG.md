@@ -50,7 +50,7 @@ Gemini 的公开限流值可能随项目层级变化，不写进目录。实际 
 ## 软件更新与自动发版
 
 “关于 → 检查更新”已接入 Tauri Updater。端点是
-`https://github.com/w23x0/VoxBridge/releases/latest/download/latest.json`，
+`https://github.com/w23x0/Vox/releases/latest/download/latest.json`，
 公钥配置在 `app/src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey`。
 
 发版是全自动的：推 `v*` tag 触发 `.github/workflows/release.yml`，

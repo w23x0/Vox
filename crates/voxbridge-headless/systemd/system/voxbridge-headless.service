@@ -21,7 +21,7 @@
 [Unit]
 Description=VoxBridge 无屏档（实时语音翻译）
 # 指仓库里那份 README（同一个文件也在发布包的根目录里）。
-Documentation=https://github.com/w23x0/VoxBridge/blob/master/crates/voxbridge-headless/README.md
+Documentation=https://github.com/w23x0/Vox/blob/master/crates/voxbridge-headless/README.md
 # 不要写 `After=pipewire.service`：PipeWire 是**用户**服务，在 system 管理器里不存在这个名字。
 # **`default.target` 是错的**（用户单元那份才有意义）：系统管理器里它不是一个能等的东西，
 # 照抄过来等于写了个没用的依赖。这一档要等的是网络——两条腿的云端都在网上

@@ -8,7 +8,7 @@
 > - 后端：新增 `app/src-tauri/src/catalog_updater.rs`；`commands.rs` 加三个命令（`read_catalog_override` / `check_catalog_update` / `apply_catalog_update`）；`Cargo.toml` 加 `reqwest`（复用 rustls-ring 栈）。
 > - 前端：`catalog.ts` 改为 runtime 可替换 registry（`ensureCatalogLoaded` 启动载覆盖版，`reload_catalog` 应用后刷新）；`About.tsx` 加「模型目录」检查/应用区；`api.ts` / `mock/backend.ts` 接线。
 > - **未改 CSP**：本方案用 `reqwest` 在 **Rust 进程内**拉取（报告第 4 步的 "CSP 放行" 只适用于 `tauri-plugin-http` 那条 '或' 选项），故无需放行 `connect-src`。
-> - 分支定 `main`（远程 `w23x0/VoxBridge`）。
+> - 分支定 `main`（远程 `w23x0/Vox`）。
 
 ---
 

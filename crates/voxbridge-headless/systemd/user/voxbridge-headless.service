@@ -10,7 +10,7 @@
 [Unit]
 Description=VoxBridge 无屏档（实时语音翻译）
 # 指仓库里那份 README（同一个文件也在发布包的根目录里）。
-Documentation=https://github.com/w23x0/VoxBridge/blob/master/crates/voxbridge-headless/README.md
+Documentation=https://github.com/w23x0/Vox/blob/master/crates/voxbridge-headless/README.md
 # PipeWire 是**用户**服务，但它不在这条依赖链上：不要写 `After=pipewire.service`
 # （socket 激活、按需拉起；写了反而可能因为对方没起来而卡住我们）。
 # 起来之后自己探（`vox_audio_linux::pipewire_available()`），探不到只记一条启动提示。

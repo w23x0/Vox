@@ -12,7 +12,7 @@ use serde::Deserialize;
 use std::path::PathBuf;
 
 /// 线上仓库。owner/repo 固定（后端写死，不接受前端传），只有分支会变。
-const RAW_BASE: &str = "https://raw.githubusercontent.com/w23x0/VoxBridge/main/catalog";
+const RAW_BASE: &str = "https://raw.githubusercontent.com/w23x0/Vox/main/catalog";
 
 /// 装了更新后，前端点名要的文件长这样（只校验最关键的两个字段，
 /// 完整结构由前端解析时再校验；这里给到 Rust 侧能确信的底线）。
