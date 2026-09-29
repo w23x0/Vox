@@ -6,13 +6,13 @@
 还是最小化"（`docs/platform/LINUX.md` §9.7）：
 
 ```bash
-./target/debug/voxbridge &
-wid=$(xwininfo -root -tree | grep '"VoxBridge"' | awk '{print $1}')
+./target/debug/vox &
+wid=$(xwininfo -root -tree | grep '"Vox"' | awk '{print $1}')
 python3 tools/linux-verify/send_close.py "$wid"
 xprop -id "$wid" WM_STATE      # Withdrawn = 收进托盘；Iconic = 最小化
 ```
 
-注意 `grep '"VoxBridge"'` 会同时匹配悬浮字幕窗（标题是 `VoxBridge 字幕`）——那个窗
+注意 `grep '"Vox"'` 会同时匹配悬浮字幕窗（标题是 `Vox 字幕`）——那个窗
 关掉不影响进程，要验主窗就按 `960x640` 的尺寸挑。
 """
 import ctypes

@@ -88,12 +88,12 @@ async function waitClosed(port, tries = 20) {
 console.log("[1] 端口被占：起服务前就该失败");
 {
   const squatter = await serveFiles(join(UI_DIR, "dist"));
-  process.env.VOXBRIDGE_PREVIEW_PORT = String(squatter.port);
+  process.env.VOX_PREVIEW_PORT = String(squatter.port);
   const message = await mustFail(async () => {
     const preview = await startPreview("check:preview(占端口)");
     preview.stop(); // 走到这儿说明它"将就用"了陌生服务——正是要防的假绿。
   });
-  delete process.env.VOXBRIDGE_PREVIEW_PORT;
+  delete process.env.VOX_PREVIEW_PORT;
   await squatter.close();
   check(
     message !== null && message.includes(String(squatter.port)),
@@ -103,7 +103,7 @@ console.log("[1] 端口被占：起服务前就该失败");
 
 console.log("[2] 产物不是我们的：同一性自检要认出旧构建");
 {
-  const stale = mkdtempSync(join(tmpdir(), "voxbridge-stale-dist-"));
+  const stale = mkdtempSync(join(tmpdir(), "vox-stale-dist-"));
   cpSync(join(UI_DIR, "dist"), stale, { recursive: true });
   // "旧构建"长这样：入口脚本还是那个名字，内容已经不一样了（vite 的产物名带内容哈希，
   // 所以真实的旧构建连名字都不一样；这里把名字故意留着，好让比对那一行真正被执行到）。

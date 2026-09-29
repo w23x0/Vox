@@ -39,7 +39,7 @@ use vox_core::ports::{PortError, PortResult, SubtitleFrame, SubtitleView};
 use vox_core::settings::SubtitleSettings;
 
 /// 窗口类名。带 crate 前缀，避免跟宿主进程里别的窗口类撞。
-const WINDOW_CLASS: &str = "VoxBridgeSubtitleOverlay";
+const WINDOW_CLASS: &str = "VoxSubtitleOverlay";
 
 /// 悬浮窗把手。
 pub struct Overlay {

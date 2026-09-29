@@ -4,7 +4,7 @@
 //! 不需要管理员权限、不会在系统里留下驱动。做法就是在 PipeWire 图里建一个
 //! `Audio/Sink` 节点（`support.null-audio-sink` 适配器），然后把译文播进它；
 //! 它自带 monitor 端口，别的程序（VRChat / Discord / OBS）在录音设备里选
-//! 「VoxBridge Virtual Mic」即可。
+//! 「Vox Virtual Mic」即可。
 //!
 //! 用户那一步跟 Windows 上选 VB-CABLE 是同一个动作，所以引导文案可以照搬。
 
@@ -17,12 +17,12 @@ use vox_core::ports::{PortError, PortResult};
 use crate::probe;
 
 /// 虚拟设备在系统里的稳定标识。用户在录音设置里看到的是 `description`。
-pub const NODE_NAME: &str = "voxbridge_virtual_mic";
+pub const NODE_NAME: &str = "vox_virtual_mic";
 /// 给人看的名字（会出现在 GNOME/KDE 的录音设备列表里）。
 ///
 /// 用英文跟图里其它设备保持一致（本机的 `GB206 High Definition Audio Controller
 /// Digital Stereo (HDMI)` 之类都是英文），Windows 上的 VB-CABLE 也是英文名。
-pub const DESCRIPTION: &str = "VoxBridge Virtual Mic";
+pub const DESCRIPTION: &str = "Vox Virtual Mic";
 
 /// 建好的虚拟 sink。
 ///
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn node_name_is_stable_and_namespaced() {
         // 这个名字是用户要在别的程序里找的，改了就是行为变更，别顺手改。
-        assert_eq!(NODE_NAME, "voxbridge_virtual_mic");
+        assert_eq!(NODE_NAME, "vox_virtual_mic");
         assert!(!DESCRIPTION.is_empty());
     }
 

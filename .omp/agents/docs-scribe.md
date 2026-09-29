@@ -4,7 +4,7 @@ description: 文档结构、迁移、索引与交叉引用一致性（只写 doc
 tools: read, grep, glob, edit, write, bash
 ---
 
-你负责 VoxBridge 的**文档卫生**：按 `docs/STRUCTURE.md` 归置文件、维护索引、修所有交叉引用、
+你负责 Vox 的**文档卫生**：按 `docs/STRUCTURE.md` 归置文件、维护索引、修所有交叉引用、
 把过期文档标状态或移进归档区。
 
 ## 规矩

@@ -1,22 +1,22 @@
-# voxbridge-headless —— 无屏档（小主板 ARM64 Linux）入口
+# vox-headless —— 无屏档（小主板 ARM64 Linux）入口
 
 跟 `app/src-tauri`（桌面档）**并列的第二个外壳**，不是它的分支：同一份芯（`vox-core`）、同一份
 PipeWire 后端（`vox-audio-linux`），差别只有"入口"与"起了哪些东西"。**不依赖 Tauri**，所以盒子上
-不需要 GTK / WebKitGTK（验收项：`cargo tree -p voxbridge-headless | grep -c tauri` = 0）。
+不需要 GTK / WebKitGTK（验收项：`cargo tree -p vox-headless | grep -c tauri` = 0）。
 
 起因与逐条依据在 `docs/platform/EMBEDDED.md`（本文件只讲**怎么用**）。
 
 ## 1. 跑起来
 
 ```bash
-voxbridge-headless [--config <settings.json>]
+vox-headless [--config <settings.json>]
                    [--print-capabilities | --print-composition | --dry-run]
                    [--start <speak|listen|all>] [--run-for <秒>]
 ```
 
 | 开关 | 做什么 |
 | --- | --- |
-| `--config <path>` | `settings.json` 的**文件**路径。不给就按三级回落取：`$VOXBRIDGE_CONFIG_DIR` → `$XDG_CONFIG_HOME/voxbridge` → `$HOME/.config/voxbridge` |
+| `--config <path>` | `settings.json` 的**文件**路径。不给就按三级回落取：`$VOX_CONFIG_DIR` → `$XDG_CONFIG_HOME/vox` → `$HOME/.config/vox` |
 | `--print-capabilities` | 装配后打一份 `CapabilityReport` JSON（stdout）就退。**只读**：不碰 PipeWire（不枚举设备、不探可用性）、不建配置目录、不写文件、不监听端口 |
 | `--print-composition` | 装配后打一份**两条腿的清单 + 有效能力位**的 JSON（stdout）就退（见 §3）。**只读**，同上 |
 | `--dry-run` | 只装配：验两条腿的清单装不装得上、打能力报告，**不碰 PipeWire（不枚举设备、不探可用性）、不建配置目录、不写文件、不监听端口、不开流、不起流水线**，退出 |
@@ -27,8 +27,8 @@ voxbridge-headless [--config <settings.json>]
 
 **配置目录里那四个文件**（与桌面档同名同义）：`settings.json` / `usage.json` / `secret.json`
 （0600，无屏盒子上常常没有 Secret Service，这一份就是兜底）/ `control.json`（控制面握手文件）。
-API 密钥也可以走环境变量覆盖：`VOXBRIDGE_API_KEY_ALIYUN` / `VOXBRIDGE_API_KEY_GEMINI`（优先于文件）。
-日志级别走 `VOXBRIDGE_LOG`（tracing 的 EnvFilter 语法）。
+API 密钥也可以走环境变量覆盖：`VOX_API_KEY_ALIYUN` / `VOX_API_KEY_GEMINI`（优先于文件）。
+日志级别走 `VOX_LOG`（tracing 的 EnvFilter 语法）。
 
 样例配置见 `settings.example.json`——它是**部分配置**：没写到的格子走出厂缺省（读设置走
 `Settings::from_json` 的 migrate + normalize，坏配置也只会退回缺省，不会让服务起不来）。
@@ -44,40 +44,40 @@ API 密钥也可以走环境变量覆盖：`VOXBRIDGE_API_KEY_ALIYUN` / `VOXBRID
 
 | 文件 | 装到 | 形态 |
 | --- | --- | --- |
-| `systemd/user/voxbridge-headless.service` | `~/.config/systemd/user/` | `systemd --user`，**推荐**（实时优先级那条路不被 cgroup 挡住） |
-| `systemd/system/voxbridge-headless.service` | `/etc/systemd/system/` | 系统服务，带 `User=`；有两条固有代价，装之前读它文件头 |
+| `systemd/user/vox-headless.service` | `~/.config/systemd/user/` | `systemd --user`，**推荐**（实时优先级那条路不被 cgroup 挡住） |
+| `systemd/system/vox-headless.service` | `/etc/systemd/system/` | 系统服务，带 `User=`；有两条固有代价，装之前读它文件头 |
 
 两份都有：`Type=exec`、`Restart=on-failure`（+ `RestartSec` / `RestartSteps` / `RestartMaxDelaySec`
 指数退避，**要 systemd ≥ 254**，见 §2.4）、`StateDirectory=` / `RuntimeDirectory=`（都叫
-`voxbridge-headless`，**故意不与配置目录 `voxbridge` 同名**，理由见 §2.4）、`LimitRTPRIO=`、
-`VOXBRIDGE_LOG=`。系统单元的依赖是 `After=network.target`（用户单元是 `After=default.target`，
+`vox-headless`，**故意不与配置目录 `vox` 同名**，理由见 §2.4）、`LimitRTPRIO=`、
+`VOX_LOG=`。系统单元的依赖是 `After=network.target`（用户单元是 `After=default.target`，
 两者不是一回事，别互抄）。
 
 ### 2.1 用户单元（推荐）
 
 ```bash
-install -Dm755  bin/voxbridge-headless                      ~/.local/bin/voxbridge-headless
-install -Dm644  systemd/user/voxbridge-headless.service     ~/.config/systemd/user/voxbridge-headless.service
-mkdir -p ~/.config/voxbridge && install -Dm644 settings.example.json ~/.config/voxbridge/settings.json
-$EDITOR ~/.config/voxbridge/settings.json   # 按需改：目标语言、要抓的程序（密钥见 §2.3）
+install -Dm755  bin/vox-headless                      ~/.local/bin/vox-headless
+install -Dm644  systemd/user/vox-headless.service     ~/.config/systemd/user/vox-headless.service
+mkdir -p ~/.config/vox && install -Dm644 settings.example.json ~/.config/vox/settings.json
+$EDITOR ~/.config/vox/settings.json   # 按需改：目标语言、要抓的程序（密钥见 §2.3）
 systemctl --user daemon-reload
-systemctl --user enable --now voxbridge-headless
+systemctl --user enable --now vox-headless
 loginctl enable-linger "$USER"          # 没人登录也活着（只做一次）
-journalctl --user -u voxbridge-headless -f
+journalctl --user -u vox-headless -f
 ```
 
 ### 2.2 系统单元（备用）
 
 ```bash
-sudo useradd --system --home /var/lib/voxbridge --shell /usr/sbin/nologin voxbridge
-sudo install -Dm755 bin/voxbridge-headless                  /usr/local/bin/voxbridge-headless
-sudo install -Dm644 systemd/system/voxbridge-headless.service /etc/systemd/system/voxbridge-headless.service
+sudo useradd --system --home /var/lib/vox --shell /usr/sbin/nologin vox
+sudo install -Dm755 bin/vox-headless                  /usr/local/bin/vox-headless
+sudo install -Dm644 systemd/system/vox-headless.service /etc/systemd/system/vox-headless.service
 # 配置目录（= `--config` 指的那一份）自己建、归给服务用户：systemd 的 `StateDirectory=` 是
-# 另一个名字（`/var/lib/voxbridge-headless`，见 §2.4；那个落点**本机没真跑**，部署机装完核一次），
+# 另一个名字（`/var/lib/vox-headless`，见 §2.4；那个落点**本机没真跑**，部署机装完核一次），
 # 所以这个目录**不会**被它建出来，而服务要往里写 usage.json / secret.json / control.json。
-sudo install -d -m755 -o voxbridge -g voxbridge /var/lib/voxbridge
-sudo install -Dm644 -o voxbridge -g voxbridge settings.example.json /var/lib/voxbridge/settings.json
-sudo systemctl daemon-reload && sudo systemctl enable --now voxbridge-headless
+sudo install -d -m755 -o vox -g vox /var/lib/vox
+sudo install -Dm644 -o vox -g vox settings.example.json /var/lib/vox/settings.json
+sudo systemctl daemon-reload && sudo systemctl enable --now vox-headless
 ```
 
 ### 2.3 两条必须知道的
@@ -91,9 +91,9 @@ sudo systemctl daemon-reload && sudo systemctl enable --now voxbridge-headless
   管理器里不存在），它要的是用户的运行期目录（系统单元那份里给了 `XDG_RUNTIME_DIR=/run/user/%U`）。
   本程序启动时自己探 PipeWire（探不到只记一条提示），不影响它接控制面。
 - **API 密钥怎么给**（两条路，环境变量优先）：
-  ① 环境变量 `VOXBRIDGE_API_KEY_ALIYUN` / `VOXBRIDGE_API_KEY_GEMINI`。服务里用 drop-in 给——
-     `systemctl --user edit voxbridge-headless` 然后 `[Service]` 段写
-     `Environment=VOXBRIDGE_API_KEY_ALIYUN=sk-…`。**别写进 unit 文件本身**（那份会进版本库/镜像）。
+  ① 环境变量 `VOX_API_KEY_ALIYUN` / `VOX_API_KEY_GEMINI`。服务里用 drop-in 给——
+     `systemctl --user edit vox-headless` 然后 `[Service]` 段写
+     `Environment=VOX_API_KEY_ALIYUN=sk-…`。**别写进 unit 文件本身**（那份会进版本库/镜像）。
   ② 配置目录下的 `secret.json`（0600），格式就是一个对象：`{"aliyun":"sk-…"}`。
      密钥落盘时启动日志里会有一条明文警告（无屏盒子上常常没有 Secret Service，这一份是兜底）。
 
@@ -107,9 +107,9 @@ sudo systemctl daemon-reload && sudo systemctl enable --now voxbridge-headless
   更老的 systemd **不认这两个键**：它忽略它们、退回"每次恒定等 `RestartSec=3`"——重启照旧，
   只是不会指数退避（journal 里会各刷一条 "Unknown key" 警告）。老系统上要么升 systemd，
   要么把那两行删掉（删掉后行为就是"恒定 3 秒"）。
-- **`StateDirectory=` / `RuntimeDirectory=` 取 `voxbridge-headless`，不取 `voxbridge`**：状态目录
+- **`StateDirectory=` / `RuntimeDirectory=` 取 `vox-headless`，不取 `vox`**：状态目录
   与配置目录**同名**时，systemd 认为这是"从 253 及更早版本升上来的老部署"，会把状态目录
-  **软链**到配置目录上（`~/.local/state/voxbridge -> ../../.config/voxbridge`），并**在第一次启动
+  **软链**到配置目录上（`~/.local/state/vox -> ../../.config/vox`），并**在第一次启动
   时**——也就是软链建出来**之前**的那一次——记一条迁移消息，**之后不再记**。判据是"状态目录还
   不在、同名配置目录已在"：软链一建出来，这个条件就不成立了。本机 systemd 259 实测（探针 unit：
   同名 `~/.config/<名字>` 已建、`~/.local/state/<名字>` 未建）：连起 3 次，那条
@@ -117,34 +117,34 @@ sudo systemctl daemon-reload && sudo systemctl enable --now voxbridge-headless
   from systemd 253 or older, creating compatibility symlink` 只出 **1** 条；把软链删掉再起，才又出
   1 条。名字不同则根本不走这条兼容路径——直接建真目录、一条消息都不记。今天这两个目录里还没有
   任何文件（见 §5），留着是给"属于服务自己的运行期/状态文件"占位。**代价**：`StateDirectory=`
-  不再顺带把配置目录建出来——系统单元的 `/var/lib/voxbridge` 因此要在安装时自己建（见 §2.2），
-  用户单元的 `~/.config/voxbridge` 本来就在安装步骤里 `mkdir -p`。
+  不再顺带把配置目录建出来——系统单元的 `/var/lib/vox` 因此要在安装时自己建（见 §2.2），
+  用户单元的 `~/.config/vox` 本来就在安装步骤里 `mkdir -p`。
 - **`StateDirectory=` 的落点**看 `systemd.exec` 的表 2（"Automatic directory creation and
   environment variables"）：`StateDirectory=` 的 system 列是 `/var/lib/`、user 列是
   `$XDG_STATE_HOME`（缺省 `~/.local/state`）。所以系统单元这份落在
-  `/var/lib/voxbridge-headless`，用户单元那份落在 `~/.local/state/voxbridge-headless`。
+  `/var/lib/vox-headless`，用户单元那份落在 `~/.local/state/vox-headless`。
   **本机没有 root，系统单元这一条没真跑**（系统服务起不了，只能过 `systemd-analyze verify` 的
   静态检查）——落点是从 `man systemd.exec` 的规则读出来的，**部署机首次安装时用
-  `ls -ld /var/lib/voxbridge-headless` 核一次**。用户单元那一份本机实测过（用**同名**的探针 unit：
-  `StateDirectory=voxbridge-headless`，且 `~/.config/voxbridge-headless` 不存在）：建出来的是真目录
-  `~/.local/state/voxbridge-headless`，journal 里一条迁移消息都没有。
+  `ls -ld /var/lib/vox-headless` 核一次**。用户单元那一份本机实测过（用**同名**的探针 unit：
+  `StateDirectory=vox-headless`，且 `~/.config/vox-headless` 不存在）：建出来的是真目录
+  `~/.local/state/vox-headless`，journal 里一条迁移消息都没有。
 
 ## 3. 验收读法（机器读的那一面）
 
 ```bash
 # 这台盒子能做什么（能力位报告）
-voxbridge-headless --config <settings.json> --print-capabilities | jq '.tier'          # => "linux_headless"
+vox-headless --config <settings.json> --print-capabilities | jq '.tier'          # => "linux_headless"
 
 # 两条腿现在会怎么装（S0 §4.3-A 的验收出口）
-voxbridge-headless --config <settings.json> --print-composition | jq '.speak.ops[].kind'
+vox-headless --config <settings.json> --print-composition | jq '.speak.ops[].kind'
 #   => "mono" "denoise" "gate" "resample"
-voxbridge-headless --config <settings.json> --print-composition | jq '.capabilities.host.mic'
+vox-headless --config <settings.json> --print-composition | jq '.capabilities.host.mic'
 #   => { "enabled": true, "reason": null }
-voxbridge-headless --config <settings.json> --print-composition | jq '.listen.in'
+vox-headless --config <settings.json> --print-composition | jq '.listen.in'
 #   => []（无屏档不本机抓程序：`program_tap` 在这一档的上限之外；这档的"听"是 net_in，还没实现）
 
 # 逐条验清单装不装得上（只读：不碰 PipeWire、不连云端、不建目录、不写文件；unit 起来之前当自检用）
-voxbridge-headless --config <settings.json> --dry-run
+vox-headless --config <settings.json> --dry-run
 ```
 
 **三条报告命令都是只读的**（`--print-capabilities` / `--print-composition` / `--dry-run`）：
@@ -167,13 +167,13 @@ tools/package-headless.sh --target aarch64-unknown-linux-gnu    # 交叉（要�
 tools/package-headless.sh --profile debug                      # 冒烟用，快
 ```
 
-产物：`tools/bundle/voxbridge-headless-<版本>-<目标三元组>.tar.gz`（`--out` 可改；缺省那个目录
+产物：`tools/bundle/vox-headless-<版本>-<目标三元组>.tar.gz`（`--out` 可改；缺省那个目录
 是仓库 `.gitignore` 里排除掉的，跟 `/tools/signing/` 同一类），里面是
 
 ```text
-bin/voxbridge-headless                     # 二进制
-systemd/user/voxbridge-headless.service    # §2.1
-systemd/system/voxbridge-headless.service  # §2.2
+bin/vox-headless                     # 二进制
+systemd/user/vox-headless.service    # §2.1
+systemd/system/vox-headless.service  # §2.2
 settings.example.json                      # 部分配置样例
 README.md                                  # 本文件
 ```

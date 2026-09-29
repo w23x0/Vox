@@ -20,7 +20,7 @@
 //! **跟桌面档的三处刻意差别**（都是有理由的，不是"还没写"）：
 //!
 //! 1. **不引入 Tauri**：无屏盒子上装不了也不需要 GTK/WebKitGTK。`cargo tree -p
-//!    voxbridge-headless | grep -c tauri` = 0 是验收项。
+//!    vox-headless | grep -c tauri` = 0 是验收项。
 //! 2. **不启动热键 / 托盘 / 悬浮字幕窗**：这三位在 `linux_headless` 档的 `host_ceiling`
 //!    之外（位恒 `false(unsupported)`），起了也没人看（§3.7）。
 //! 3. **不建虚拟麦节点**：无屏档的出口是网络/声卡，不给别的程序当麦克风；`virtual_mic`

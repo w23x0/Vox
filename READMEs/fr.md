@@ -1,4 +1,4 @@
-# VoxBridge
+# Vox
 
 Un traducteur vocal en temps réel pour bureau (**Windows** et **Linux**), conçu pour les conversations en direct. Deux pipelines indépendants tournent en parallèle :
 
@@ -42,7 +42,7 @@ npm run tauri:build      # produit l'installeur NSIS dans target/release/bundle/
 Ne livrez pas avec `cargo build --release` ; si vous assemblez le binaire à la main, passez la feature custom-protocol :
 
 ```powershell
-cargo build --release -p voxbridge --features custom-protocol
+cargo build --release -p vox --features custom-protocol
 ```
 
 ## Tester
@@ -55,7 +55,7 @@ npm run verify           # dans app/ui : type-check, build de prod, vérifs a11y
 ## Structure
 
 ```text
-VoxBridge/
+Vox/
 ├─ catalog/            # métadonnées des fournisseurs : aliyun.json, gemini.json, gpt.json
 ├─ crates/
 │  ├─ vox-core/        # cœur neutre vis-à-vis de la plateforme : settings, protocole, machine à états, usage
@@ -81,7 +81,7 @@ Les deux pipelines tournent indépendamment ; `vox-core::Runtime` est l'unique s
 
 ## Contribuer
 
-VoxBridge reste volontairement conservateur : le périmètre cœur est fixé. Les modules externes sont le point d'extension ouvert — voir **[`../CONTRIBUTING.md`](../CONTRIBUTING.md)** — y compris le module Discord hors-processus prévu (`docs/protocols/DISCORD_PROTOCOL.md`, phase 2, non décidé).
+Vox reste volontairement conservateur : le périmètre cœur est fixé. Les modules externes sont le point d'extension ouvert — voir **[`../CONTRIBUTING.md`](../CONTRIBUTING.md)** — y compris le module Discord hors-processus prévu (`docs/protocols/DISCORD_PROTOCOL.md`, phase 2, non décidé).
 
 ## Documentation
 

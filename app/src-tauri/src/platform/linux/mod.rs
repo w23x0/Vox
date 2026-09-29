@@ -299,7 +299,7 @@ mod tests {
     /// 真机快照（★1 收口）：四位在这台机器上到底报什么、凭的是什么。
     ///
     /// ```text
-    /// cargo test -p voxbridge -- --ignored the_four_star_bits --nocapture
+    /// cargo test -p vox -- --ignored the_four_star_bits --nocapture
     /// ```
     ///
     /// 三件事一起验：
@@ -393,7 +393,7 @@ mod tests {
     /// 注入账本后快照里那位开着 → 退出后系统里不留幽灵设备。
     ///
     /// ```text
-    /// cargo test -p voxbridge -- --ignored virtual_mic_is_wired --nocapture
+    /// cargo test -p vox -- --ignored virtual_mic_is_wired --nocapture
     /// ```
     #[test]
     #[ignore = "需要真机上跑着 PipeWire"]

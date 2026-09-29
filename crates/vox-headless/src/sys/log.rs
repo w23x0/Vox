@@ -4,7 +4,7 @@
 //! 两条跟桌面档的差别（都是无屏档的性质决定的）：
 //!
 //! - **默认更安静**：桌面档缺省 `vox_=debug`（有界面在跑，日志多也无所谓）；无屏设备常年
-//!   无人值守，缺省只打本 crate 的 `info`，其余一律 `warn`。要看细节就 `VOXBRIDGE_LOG=...`。
+//!   无人值守，缺省只打本 crate 的 `info`，其余一律 `warn`。要看细节就 `VOX_LOG=...`。
 //! - **不落文件**：跟桌面档同一条理由——日志里难免带上识别出来的原话，那是用户说的话，
 //!   不该在磁盘上再留一份（journal 是 systemd 的，看得到、也能配限额）。
 
@@ -12,11 +12,11 @@ use tracing_subscriber::EnvFilter;
 
 /// 缺省过滤器。只开本 crate 的 info：芯的 debug 太吵（每个音频块都可能打一行），
 /// 而"流水线阶段变了 / 连不上云端"这些真正要看的东西在本 crate 的 `status::wire` 里。
-const DEFAULT_FILTER: &str = "voxbridge_headless=info,warn";
+const DEFAULT_FILTER: &str = "vox_headless=info,warn";
 
 pub fn init() {
     let filter =
-        EnvFilter::try_from_env("VOXBRIDGE_LOG").unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER));
+        EnvFilter::try_from_env("VOX_LOG").unwrap_or_else(|_| EnvFilter::new(DEFAULT_FILTER));
     // 重复初始化不算错（测试里可能已经装过一个）。
     //
     // `with_writer(std::io::stderr)` 是**必须写的**：`fmt()` 的缺省落点是 **stdout**，

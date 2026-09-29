@@ -1,16 +1,16 @@
-# VoxBridge 无屏档（小主板 ARM64 Linux）的 systemd **用户**单元 —— 推荐形态。
+# Vox 无屏档（小主板 ARM64 Linux）的 systemd **用户**单元 —— 推荐形态。
 #
-# 装到 ~/.config/systemd/user/voxbridge-headless.service（步骤见
-# crates/voxbridge-headless/README.md §2）。挑用户单元的头号理由是**实时优先级**：
+# 装到 ~/.config/systemd/user/vox-headless.service（步骤见
+# crates/vox-headless/README.md §2）。挑用户单元的头号理由是**实时优先级**：
 # systemd 把每个 **system** 服务放进单独的 cpu cgroup，那个 cgroup 的 RT 预算缺省是 0，
 # 申请实时优先级直接 EPERM；用户单元不在那条路上
 # （<https://systemd.io/MY_SERVICE_CANT_GET_REALTIME/>）。
 # 没人登录也要活着 → 一次性执行 `loginctl enable-linger "$USER"`。
 
 [Unit]
-Description=VoxBridge 无屏档（实时语音翻译）
+Description=Vox 无屏档（实时语音翻译）
 # 指仓库里那份 README（同一个文件也在发布包的根目录里）。
-Documentation=https://github.com/w23x0/Vox/blob/master/crates/voxbridge-headless/README.md
+Documentation=https://github.com/w23x0/Vox/blob/main/crates/vox-headless/README.md
 # PipeWire 是**用户**服务，但它不在这条依赖链上：不要写 `After=pipewire.service`
 # （socket 激活、按需拉起；写了反而可能因为对方没起来而卡住我们）。
 # 起来之后自己探（`vox_audio_linux::pipewire_available()`），探不到只记一条启动提示。
@@ -23,7 +23,7 @@ Type=exec
 # 两条腿都开：`--start all`。没配好的那一条会在启动时**如实留在"没开"**并各记一条日志
 # （缺密钥 / 没选要抓的程序），不会假装在跑；只想开一条就改成 `--start speak`。
 # `%h` = 本用户的家目录；配置文件路径显式写出来（这份 unit 自己就是文档）。
-ExecStart=%h/.local/bin/voxbridge-headless --config %h/.config/voxbridge/settings.json --start all
+ExecStart=%h/.local/bin/vox-headless --config %h/.config/vox/settings.json --start all
 
 Restart=on-failure
 RestartSec=3
@@ -35,23 +35,23 @@ RestartMaxDelaySec=60
 
 # 两个目录交给 systemd 建（**别在 unit 里 mkdir**）：它按本用户建好、随服务起停清理。
 # 注意**配置不在这里**：settings.json / usage.json / secret.json / control.json 跟着
-# `--config` 走（`~/.config/voxbridge/`，也就是 §3 那些命令读的那一份）。这两个目录是给
+# `--config` 走（`~/.config/vox/`，也就是 §3 那些命令读的那一份）。这两个目录是给
 # "属于服务自己的运行期/状态文件"留的位置（今天还没有这类文件）。
 #
-# **名字是 `voxbridge-headless` 而不是 `voxbridge`**：`StateDirectory=` 与配置目录同名时，
+# **名字是 `vox-headless` 而不是 `vox`**：`StateDirectory=` 与配置目录同名时，
 # systemd 会认为这是从 253 及更早的版本升上来的老部署，把状态目录**软链**到配置目录
-# （`~/.local/state/voxbridge -> ../../.config/voxbridge`），并**在第一次启动时**——也就是软链
+# （`~/.local/state/vox -> ../../.config/vox`），并**在第一次启动时**——也就是软链
 # 建出来**之前**的那一次——记一条迁移消息，**之后不再记**（判据是"状态目录还不在、同名配置目录
 # 已在"；本机 systemd 259 实测：同一份 unit 连起 3 次只出 1 条）。名字不同就不会触发这条兼容路径。
-StateDirectory=voxbridge-headless
-RuntimeDirectory=voxbridge-headless
+StateDirectory=vox-headless
+RuntimeDirectory=vox-headless
 
 # 实时优先级的**上限**（RLIMIT_RTPRIO，<https://www.systemd.exec.html> 的 LimitRTPRIO=）。
 # PipeWire 的 module-rt 要它才能把音频线程提上去；拿不到也不会起不来，只是退化成普通调度。
 LimitRTPRIO=95
 
 # 无屏设备常年无人值守：缺省只打本 crate 的 info，其余 warn。要细节就改这一个变量。
-Environment=VOXBRIDGE_LOG=voxbridge_headless=info,warn
+Environment=VOX_LOG=vox_headless=info,warn
 # 这套服务不需要任何额外特权。
 NoNewPrivileges=true
 

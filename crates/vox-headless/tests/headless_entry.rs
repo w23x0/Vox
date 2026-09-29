@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-const BIN: &str = env!("CARGO_BIN_EXE_voxbridge-headless");
+const BIN: &str = env!("CARGO_BIN_EXE_vox-headless");
 
 /// 每个用例一个独立目录（用例并行跑，共用一个目录会互相踩）。
 fn temp_dir(name: &str) -> PathBuf {

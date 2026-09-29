@@ -91,7 +91,7 @@ export function createMockApi(): VoxApi {
   /** 端口是系统分配（`control.port === 0`）时，假后端"绑上"的那个号。 */
   const MOCK_BOUND_PORT = 47123;
   /** 握手文件路径：真后端是 `<app_config_dir>/control.json`，假后端给个同形状的。 */
-  const MOCK_STATE_FILE = "~/.config/VoxBridge/control.json";
+  const MOCK_STATE_FILE = "~/.config/Vox/control.json";
 
   const lanes: Record<PipelineName, Lane> = {
     speak: mkLane(SPEAK_SCRIPT, "speak"),

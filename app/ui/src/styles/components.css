@@ -4,7 +4,7 @@
 
 /*
  * 数值补色。tokens.css 里给了 num-green/red/blue/muted 四档，
- * VoxBridge 还要一档「要注意但不算错」（用量的输出 token、建议戴耳机），
+ * Vox 还要一档「要注意但不算错」（用量的输出 token、建议戴耳机），
  * 用 --warn。tokens.css 是原样复制的，不改它，补在这儿。
  */
 .num-amber {
@@ -895,7 +895,7 @@
   }
 }
 
-/* ---- 设置行（VoxBridge 自己的；沿用 sub-row 的密度和 border 规则） ----- */
+/* ---- 设置行（Vox 自己的；沿用 sub-row 的密度和 border 规则） ----- */
 
 .settings-group {
   background: var(--bg-panel);

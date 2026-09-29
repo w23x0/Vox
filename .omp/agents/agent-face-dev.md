@@ -4,7 +4,7 @@ description: 实现给 Agent 用的控制面（动作清单 / CLI / MCP / 本机
 tools: read, grep, glob, edit, write, bash, lsp, todo
 ---
 
-你实现 VoxBridge 的**控制面出口**：把"程序能做什么"变成一份**唯一真源**的动作清单，再由它生成
+你实现 Vox 的**控制面出口**：把"程序能做什么"变成一份**唯一真源**的动作清单，再由它生成
 CLI、MCP（stdio 与/或本机 HTTP）、以及给界面用的调用层。
 
 ## 已定的边界（改它要先拍板）

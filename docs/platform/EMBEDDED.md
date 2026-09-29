@@ -5,9 +5,9 @@
 > **本仓库还没有无屏外壳**（没有 headless 二进制，`app/src-tauri` 仍把 Tauri Builder 当应用本体），
 > 所以凡属"板上真会怎样"而没拿到一手实测的判断一律标 **[未核实]**（口径见 §7）。
 > **状态注（第十九轮文档同步，2026-09-22）：上面这句已过期，保留原文不改口** —— 无屏外壳本体已落地
-> （`crates/voxbridge-headless/`：`src/cli.rs` 的 `--print-composition`、`systemd/{user,system}/voxbridge-headless.service`
+> （`crates/vox-headless/`：`src/cli.rs` 的 `--print-composition`、`systemd/{user,system}/vox-headless.service`
 > 两份 unit、样例配置、`tools/package-headless.sh`；`docs/README.md` 的 platform 表已按"第十五轮进度"同步）。
-> 本文 §3.3 的表已按**实际落地的两份 unit**（`crates/voxbridge-headless/systemd/{user,system}/voxbridge-headless.service`）
+> 本文 §3.3 的表已按**实际落地的两份 unit**（`crates/vox-headless/systemd/{user,system}/vox-headless.service`）
 > **逐键拆成两块**：**只有「① 已落地」那张表是 unit 实文件里真有的键**，「② 设计建议」那一张
 > （`Type=notify` / `WatchdogSec=` / `SIGHUP` 重载）**两份 unit 里都没有**——别把整张表读成已落地；
 > 其余"[未核实]"口径（板上实测）不变。
@@ -98,7 +98,7 @@
 ### 3.3 进程与生命周期：一个 systemd unit
 
 字段照官方语义挑（<https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html>）。
-下面**分两张表**：**① 已落地**＝`crates/voxbridge-headless/systemd/{user,system}/voxbridge-headless.service`
+下面**分两张表**：**① 已落地**＝`crates/vox-headless/systemd/{user,system}/vox-headless.service`
 两份实文件里**真有的键**（逐键对得上）；**② 设计建议**＝本节当初挑字段时想过、但**两份 unit 还没写**的键。
 
 **① 已落地**（键与取值照两份 unit 原文；两档取值不同的地方已注明）
@@ -106,13 +106,13 @@
 | 字段（unit 原文） | 为什么这么选 |
 | --- | --- |
 | `Type=exec` | 长跑服务推荐：进程起不来会**真的报失败**（两档都取 `exec`） |
-| `ExecStart=… --config <path> --start all` | 配置路径**显式写出来**（用户档 `%h/.local/bin/voxbridge-headless --config %h/.config/voxbridge/settings.json`；系统档 `/usr/local/bin/voxbridge-headless --config /var/lib/voxbridge/settings.json`）；`--start all` 两条腿都开，没配好的那条留在"没开" |
+| `ExecStart=… --config <path> --start all` | 配置路径**显式写出来**（用户档 `%h/.local/bin/vox-headless --config %h/.config/vox/settings.json`；系统档 `/usr/local/bin/vox-headless --config /var/lib/vox/settings.json`）；`--start all` 两条腿都开，没配好的那条留在"没开" |
 | `Restart=on-failure` + `RestartSec=3` + `RestartSteps=5` + `RestartMaxDelaySec=60` | 指数退避（**落地取 5 步、封顶 60 s**；当初的建议区间是 3–5 步）。**要 systemd ≥ 254**：更老的版本不认后两个键、会忽略它们并退回恒定 `RestartSec=3`（重启照旧，只是不退避） |
-| `StateDirectory=` / `RuntimeDirectory=` | **状态目录**（属于服务自己的运行期/状态文件）—— 让 systemd 建目录 + 挂依赖，**别自己在 unit 里 `mkdir`**（<https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html>）。**本档的配置不由它承载**：配置路径走 `ExecStart=` 的 `--config <path>`（两份 unit 见 `crates/voxbridge-headless/systemd/{user,system}/voxbridge-headless.service`），所以这两个目录取 `voxbridge-headless`、**故意不与配置目录 `voxbridge` 同名** |
+| `StateDirectory=` / `RuntimeDirectory=` | **状态目录**（属于服务自己的运行期/状态文件）—— 让 systemd 建目录 + 挂依赖，**别自己在 unit 里 `mkdir`**（<https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html>）。**本档的配置不由它承载**：配置路径走 `ExecStart=` 的 `--config <path>`（两份 unit 见 `crates/vox-headless/systemd/{user,system}/vox-headless.service`），所以这两个目录取 `vox-headless`、**故意不与配置目录 `vox` 同名** |
 | `LimitRTPRIO=95`（两档同值） | `RLIMIT_RTPRIO` 的**上限**（`systemd.exec` 的 `LimitRTPRIO=`）—— PipeWire 的 `module-rt` 靠它把音频线程提上去；拿不到不会起不来，只是退化成普通调度。**§3.4 表里那句"具体字段名 S3 落地时按该页确认"指的就是它**：两份 unit 已写 `LimitRTPRIO=95`（§3.4 原文按"先标注不改写"留待下轮） |
-| `Environment=VOXBRIDGE_LOG=voxbridge_headless=info,warn`（两档同值） | 无人值守：只打本 crate 的 info、其余 warn；要细节改这一个变量 |
+| `Environment=VOX_LOG=vox_headless=info,warn`（两档同值） | 无人值守：只打本 crate 的 info、其余 warn；要细节改这一个变量 |
 | `NoNewPrivileges=true`（两档同值） | 这套服务不需要任何额外特权 |
-| `User=` / `Group=`（**仅系统档**，都取 `voxbridge`） | 系统档的专用服务用户；用户档不写（就是装它的那个用户） |
+| `User=` / `Group=`（**仅系统档**，都取 `vox`） | 系统档的专用服务用户；用户档不写（就是装它的那个用户） |
 | `Environment=XDG_RUNTIME_DIR=/run/user/%U`（**仅系统档**） | 系统档要自己把 PipeWire 的 socket 目录（用户运行期目录）指过去；`%U` = `User=` 那个用户的 UID |
 
 两份 unit 的 `[Service]` 段**只有上表这些键**；两档不同的 `After=` 与 `[Install]` 的 `WantedBy=` 见下面那段
@@ -136,7 +136,7 @@
 <https://www.freedesktop.org/software/systemd/man/latest/loginctl.html>）。
 
 Unit 里 **`After=pipewire.service` 不要写**（PipeWire 是**用户**服务）；`After=` 这一行**两档分开写、别互抄**
-（落地的两份 unit 见 `crates/voxbridge-headless/systemd/{user,system}/voxbridge-headless.service`）：
+（落地的两份 unit 见 `crates/vox-headless/systemd/{user,system}/vox-headless.service`）：
 
 - **用户单元**：`After=default.target` —— systemd **用户**单元的标准写法（`[Install]` 的 `WantedBy=default.target` 同款）；
 - **系统单元**：`After=network.target` —— **`default.target` 在系统管理器里不是一个"能等"的东西**，
@@ -164,14 +164,14 @@ Unit 里 **`After=pipewire.service` 不要写**（PipeWire 是**用户**服务�
 **① 配置从哪进**
 
 现状是 `app/src-tauri/src/persist.rs`：`settings.json` / `usage.json` 落在 `app_config_dir`
-（`app/src-tauri/src/lib.rs` 的 `assemble()` 用 `app.path().app_config_dir()` 取，identifier `com.voxbridge.app`），
+（`app/src-tauri/src/lib.rs` 的 `assemble()` 用 `app.path().app_config_dir()` 取，identifier `com.vox.app`），
 **800 ms 去抖 + 原子写**（先写 `.tmp` 再 `rename`），密钥单独 `secret.bin`。无屏要补三件：
 
-1. **目录可指定**：`VOXBRIDGE_CONFIG_DIR` → `$XDG_CONFIG_HOME/voxbridge` → Tauri `app_config_dir` **三级回落**
+1. **目录可指定**：`VOX_CONFIG_DIR` → `$XDG_CONFIG_HOME/vox` → Tauri `app_config_dir` **三级回落**
    （同一个盒子上"服务跑在哪个用户下"会决定目录，而 systemd 服务常常不是桌面用户）。
 2. **配置重载**：现在改配置**只有 UI 一条路** → 无屏要有 `SIGHUP` 重载或文件监听
    （`Settings` 已是纯数据 + `normalize()`，重载语义现成）。
-3. **环境变量覆盖**：已有 `VOXBRIDGE_LOG`；再加 provider / 密钥路径等，让"一次性试跑"不必先写文件。
+3. **环境变量覆盖**：已有 `VOX_LOG`；再加 provider / 密钥路径等，让"一次性试跑"不必先写文件。
 
 **模型目录的坑**：`crates/vox-core/build.rs` 把 `catalog/*.json` **编译期烘焙进二进制**；
 运行期只有 `app_config_dir/catalog/*.json` 这一层覆盖，而覆盖是靠 Tauri 命令落盘的
@@ -229,7 +229,7 @@ Unit 里 **`After=pipewire.service` 不要写**（PipeWire 是**用户**服务�
 | --- | --- | --- |
 | `app/src-tauri/src/lib.rs` 的 `run()`（`tauri::Builder` 的单实例 / opener / autostart / updater **四个插件**、`invoke_handler!` 注册的 26 条命令、`RunEvent::WindowEvent{label=="main"}` 关窗→托盘） | "应用 = 一个 Tauri 进程 + 一个主窗口" | "应用 = Runtime + Persist + 一组端口"；Tauri 只是**其中一种外壳**；无屏入口是不注册任何窗口的二进制 / feature |
 | `app/src-tauri/src/commands.rs`（**26 条 `#[tauri::command]` 是唯一控制面**，函数体本身就是业务胶水） | "界面是唯一控制面" | 把**函数体**下沉成平台无关 API（`snapshot` / `update_settings` / `start` / `stop` / `toggle` / `set_key` / `refresh_devices` / `catalog_*`…），Tauri 壳与 CLI/HTTP 壳都只是薄包装 |
-| `app/src-tauri/src/events.rs`（唯一出口是前端通道 `voxbridge://event`） | "事件出口 = 前端通道" | 抽 `trait EventSink`：Tauri emit（现有）+ **JSON-lines 到 stdout** + 可选本地 HTTP 订阅 |
+| `app/src-tauri/src/events.rs`（唯一出口是前端通道 `vox://event`） | "事件出口 = 前端通道" | 抽 `trait EventSink`：Tauri emit（现有）+ **JSON-lines 到 stdout** + 可选本地 HTTP 订阅 |
 | `app/src-tauri/src/platform/linux/mod.rs` | 平台函数与 Tauri 同 crate | 本轮核对：**只有 `enforce_min_size(&WebviewWindow)` 接 Tauri 类型**；`pre_main` / `clock` / `secret_store` / `alert` / `capture_factory` / `playback_factory` / `registry` / `start_hotkeys` / `spawn_overlay` 都不接（`tray_host_available` / `startup_notes` 走 zbus，也不接）。剩下的是装配层自己的类型（`crate::state::OverlayHandle`、`super::VirtualDeviceStatus`）→ 把 `platform/` 抽成独立 crate（或加 `headless` feature）是**最小的结构性改动**，收益是无屏二进制不必拖进 Tauri / WebKitGTK / GTK |
 | `app/src-tauri/src/persist.rs` | 配置目录由 Tauri 给 | §3.5 的三级回落 + `SIGHUP` 重载 |
 | `app/src-tauri/src/devices.rs`（4 s 轮询） | 界面要秒级反映插拔 | 保留但放宽（无 UI 时只记日志） |

@@ -51,7 +51,7 @@ try {
   await page.click('.sidebar .nav-item[data-page="settings"]');
   const linuxPanel = page.locator(".settings-item").filter({ hasText: "虚拟麦克风" });
   await linuxPanel.getByText("由 PipeWire 提供", { exact: true }).waitFor();
-  await linuxPanel.getByText(/VoxBridge Virtual Mic/).waitFor();
+  await linuxPanel.getByText(/Vox Virtual Mic/).waitFor();
   for (const label of ["安装", "卸载"]) {
     const count = await linuxPanel.getByRole("button", { name: label, exact: true }).count();
     if (count > 0) throw new Error(`Linux 上不该出现「${label}」按钮`);

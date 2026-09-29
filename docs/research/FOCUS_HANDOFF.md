@@ -1,6 +1,6 @@
 > 状态：已完成（2026-09-21）｜ 正文“下一步”已落地：`app/ui/src/lib/focus.ts` 已是物理列槽模型（`pickBestSlotNearest` / `bestSlot`），见 `docs/architecture/DIRECTIONS.md` §7；整份交接单作废 ｜ 保留作留痕，别照它施工。
 
-# 交接 / 转交提示词 · VoxBridge 首页布局 + 焦点聚焦
+# 交接 / 转交提示词 · Vox 首页布局 + 焦点聚焦
 
 > 本文件是交给"续接上下文"的交接单。当前会话已近上下文上限，可能被压缩/重开。
 > 从此文件接着干，不要依赖本会话前面的对话。
@@ -16,8 +16,8 @@
 - **用户强烈反对"跨卡"**：从 speak 卡片里一个控件按 ↓，跳到 listen 卡片另一半的开关，是 bug。但注意，用户自己说的是"像编辑文本的光标"，**不要引入"卡"概念**，就是二维格子 + 列记忆。
 
 ## 二、当前代码状态（重要：不要逆）
-- 工作目录：`C:\Users\Wang\Desktop\VoxBridge`
-- 分支 `master`，当前是**脏工作区**（很多文件从一开始就是未提交/修改，不只是我改的）。**只动这两个：
+- 工作目录：`C:\Users\Wang\Desktop\Vox`
+- 分支 `main`，当前是**脏工作区**（很多文件从一开始就是未提交/修改，不只是我改的）。**只动这两个：
   - `app/ui/src/lib/focus.ts`（我改过，见下）
   - `app/ui/src/sections/Home.tsx`（我改过，见下）
 
@@ -73,9 +73,9 @@ grid.forEach((r,i)=>console.log(`行${i}:`,r.row.map(x=>x.id).join(" | ")));
 然后 `await p.focus(...); keyboard.press("ArrowDown")...` 逐步验证 `12↓→22→↑→12`。
 
 ## 已知坑
-- Windows 上 `npx tauri build` 在 app 目录跑会拉错 npm 包；**正确入口 `/app/ui` 下 `npm run tauri:build`**（记忆 `voxbridge-tauri-build-from-ui`）。
-- 每次编译前 VoxBridge 旧 exe 若在运行，target 锁定导致失败 → 先结束进程。
-- 编译产物在 `target/release/voxbridge.exe` + `target/release/bundle/nsis/*-setup.exe`。
+- Windows 上 `npx tauri build` 在 app 目录跑会拉错 npm 包；**正确入口 `/app/ui` 下 `npm run tauri:build`**（记忆 `vox-tauri-build-from-ui`）。
+- 每次编译前 Vox 旧 exe 若在运行，target 锁定导致失败 → 先结束进程。
+- 编译产物在 `target/release/vox.exe` + `target/release/bundle/nsis/*-setup.exe`。
 - GlassUI skill 在 `C:\Users\Wang\Desktop\glassui`，用户想让人把"焦点不跨卡 + 附属控件贴在上方控件正下方"写进 skill；我此前派过一个**方向错了的子代理**把"视觉 title"写进 `skills/glassui/SKILL.md`（有一条 bullet），以及 `references/design-system.md` 的 `## Control Alignment (attached controls)`。**这个方向可能该纠正成"焦点列记忆"**——但先确认，不要乱改 /无关它。
 
 ## 本会话已在做的事（避免重复）

@@ -1390,7 +1390,7 @@ mod tests {
     #[test]
     fn the_virtual_mic_device_is_filled_in_only_when_the_user_did_not_pick_one() {
         let mut facts = desktop_facts();
-        facts.virtual_mic_device = Some("voxbridge_virtual_mic".to_string());
+        facts.virtual_mic_device = Some("vox_virtual_mic".to_string());
 
         // 用户没选设备：用这台机器报的虚拟麦节点名（Linux 接线后的样子）。
         let mut config = speak_config();
@@ -1405,11 +1405,11 @@ mod tests {
                 } => Some(device.clone()),
                 _ => None,
             }),
-            Some(Some("voxbridge_virtual_mic".to_string()))
+            Some(Some("vox_virtual_mic".to_string()))
         );
         assert_eq!(
             plan.playback_device,
-            Some(Some("voxbridge_virtual_mic".to_string()))
+            Some(Some("vox_virtual_mic".to_string()))
         );
 
         // 用户自己选了：听他的，不许被缺省解析盖掉。

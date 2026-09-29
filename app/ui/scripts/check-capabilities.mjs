@@ -6,7 +6,7 @@
  *   [1] Windows 桌面（默认）：位为真的入口照旧；`vr_captions` 位为假 ⇒ SteamVR 开关不渲染
  *   [2] `?on=vr_captions`：位为真 ⇒ 开关照旧（R5 的另一半）
  *   [3] Linux 桌面：虚拟麦位为真 ⇒ 只给设备名引导，不出现安装/卸载（与 check-cable 同结论）
- *   [4] Linux + `?off=virtual_mic:not_wired`：接线前的中间态 ⇒ 撤下"去选 VoxBridge Virtual Mic"
+ *   [4] Linux + `?off=virtual_mic:not_wired`：接线前的中间态 ⇒ 撤下"去选 Vox Virtual Mic"
  *   [5] Android：抓程序 / 虚拟麦的入口不渲染，各自给出 reason
  *   [6] 无屏（embedded）：字幕页与热键整块不渲染，各自给出 reason
  *   [7] `(位, reason)` 遍历：七种 reason 各按一遍全部宿主位，zh 与 en 都不许漏出 i18n key
@@ -209,7 +209,7 @@ try {
   await openPage(page, `${BASE}&host=linux`, "settings", "设置");
   const linuxPanel = page.locator(".settings-item").filter({ hasText: "虚拟麦克风" });
   await linuxPanel.getByText("由 PipeWire 提供", { exact: true }).waitFor();
-  await linuxPanel.getByText(/VoxBridge Virtual Mic/).waitFor();
+  await linuxPanel.getByText(/Vox Virtual Mic/).waitFor();
   for (const label of ["安装", "卸载"]) {
     expect(
       (await linuxPanel.getByRole("button", { name: label, exact: true }).count()) === 0,
@@ -229,7 +229,7 @@ try {
     "not_wired：应给「装配层还没接上」的说明",
   );
   expect(
-    (await active(page).innerText()).includes("VoxBridge Virtual Mic") === false,
+    (await active(page).innerText()).includes("Vox Virtual Mic") === false,
     "位为假时不许再让用户去选一个不存在的设备（§1.4 的老毛病）",
   );
 

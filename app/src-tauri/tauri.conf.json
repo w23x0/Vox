@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "VoxBridge",
+  "productName": "Vox",
   "version": "0.2.1",
-  "identifier": "com.voxbridge.app",
+  "identifier": "com.vox.app",
   "build": {
     "frontendDist": "../ui/dist",
     "devUrl": "http://127.0.0.1:5183",
@@ -20,7 +20,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "VoxBridge",
+        "title": "Vox",
         "width": 960,
         "height": 640,
         "minWidth": 760,
@@ -49,7 +49,7 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
-    "publisher": "VoxBridge",
+    "publisher": "Vox",
     "shortDescription": "实时语音翻译",
     "longDescription": "对外说话、听人说话二合一的实时语音翻译工具。",
     "createUpdaterArtifacts": true,

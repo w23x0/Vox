@@ -1,7 +1,7 @@
 //! 内核事件 → 前端单通道 + 落盘 + 开机自启同步。
 //!
 //! 一个监听器挂到 `runtime.add_listener`，对每条事件做分派：
-//! - **所有事件**都转发到前端通道 `voxbridge://event`；
+//! - **所有事件**都转发到前端通道 `vox://event`；
 //! - 重活（落盘、悬浮窗换样式、注册表）按事件类型选择性做；
 //! - 高频事件（`GateStatus`、`SubtitleDelta`）保证快路径：只转发，不做 IO。
 
@@ -19,7 +19,7 @@ use vox_core::settings::SubtitleSettings;
 use crate::state::AppState;
 
 /// 前端订阅的唯一事件通道，和 `app/ui/src/api.ts` 里的 `EVENT_CHANNEL` 一致。
-pub(crate) const EVENT_CHANNEL: &str = "voxbridge://event";
+pub(crate) const EVENT_CHANNEL: &str = "vox://event";
 
 /// 装配入口。由 `lib.rs` 的 `assemble` 调一次。
 ///

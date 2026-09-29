@@ -1,27 +1,27 @@
-# VoxBridge 无屏档（小主板 ARM64 Linux）的 systemd **系统**单元 —— 备用形态。
+# Vox 无屏档（小主板 ARM64 Linux）的 systemd **系统**单元 —— 备用形态。
 #
-# **推荐装用户单元**（`systemd/user/voxbridge-headless.service`，理由见旁边那份和
-# crates/voxbridge-headless/README.md §2）。这一份存在，是为了"盒子上只有一个专用服务用户、
+# **推荐装用户单元**（`systemd/user/vox-headless.service`，理由见旁边那份和
+# crates/vox-headless/README.md §2）。这一份存在，是为了"盒子上只有一个专用服务用户、
 # 不想开 linger"的部署方式；它有两条 system 服务固有的代价，装之前先读：
 #
 # 1. **实时优先级**：systemd 给每个 system 服务单独的 cpu cgroup，那个 cgroup 的
 #    `cpu.rt_runtime_us` 缺省是 **0** → 申请 RT 直接 EPERM
 #    （<https://systemd.io/MY_SERVICE_CANT_GET_REALTIME/>）。下面 `LimitRTPRIO=` 只是抬
 #    RLIMIT_RTPRIO 的上限，**还得**给 cgroup 放行预算：
-#        systemctl set-property voxbridge-headless.service CPUAccounting=yes
+#        systemctl set-property vox-headless.service CPUAccounting=yes
 #        # 或者用 drop-in 写 cpu.rt_runtime_us（放多少自己定，见上面那篇的绕法）
 #    拿不到 RT 不会让服务起不来，只是音频线程退化成普通调度。
 # 2. **PipeWire 的 socket 在用户运行期目录里**：`XDG_RUNTIME_DIR` 得自己指过去（下面给了），
 #    而那个目录只有该用户"有会话"或开了 `loginctl enable-linger` 时才存在。没有它，
 #    进程起得来但连不上 PipeWire（启动时只记一条提示，两条腿起流时才会失败）。
 #
-# 装到 /etc/systemd/system/voxbridge-headless.service，然后：
-#     systemctl daemon-reload && systemctl enable --now voxbridge-headless
+# 装到 /etc/systemd/system/vox-headless.service，然后：
+#     systemctl daemon-reload && systemctl enable --now vox-headless
 
 [Unit]
-Description=VoxBridge 无屏档（实时语音翻译）
+Description=Vox 无屏档（实时语音翻译）
 # 指仓库里那份 README（同一个文件也在发布包的根目录里）。
-Documentation=https://github.com/w23x0/Vox/blob/master/crates/voxbridge-headless/README.md
+Documentation=https://github.com/w23x0/Vox/blob/main/crates/vox-headless/README.md
 # 不要写 `After=pipewire.service`：PipeWire 是**用户**服务，在 system 管理器里不存在这个名字。
 # **`default.target` 是错的**（用户单元那份才有意义）：系统管理器里它不是一个能等的东西，
 # 照抄过来等于写了个没用的依赖。这一档要等的是网络——两条腿的云端都在网上
@@ -31,9 +31,9 @@ After=network.target
 
 [Service]
 Type=exec
-ExecStart=/usr/local/bin/voxbridge-headless --config /var/lib/voxbridge/settings.json --start all
-User=voxbridge
-Group=voxbridge
+ExecStart=/usr/local/bin/vox-headless --config /var/lib/vox/settings.json --start all
+User=vox
+Group=vox
 
 Restart=on-failure
 RestartSec=3
@@ -44,16 +44,16 @@ RestartMaxDelaySec=60
 
 # 目录交给 systemd 建并按 `User=` 归好（**别在 unit 里 mkdir**）。注意**配置不在这些目录里**：
 # settings.json / usage.json / secret.json / control.json 跟着 `--config` 走
-# （`/var/lib/voxbridge/`，也就是 §2.2 那条 `install` 落的位置）。这两个目录是给"属于服务自己的
-# 运行期/状态文件"留的位置（今天还没有这类文件）；名字取 `voxbridge-headless` 而不是
-# `voxbridge`，理由见用户单元那一份（同名会让 systemd 走"从 253 升上来"的兼容软链路径）。
-StateDirectory=voxbridge-headless
-RuntimeDirectory=voxbridge-headless
+# （`/var/lib/vox/`，也就是 §2.2 那条 `install` 落的位置）。这两个目录是给"属于服务自己的
+# 运行期/状态文件"留的位置（今天还没有这类文件）；名字取 `vox-headless` 而不是
+# `vox`，理由见用户单元那一份（同名会让 systemd 走"从 253 升上来"的兼容软链路径）。
+StateDirectory=vox-headless
+RuntimeDirectory=vox-headless
 
 # 见文件头第 2 条：PipeWire 客户端要用户运行期目录（PipeWire 的 socket 在那儿）。
 # `%U` = `User=` 那个用户的 UID。
 Environment=XDG_RUNTIME_DIR=/run/user/%U
-Environment=VOXBRIDGE_LOG=voxbridge_headless=info,warn
+Environment=VOX_LOG=vox_headless=info,warn
 
 # 见文件头第 1 条：抬上限不够，cgroup 的 RT 预算还得另外放行。
 LimitRTPRIO=95

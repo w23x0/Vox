@@ -3,7 +3,7 @@
 //! 密钥**绝不进 settings.json**，按服务商写入独立文件，
 //! 用 `CryptProtectData` 按当前 Windows 用户加密。
 //! 加了 `CRYPTPROTECT_UI_FORBIDDEN`——后台进程绝不能弹 UI 卡住。
-//! `pOptionalEntropy` 传固定盐 `b"VoxBridge/api-key/v1"`，
+//! `pOptionalEntropy` 传固定盐 `b"Vox/api-key/v1"`，
 //! 这样别的程序就算拿到密文文件也不能直接 unprotect。
 
 use std::fs;
@@ -18,7 +18,7 @@ use windows::Win32::Security::Cryptography::{
 };
 
 /// 应用相关盐：加解密两边必须一致，拦截别的程序直接 unprotect。
-const ENTROPY: &[u8] = b"VoxBridge/api-key/v1";
+const ENTROPY: &[u8] = b"Vox/api-key/v1";
 
 pub struct DpapiSecretStore {
     path: PathBuf,
@@ -279,7 +279,7 @@ mod tests {
         static COUNTER: AtomicU32 = AtomicU32::new(0);
         let id = COUNTER.fetch_add(1, Ordering::Relaxed);
         let pid = std::process::id();
-        std::env::temp_dir().join(format!("voxbridge_secret_test_{pid}_{id}.bin"))
+        std::env::temp_dir().join(format!("vox_secret_test_{pid}_{id}.bin"))
     }
 
     /// 辅助：确保测试结束后文件被删除。

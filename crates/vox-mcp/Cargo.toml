@@ -1,6 +1,6 @@
 [package]
 name = "vox-mcp"
-description = "VoxBridge 控制面出口：动作清单（唯一真源）+ MCP 协议面 + 本机 HTTP 传输 + voxctl CLI"
+description = "Vox 控制面出口：动作清单（唯一真源）+ MCP 协议面 + 本机 HTTP 传输 + voxctl CLI"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

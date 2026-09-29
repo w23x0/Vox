@@ -1,6 +1,6 @@
 # 服务商能力表维护说明
 
-VoxBridge 只做实时语音翻译。当前启用三个服务商，各固定一个专用模型：
+Vox 只做实时语音翻译。当前启用三个服务商，各固定一个专用模型：
 
 - 阿里云百炼：`qwen3.5-livetranslate-flash-realtime`
 - Google Gemini：`gemini-3.5-live-translate-preview`
@@ -58,7 +58,7 @@ CI 自动构建 NSIS 安装包、生成签名与 `latest.json` 并创建 GitHub 
 本地只需要改版本号（根 `Cargo.toml`、`app/src-tauri/tauri.conf.json`、
 `app/ui/package.json` 三处，再刷新 `Cargo.lock`）、提交、打 tag、推送。
 
-签名私钥在 `tools/signing/voxbridge_private.key`（已 gitignore，无密码）。
+签名私钥在 `tools/signing/vox_private.key`（已 gitignore，无密码）。
 仓库 Secret `TAURI_SIGNING_PRIVATE_KEY` 的值必须与该文件原文完全一致——
 就是那一整行 base64，不要解码后再传。
 

@@ -22,7 +22,7 @@ Key 只进入连接 URL，不进入普通设置与日志。`ConnectRequest` 和 
 
 Gemini 的 `usageMetadata` 字段映射如下：
 
-| Gemini | VoxBridge |
+| Gemini | Vox |
 | --- | --- |
 | `promptTokenCount` | `input_tokens` |
 | `responseTokenCount` | `output_tokens` |

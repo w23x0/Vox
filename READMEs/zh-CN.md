@@ -1,4 +1,4 @@
-# VoxBridge
+# Vox
 
 面向实时对话的桌面实时语音翻译器（**Windows** 与 **Linux**）。两条独立流水线同时运行：
 
@@ -42,10 +42,10 @@ npm run tauri:build      # 产物在 target/release/bundle/nsis/
 发布别用 `cargo build --release`；若要手动构建二进制，需带上 custom-protocol 特性：
 
 ```powershell
-cargo build --release -p voxbridge --features custom-protocol
+cargo build --release -p vox --features custom-protocol
 
 # 可选 SteamVR/OpenVR Overlay 构建
-cargo build --release -p voxbridge --features "custom-protocol,steamvr-overlay"
+cargo build --release -p vox --features "custom-protocol,steamvr-overlay"
 ```
 
 ## 测试
@@ -58,7 +58,7 @@ npm run verify           # app/ui 内：类型检查、生产构建、a11y/disab
 ## 目录结构
 
 ```text
-VoxBridge/
+Vox/
 ├─ catalog/            # 服务商元数据：aliyun.json、gemini.json、gpt.json
 ├─ crates/
 │  ├─ vox-core/        # 平台无关核心：设置、协议、状态机、用量
@@ -84,7 +84,7 @@ VoxBridge/
 
 ## Contributing
 
-VoxBridge 刻意保持保守：核心范围固定，**外挂模块**是开放的扩展点——详见 **[`../CONTRIBUTING.md`](../CONTRIBUTING.md)**，包括计划中的 Discord 独立进程模块（`docs/protocols/DISCORD_PROTOCOL.md`，二期，尚未拍板）。
+Vox 刻意保持保守：核心范围固定，**外挂模块**是开放的扩展点——详见 **[`../CONTRIBUTING.md`](../CONTRIBUTING.md)**，包括计划中的 Discord 独立进程模块（`docs/protocols/DISCORD_PROTOCOL.md`，二期，尚未拍板）。
 
 ## Docs
 

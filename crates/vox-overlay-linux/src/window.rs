@@ -93,7 +93,7 @@ impl Overlay {
         let mailbox = Arc::new(Mutex::new(Mailbox::new(settings.clone())));
 
         let window = gtk::Window::new(gtk::WindowType::Toplevel);
-        window.set_title("VoxBridge 字幕");
+        window.set_title("Vox 字幕");
         window.set_decorated(false);
         window.set_resizable(false);
         window.set_accept_focus(false);

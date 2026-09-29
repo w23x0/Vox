@@ -1,4 +1,4 @@
-# VoxBridge
+# Vox
 
 Ein Desktop-Übersetzer für Echtzeit-Sprache in Live-Gesprächen (**Windows** und **Linux**). Zwei unabhängige Pipelines laufen gleichzeitig:
 
@@ -42,7 +42,7 @@ npm run tauri:build      # erzeugt NSIS unter target/release/bundle/nsis/
 Für Releases nicht `cargo build --release` verwenden; beim manuellen Bauen des Binaries das Feature für das Custom-Protocol mitgeben:
 
 ```powershell
-cargo build --release -p voxbridge --features custom-protocol
+cargo build --release -p vox --features custom-protocol
 ```
 
 ## Testen
@@ -55,7 +55,7 @@ npm run verify           # in app/ui: Typ-Check, Prod-Build, a11y/disabled-Prüf
 ## Struktur
 
 ```text
-VoxBridge/
+Vox/
 ├─ catalog/            # Anbieter-Metadaten: aliyun.json, gemini.json, gpt.json
 ├─ crates/
 │  ├─ vox-core/        # plattformneutraler Kern: Einstellungen, Protokoll, Zustandsmaschine, Verbrauch
@@ -81,7 +81,7 @@ Beide Pipelines laufen unabhängig; `vox-core::Runtime` ist die einzige Wahrheit
 
 ## Beitragen
 
-VoxBridge ist bewusst konservativ: der Kern-Umfang ist fest. Externe Module sind der offene Erweiterungspunkt — siehe **[`../CONTRIBUTING.md`](../CONTRIBUTING.md)** — einschließlich des geplanten externen Discord-Moduls (`docs/protocols/DISCORD_PROTOCOL.md`, Phase 2 · unentschieden).
+Vox ist bewusst konservativ: der Kern-Umfang ist fest. Externe Module sind der offene Erweiterungspunkt — siehe **[`../CONTRIBUTING.md`](../CONTRIBUTING.md)** — einschließlich des geplanten externen Discord-Moduls (`docs/protocols/DISCORD_PROTOCOL.md`, Phase 2 · unentschieden).
 
 ## Doku
 

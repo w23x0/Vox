@@ -3,7 +3,7 @@
 //! 打**两份清单 + 当前有效能力位**的 JSON 到 stdout 就退：不建窗口、不注册命令、不起线程、
 //! 不改任何状态、**不建配置目录**（只读：读设置走 [`crate::persist::Persist::new`]，那条路
 //! 不碰盘）。无人值守时它是"这台机器现在会怎么装"的唯一可读出口（无屏档是同一条命令，
-//! 见 `crates/voxbridge-headless/src/status.rs::composition_json`——两边同形、同一份组装
+//! 见 `crates/vox-headless/src/status.rs::composition_json`——两边同形、同一份组装
 //! `vox_mcp::endpoints::document`：形状逐字相同；取值随档位与宿主事实本就不同）。
 //!
 //! **为什么排在 Tauri 之前**（跟 `platform::pre_main()` 的 `--vox-restore-defaults` 同一条理由）：
@@ -19,7 +19,7 @@
 //! 代价是这条路仍要初始化一次平台事件循环（GTK / Win32）——桌面档的机器上本来就有。
 //!
 //! Windows 的**发布构建没有控制台**（`main.rs` 的 `windows_subsystem = "windows"`），
-//! 所以要看这份 JSON 就重定向到文件：`voxbridge.exe --print-composition > composition.json`
+//! 所以要看这份 JSON 就重定向到文件：`vox.exe --print-composition > composition.json`
 //! （跟 `--vox-restore-defaults` 一样，它是给脚本/诊断用的出口，不是给人双击的）。
 
 use tauri::Manager;
@@ -104,7 +104,7 @@ mod tests {
     use vox_core::Settings;
 
     /// 形状契约：两条腿的键都在，能力位就是这一档的，派不出来的那条腿进 `errors`。
-    /// （无屏档那份**形状**（键名/嵌套）由 `voxbridge-headless` 的用例钉住；这里钉桌面这一边。
+    /// （无屏档那份**形状**（键名/嵌套）由 `vox-headless` 的用例钉住；这里钉桌面这一边。
     /// **键顺序没有任何用例断言**——两个外壳调的是同一个 `vox_mcp::endpoints::document`，
     /// 顺序由那一次 `serde_json` 序列化（缺省不开 `preserve_order`，顶层是 `BTreeMap` 的
     /// 名字序）决定，两边同形是**构造上的**，不是被钉住的。）

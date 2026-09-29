@@ -1,6 +1,6 @@
 /* ==========================================================================
    应用级快捷键（Windows 惯例）。移植 GlassUI 模板的 shortcuts.ts，裁剪掉
-   命令面板（Ctrl+K / openCommandPalette）—— VoxBridge 没有命令面板。
+   命令面板（Ctrl+K / openCommandPalette）—— Vox 没有命令面板。
 
    ── Windows 系统级，应用收不到 keydown，也不需要做 ──
      Alt+F4 / Win+↑↓←→ / Alt+Space：窗口管理器处理，不经过 WebView。

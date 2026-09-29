@@ -31,7 +31,7 @@ const RING_SECONDS: usize = 5;
 /// 等流进入 Streaming 的上限。超时就报错，不留僵尸线程。
 const OPEN_TIMEOUT: Duration = Duration::from_secs(8);
 /// 流在会话里的名字（`wpctl status` 里看得到）。
-const NODE_NAME: &str = "VoxBridge 播放";
+const NODE_NAME: &str = "Vox 播放";
 
 /// 跨线程共享的那点状态。
 struct Shared {

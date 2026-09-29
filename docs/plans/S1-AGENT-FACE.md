@@ -123,8 +123,8 @@
 | `vox-core` 的必选依赖只有 serde / serde_json / base64 / tracing / parking_lot，**没有 tokio、没有 async**；`schemars` 是**可选**依赖（feature `json-schema`，默认关，`vox-mcp` 打开） | `crates/vox-core/Cargo.toml` 的 `[features]` 与 `[dependencies]` 两节（写稿当时 `:10-16`；第十六轮记成 `:8-16` / `:22-28`，**第二十轮核到 `[features] :8-14` / `[dependencies] :20-27`**——全文 27 行，`:22-28` 那个范围越过 EOF）；`docs/architecture/ARCHITECTURE.md` §4 |
 | 芯不碰平台：平台能力全走 trait（9 个：`CaptureSource` / `PlaybackSink` / `Denoise` / `Resample` / `DeviceRegistry` / `HotkeyHost` / `SubtitleView` / `SecretStore` / `Clock`） | `crates/vox-core/src/ports.rs`（写稿当时 `:72/93/126/137/164/190/211/223/249`，第七轮核到 `:72/93/126/137/164/198/219/231/257`） |
 | 唯一账本：设置与状态只住 `Runtime`，别处不许存副本 | `crates/vox-core/src/runtime.rs` 模块头注释（写稿当时 `:1-20`）；`docs/architecture/ARCHITECTURE.md` §4「账本的规矩」 |
-| 装配层 `app/src-tauri` 也在 workspace 的 `members` 里（写稿当时 12 个成员，**现 14** = **13 个 `crates/*`**（第十二轮多出 `crates/voxbridge-headless`——无屏外壳，也是控制面的第三个调用者）+ 装配层），**唯一暴露跨 crate 类型对不上的地方** | `Cargo.toml` 的 `members`（写稿当时 `:1-19`；第十二轮核到 `:3-20`；第十六轮改成 `:3-21` 是**改错**——`members` 到收尾的 `]` 正好 `:3-20`；**第二十轮核到 `:3-20`**，14 项）；`docs/architecture/ARCHITECTURE.md` §3 |
-| 事件只有一条通道 `voxbridge://event`，且高频事件走克隆快路径、不做 IO | `app/src-tauri/src/events.rs::EVENT_CHANNEL`（写稿当时 `:21`）与 `events.rs::wire` 里的监听器 `handle.emit(EVENT_CHANNEL, event.clone())`（写稿当时 `:58-62`） |
+| 装配层 `app/src-tauri` 也在 workspace 的 `members` 里（写稿当时 12 个成员，**现 14** = **13 个 `crates/*`**（第十二轮多出 `crates/vox-headless`——无屏外壳，也是控制面的第三个调用者）+ 装配层），**唯一暴露跨 crate 类型对不上的地方** | `Cargo.toml` 的 `members`（写稿当时 `:1-19`；第十二轮核到 `:3-20`；第十六轮改成 `:3-21` 是**改错**——`members` 到收尾的 `]` 正好 `:3-20`；**第二十轮核到 `:3-20`**，14 项）；`docs/architecture/ARCHITECTURE.md` §3 |
+| 事件只有一条通道 `vox://event`，且高频事件走克隆快路径、不做 IO | `app/src-tauri/src/events.rs::EVENT_CHANNEL`（写稿当时 `:21`）与 `events.rs::wire` 里的监听器 `handle.emit(EVENT_CHANNEL, event.clone())`（写稿当时 `:58-62`） |
 
 ### 1.2 今天"控制面"长什么样（= 26 个 Tauri 命令，本稿要替换的现状）
 
@@ -151,7 +151,7 @@
 | `hyper` 1.11.0 / `hyper-util` 0.1.20 / `http-body-util` 0.1.4 / `bytes` / `tower` 已在树里 | `Cargo.lock:2140,2176,2112,488,5465`（第七轮复核未漂） |
 | **`axum` 不在树里**；`clap` 只有 3.2.25（别人的传递依赖） | `Cargo.lock`（grep `^name = "axum"` 零命中；`clap` 见 `:685`） |
 | 配置目录：`app_config_dir`（装配层 `app.path().app_config_dir()`），settings/usage/密钥/catalog 覆盖版都在它下面 | `app/src-tauri/src/lib.rs::assemble`（写稿当时 `:149`，第七轮核到 `:149`，**第十六轮核到 `:156`**，`app.path().app_config_dir()` 那一行在 `:157`）；`app/src-tauri/src/commands.rs::app_config_dir`（写稿当时 `:715-722`，现 `:718-722`）；`app/src-tauri/src/persist.rs`（写稿当时 `:82-107`） |
-| 应用标识 `com.voxbridge.app`（决定配置目录名，具体路径 **[未核实]**） | `app/src-tauri/tauri.conf.json` 的 `identifier`（第七轮核到 `:5`） |
+| 应用标识 `com.vox.app`（决定配置目录名，具体路径 **[未核实]**） | `app/src-tauri/tauri.conf.json` 的 `identifier`（第七轮核到 `:5`） |
 
 ### 1.4 上游结论（引用，不重查）
 
@@ -354,7 +354,7 @@ pub static ACTIONS: &[Action] = &[ /* 5 条，顺序即 tools/list 顺序 */ ];
 > `notes` 同样是**数据**（`endpoints.rs::downgrade_note`），而且**只在 `speak` 且 role 真的退成 `speaker` 时才有这个键**（位为真、或这条腿是 `listen`，`notes` 不出现）。
 
 - **`role` 跟着本机事实走**：`Composition::of(&SessionConfig, &HostFacts)`（**唯一签名**，D1）会在 `virtual_mic` 位为假时**不写** `role: virtual_mic` 那条、只留 `role: speaker`（S0 §2.3.3 与它的 `the_speak_manifest_drops_the_virtual_mic_entry_on_android` 用例）。事实**只从账本取**——`Runtime::host_facts()`（`crates/vox-core/src/runtime.rs::host_facts`；装配层经 `Runtime::set_host_facts` 注入一次，`:299`），**S1 不另立第二份事实**（vox-mcp 依赖 `vox-core` 是允许的，D1）。上面的例子里 `virtual_mic` 位是 `false`，所以 `out[0]` 是 `speaker`——**这不是笔误**。`editable` 里因此写 `out[playback(primary)].device`（只改设备，不改 role）。
-- **`control` / `life` / `ui` 三格是档位派生的，唯一来源是芯的 `HostKind::shell()`**（`crates/vox-core/src/composition.rs::HostKind::shell` → `TierShell { life, ui, control }`；`pipeline/{speak,listen}.rs::composition` 是**唯一消费者**，逐字取它——外壳不填、界面不改写）。四档取值（线上 snake_case）：`Windows` / `LinuxDesktop` = `interactive` / `gui` / `["inproc_api","ipc"]`；`Android` = `foreground_service` / `gui` / `["inproc_api","http"]`；**`LinuxHeadless` = `daemon` / `none` / `["mcp","cli","config_file"]`**（无屏档没人点界面，三样都从外面来）。`list_endpoints` 的 `device.control` 也直接取清单那一格（`endpoints.rs::list` 的注释写着"不另立一份'这台设备支持什么通道'的表"）。**上面例子里的 `device` / `manifest` 是桌面档的取值，仍然对**；写别的档位之前先去看那张表——这三格**不是常量**（第十一轮复核抓到的正是"写成桌面档的常量"），照平台名另写一份同样不行（§2.1.4 要求这三格逐字相同，写错就与 `editable` 表打架）。那张表由 `composition.rs::the_shell_cells_follow_the_tier_not_a_core_constant` 逐档钉着（`HostKind::ALL` 四行 × `(life, ui, control)`）。**这三格不受能力位开关影响**（S0 §2.5.3 的"条目 → 需要的位"表里没有它们）：无屏档 `life` 是 `daemon`，而它的 `background_service` 位今天仍报 `false(not_wired)`（上限里有这一位，`host_facts()` 把它放进 `off`——`crates/voxbridge-headless/src/platform/linux.rs`）——两者并存是按设计，**别把 `life` 读成"后台服务已经接上了"**。
+- **`control` / `life` / `ui` 三格是档位派生的，唯一来源是芯的 `HostKind::shell()`**（`crates/vox-core/src/composition.rs::HostKind::shell` → `TierShell { life, ui, control }`；`pipeline/{speak,listen}.rs::composition` 是**唯一消费者**，逐字取它——外壳不填、界面不改写）。四档取值（线上 snake_case）：`Windows` / `LinuxDesktop` = `interactive` / `gui` / `["inproc_api","ipc"]`；`Android` = `foreground_service` / `gui` / `["inproc_api","http"]`；**`LinuxHeadless` = `daemon` / `none` / `["mcp","cli","config_file"]`**（无屏档没人点界面，三样都从外面来）。`list_endpoints` 的 `device.control` 也直接取清单那一格（`endpoints.rs::list` 的注释写着"不另立一份'这台设备支持什么通道'的表"）。**上面例子里的 `device` / `manifest` 是桌面档的取值，仍然对**；写别的档位之前先去看那张表——这三格**不是常量**（第十一轮复核抓到的正是"写成桌面档的常量"），照平台名另写一份同样不行（§2.1.4 要求这三格逐字相同，写错就与 `editable` 表打架）。那张表由 `composition.rs::the_shell_cells_follow_the_tier_not_a_core_constant` 逐档钉着（`HostKind::ALL` 四行 × `(life, ui, control)`）。**这三格不受能力位开关影响**（S0 §2.5.3 的"条目 → 需要的位"表里没有它们）：无屏档 `life` 是 `daemon`，而它的 `background_service` 位今天仍报 `false(not_wired)`（上限里有这一位，`host_facts()` 把它放进 `off`——`crates/vox-headless/src/platform/linux.rs`）——两者并存是按设计，**别把 `life` 读成"后台服务已经接上了"**。
 - `manifest` 就是 **S0 的 `Composition` 序列化后的结果**（逐字，含 `schema_version`）：S1 **不解析、不改写、不自己拼** `in/ops/out` 条目。
 - `capabilities` 直接来自 S0 的 `CapabilityReport`，**取法只有一处**：`Runtime::capabilities()`（`crates/vox-core/src/runtime.rs::capabilities`，由 `Runtime::host_facts()` 那份事实算一次；`endpoints.rs` 经 `Ledger::capabilities` 拿它）；**S1 不另定义能力位**：`tier` 是本机宿主档位（`windows` / `linux_desktop` / `android` / `linux_headless`），`host` 仍是宿主机位表，`speak` / `listen` 是两张 provider 位分表（例子里省略了后两张）。
 - `editable` 是 §2.1.4 那张映射表的**键**：告诉调用方"这份清单里哪几格可以改"，比给一份 options JSON Schema 更直接（也避免第二份 schema）。上面的例子是 `speak`（**9 格**：`in[0].device`、`ops[denoise] 有无`、`out[playback(primary)].device`、`out[playback(monitor)] 有无`、`session.provider`、`session.params.target_language`、`session.params.voice`、`session.params.clone_frequency`、`session 有无（= 直通）`）；`listen` 是 **6 格**，与它差在三处——① `in[0].device` 换成 `in[0].executable` + `in[0].include_tree`；② 加 `session.params.source_language`；③ **去掉** `ops[denoise] 有无`、`out[playback(monitor)] 有无`、`session.params.target_language`、`session.params.clone_frequency`、`session 有无（= 直通）`（**两边都不含 `ops[gate]`**，D6）。这张 9 / 6 的键表由 `tests/endpoints.rs::editable_is_the_design_table_and_excludes_the_gate_cells` 逐字钉着。
@@ -522,11 +522,11 @@ pub static ACTIONS: &[Action] = &[ /* 5 条，顺序即 tools/list 顺序 */ ];
 | 传输 | 什么时候用 | 谁提供 | 状态（2026-09-22，照代码核） |
 | --- | --- | --- | --- |
 | **Streamable HTTP**（`127.0.0.1`，单路径 `/mcp`，POST-only） | **主通道**：桌面 / 手机 / 无屏设备；宿主是独立进程（Claude Desktop 那类）时填 URL + token | app 进程自己（装配层注入 `ControlBackend`）；`voxctl serve` 起的是同一个 `serve()`，但**不注入后端**（`tools/call` 如实回 `-32603`） | ✅ **已落地**：`crates/vox-mcp/src/transport/http.rs`（`serve` / `ServerOptions` / `ServerHandle`），含 `subscriptions/listen` 的 **SSE 长流**（`Answer::Stream` → `text/event-stream` + 15 s `:` 保活 + `Connection: close` 划界），用例 `crates/vox-mcp/tests/http.rs`（19 条）+ `crates/vox-mcp/tests/resources.rs`（8 条） |
-| **stdio**（换行分隔的 JSON-RPC） | **只在桌面**：宿主只会"起子进程 + 读写 stdio"（`command`/`args` 型配置、`mcp-inspector --cli` 直连） | `voxctl serve-stdio`：**stdio ↔ 本机 HTTP 的桥**，**不拥有账本、不开设备**（第二个 VoxBridge 实例会抢声卡，且单实例插件也不让起） | ✅ **已落地**：`crates/vox-mcp/src/transport/stdio.rs` + `voxctl serve-stdio --state-file <path>`——桥做四件 HTTP 侧没有对应物的事（换行分帧 / 从消息推三个 `Mcp-*` 头 / SSE 的 `data:` 负载转成 stdout 一行 / 把 `notifications/cancelled` 映射成"关掉那条 POST 的响应流"），一条消息一个转发线程，stdout 只有 MCP 消息、日志走 stderr；上游失败翻成一条 `-32603`。用例 `crates/vox-mcp/tests/voxctl.rs` 里 5 条（转发与同步 / 转发 SSE 与取消 / 缺握手文件起不来 / `printf … \| voxctl serve-stdio` 一次性管道能拿到响应 / 上游失败报 `-32603`） |
+| **stdio**（换行分隔的 JSON-RPC） | **只在桌面**：宿主只会"起子进程 + 读写 stdio"（`command`/`args` 型配置、`mcp-inspector --cli` 直连） | `voxctl serve-stdio`：**stdio ↔ 本机 HTTP 的桥**，**不拥有账本、不开设备**（第二个 Vox 实例会抢声卡，且单实例插件也不让起） | ✅ **已落地**：`crates/vox-mcp/src/transport/stdio.rs` + `voxctl serve-stdio --state-file <path>`——桥做四件 HTTP 侧没有对应物的事（换行分帧 / 从消息推三个 `Mcp-*` 头 / SSE 的 `data:` 负载转成 stdout 一行 / 把 `notifications/cancelled` 映射成"关掉那条 POST 的响应流"），一条消息一个转发线程，stdout 只有 MCP 消息、日志走 stderr；上游失败翻成一条 `-32603`。用例 `crates/vox-mcp/tests/voxctl.rs` 里 5 条（转发与同步 / 转发 SSE 与取消 / 缺握手文件起不来 / `printf … \| voxctl serve-stdio` 一次性管道能拿到响应 / 上游失败报 `-32603`） |
 | UDS / 命名管道 | —— | —— | ❌ 不做：MCP 没有 UDS 绑定（要走自定义传输 + 复用 stdio 分帧），Windows 还得另做命名管道 → 两套实现。CLI 也走同一条 HTTP |
 | 0.0.0.0 / 远程 | —— | —— | ❌ 明确不做（§2.5）：`ServerOptions::bind` 只接受回环地址，别的地址 `serve()` **直接拒绝**（不静默降级；用例 `serve_refuses_a_non_loopback_bind`） |
 
-传输面**只有一个入口**：`vox_mcp::serve(options, backend)`。今天的**三个调用者**（第十二轮核）：① `voxctl serve --state-file <path> [--port <n>]`（`backend = None`，纯协议面）；② 桌面装配层的控制面胶水 `app/src-tauri/src/mcp.rs`（已落地，第十轮：注入 `LedgerBackend`——`Ledger` 的真实现就是芯的 `Runtime`）；③ **无屏外壳** `crates/voxbridge-headless/src/mcp.rs`（第十二轮落地：同一个 `LedgerBackend::new(runtime.clone(), runtime.clone())` + `serve(options, Some(backend))`）。三者的差别只在 `Switch`（起不起 / 绑哪个端口，读的是账本里的 `Settings.control`）与**谁提供账本**——`serve` 的签名没有为任何一方特化。
+传输面**只有一个入口**：`vox_mcp::serve(options, backend)`。今天的**三个调用者**（第十二轮核）：① `voxctl serve --state-file <path> [--port <n>]`（`backend = None`，纯协议面）；② 桌面装配层的控制面胶水 `app/src-tauri/src/mcp.rs`（已落地，第十轮：注入 `LedgerBackend`——`Ledger` 的真实现就是芯的 `Runtime`）；③ **无屏外壳** `crates/vox-headless/src/mcp.rs`（第十二轮落地：同一个 `LedgerBackend::new(runtime.clone(), runtime.clone())` + `serve(options, Some(backend))`）。三者的差别只在 `Switch`（起不起 / 绑哪个端口，读的是账本里的 `Settings.control`）与**谁提供账本**——`serve` 的签名没有为任何一方特化。
 
 另外还有**两个客户端出口**（第十二轮落地，**不注入账本、不开设备**）：`client.rs::ControlPlane`（瘦客户端）是它们共用的同一条路——CLI 的 5 个动作子命令与 `serve-stdio` 桥都只是"读握手文件拿 `port` + `token`，把消息 POST 到 `/mcp`"。所以"CLI 的输出 == MCP 的 `structuredContent`"仍然是**同一个 `handle`** 出来的同一串字节（用例 `list_endpoints_over_the_cli_is_byte_identical_to_the_structured_content`）；协议语义一行都不在这条路上。
 
@@ -617,10 +617,10 @@ pub static ACTIONS: &[Action] = &[ /* 5 条，顺序即 tools/list 顺序 */ ];
       "tools": {},
       "resources": { "listChanged": true, "subscribe": true }
     },
-    "instructions": "VoxBridge 本机控制面。典型流程：list_endpoints → describe_endpoint → compose_endpoint（先 dry-run 再 apply）→ session_open → 订阅 vox://session/<handle>/transcript 读字幕 → session_close。实时音频不走本协议。",
+    "instructions": "Vox 本机控制面。典型流程：list_endpoints → describe_endpoint → compose_endpoint（先 dry-run 再 apply）→ session_open → 订阅 vox://session/<handle>/transcript 读字幕 → session_close。实时音频不走本协议。",
     "ttlMs": 3600000,
     "cacheScope": "public",
-    "_meta": { "io.modelcontextprotocol/serverInfo": { "name": "voxbridge", "version": "0.2.1" } }
+    "_meta": { "io.modelcontextprotocol/serverInfo": { "name": "vox", "version": "0.2.1" } }
   }
 }
 ```
@@ -715,7 +715,7 @@ pub static ACTIONS: &[Action] = &[ /* 5 条，顺序即 tools/list 顺序 */ ];
 
 | 闸门 | 谁定 | 怎么查 | 失败表现 |
 | --- | --- | --- | --- |
-| ① VoxBridge 用户位 | 用户在界面里点（`Settings.control.allow_*`，**默认全 false**）+ 一个**总闸** `Settings.control.enabled` | 服务端每次调用前读账本（`ledger.rs::Grants for Runtime` 每次 `tools/call` 现读一次 `Runtime::settings()`，界面上一开一关下一次调用立刻见效） | `permission_denied` + `gate: "vox_user"` + `hint` 指到具体开关 |
+| ① Vox 用户位 | 用户在界面里点（`Settings.control.allow_*`，**默认全 false**）+ 一个**总闸** `Settings.control.enabled` | 服务端每次调用前读账本（`ledger.rs::Grants for Runtime` 每次 `tools/call` 现读一次 `Runtime::settings()`，界面上一开一关下一次调用立刻见效） | `permission_denied` + `gate: "vox_user"` + `hint` 指到具体开关 |
 | ② 平台 / OS 授权 | 系统（Android `RECORD_AUDIO` + 前台服务必须从可见 Activity 起；Linux 抓程序音靠 PipeWire；Windows 进程环回要 build ≥ 20348） | **S0 的能力位**：`HostFacts.off[Capability::Mic] == UnavailableReason::Permission`（`docs/plans/S0-COMPOSITION-MANIFEST.md` §2.5.2）——S1 不另造"OS 授权"结构 | `permission_denied` + `gate: "os"` + 平台相关的 `hint` |
 | ③ 结构上做不到 / 装错档位 | 档位上限（S0 的 `host_ceiling`） | 位从账本拿：`Runtime::capabilities()`（内部就是 `effective(&facts)`）；`Composition::missing_on(&runtime.capabilities()) -> Vec<CompositionError>`（`MissingCapability` / `HostMismatch`） | `endpoint_unavailable` + `errors: [CompositionError…]` |
 
@@ -1011,7 +1011,7 @@ flowchart LR
 >   第 **25** 条（`cargo test -p vox-mcp`，**76 条集成 + 11 条 crate 内单测 = 87 passed**，第二十轮实测）、第 **27 / 28** 条。
 > - **第 1、10–17 条已通**（第十轮装配胶水 + 第十二轮资源面）：`app/src-tauri/src/mcp.rs` 已落地——`assemble()` 第 14 步
 >   `mcp::start` 起控制面、写 `control.json`（`Settings.control.enabled` 关着就不监听、不写文件），
->   所以下面第 1 条那段 `cargo run -p voxbridge` 现在真的会产出握手文件，手工 curl 走 `tools/call` 也有后端了；
+>   所以下面第 1 条那段 `cargo run -p vox` 现在真的会产出握手文件，手工 curl 走 `tools/call` 也有后端了；
 >   资源面的两条方法连同 SSE 长流第十二轮已落地（`resources/list` / `resources/read` / `subscriptions/listen`）。
 >   前提仍是"先把总开关与授权位在设置里打开"（§2.5.2 闸门①，默认全关）——**第十三轮起不用改文件**：
 >   设置页「Agent 控制面」那一屏点两下就开了（拨完当场起停）。
@@ -1023,11 +1023,11 @@ flowchart LR
 
 ```bash
 # 0. 找到握手文件（路径由 Tauri app_config_dir 决定，见 lib.rs::assemble 的 `app.path().app_config_dir()`；不假设具体目录名）
-CFG=$(dirname "$(find "$HOME/.config" "$HOME/.local/share" -name settings.json -path '*voxbridge*' 2>/dev/null | head -1)")
+CFG=$(dirname "$(find "$HOME/.config" "$HOME/.local/share" -name settings.json -path '*vox*' 2>/dev/null | head -1)")
 # 1. 起程序（终端 A）—— 装配胶水 `app/src-tauri/src/mcp.rs` 已落地（第十轮）：
 #    `assemble()` 第 14 步起控制面并写 control.json（`Settings.control.enabled` 关着就不监听、不写文件）。
 #    控制面起不来的话界面照常可用，只是 `state.control` 里没有 handle。
-cargo run -p voxbridge
+cargo run -p vox
 #    期望：$CFG/control.json 出现
 #    {"port":47123,"token":"<43 字符>","pid":12345,"protocolVersion":"2026-07-28"}
 PORT=$(python3 -c "import json;print(json.load(open('$CFG/control.json'))['port'])")
@@ -1044,7 +1044,7 @@ POST() { # $1=Mcp-Method $2=Mcp-Name $3=body
 
 | # | 命令 | 期望 |
 | --- | --- | --- |
-| 2 | `POST server/discover "" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\",\"params\":{\"_meta\":$META}}"` | `HTTP/1.1 200` + `Content-Type: application/json`；body 含 `"resultType":"complete"`、`"supportedVersions":["2026-07-28"]`、**`"capabilities":{"tools":{},"resources":{"listChanged":true,"subscribe":true}}`**（第十二轮起两位都是事实；`tools` 里仍没有 `listChanged`）、`"ttlMs":3600000`、`"cacheScope":"public"`、`_meta.serverInfo.name == "voxbridge"` |
+| 2 | `POST server/discover "" "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\",\"params\":{\"_meta\":$META}}"` | `HTTP/1.1 200` + `Content-Type: application/json`；body 含 `"resultType":"complete"`、`"supportedVersions":["2026-07-28"]`、**`"capabilities":{"tools":{},"resources":{"listChanged":true,"subscribe":true}}`**（第十二轮起两位都是事实；`tools` 里仍没有 `listChanged`）、`"ttlMs":3600000`、`"cacheScope":"public"`、`_meta.serverInfo.name == "vox"` |
 | 3 | `POST tools/list "" '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":…}}'` | `tools` 恰好 5 条，顺序 `list_endpoints, describe_endpoint, compose_endpoint, session_open, session_close`；每条有 `inputSchema`/`outputSchema`/`title`/`annotations`；结果带 `ttlMs:3600000`+`cacheScope:"public"` |
 | 4 | 负例 a：去掉 `Authorization` 头 | `HTTP/1.1 401`，**无 body** |
 | 5 | 负例 b：加 `-H 'Origin: http://evil.example'` | `HTTP/1.1 403` |
@@ -1258,7 +1258,7 @@ POST() { # $1=Mcp-Method $2=Mcp-Name $3=body
 
 1. **`schemars` 的收尾已落地**（第十五轮，agent-face-dev）：`vox-mcp` 的 feature `json-schema`（**默认开**）转发芯的 feature，`build.rs` 在构建期生成 `composition` 那一格的 schema 文本（生成物写 `$OUT_DIR`，`include_str!` 读成字面量），`--no-default-features` 走如实放宽的占位。三条用例钉着两条路径（见 §2.6 / §4.1），另有第三方 2020-12 校验器的独立验证（真清单过、坏清单拒）。**剩下没验的只有"真实 MCP 客户端实现"**（§5.1 第 2 条）；文档侧没有遗留项。
 2. **`assemble()` 的排期已不再阻塞**：装配胶水已落地（第十轮），手打 curl 那条路通了。剩下的排期点是 **S2 的 Android 装配**要不要再动同一个函数。
-3. **控制面现在有三个调用者，别再按"桌面 + CLI"两方想**（第十二轮）：桌面 `app/src-tauri/src/mcp.rs`、无屏外壳 `crates/voxbridge-headless/src/mcp.rs`（同一个 `LedgerBackend` + `serve`，零 Tauri）、以及不注入后端的 `voxctl serve`。台账在 `DIRECTIONS.md` §10.7 与根 `Cargo.toml` 的 `members`（现 14 项）。
+3. **控制面现在有三个调用者，别再按"桌面 + CLI"两方想**（第十二轮）：桌面 `app/src-tauri/src/mcp.rs`、无屏外壳 `crates/vox-headless/src/mcp.rs`（同一个 `LedgerBackend` + `serve`，零 Tauri）、以及不注入后端的 `voxctl serve`。台账在 `DIRECTIONS.md` §10.7 与根 `Cargo.toml` 的 `members`（现 14 项）。
 4. **没有待核常数**：门预设（`GateConfig::MANUAL` 150/100 vs `level(t)` 600/200）、`block_ms=20`、默认语言/音色已由 S0 照代码核过（§1.4 最后一行），第六轮落地时也是照那些数字。
 5. **第十二轮落地三块**（除资源面外）：`client.rs` 瘦客户端 + `voxctl` 的 5 个动作子命令、`transport/stdio.rs` + `voxctl serve-stdio`、以及总闸对长流的收流/拒新流。**第十三轮又落地两块**：设置页 `AgentControl.tsx`（+ 导航页）与**热切换**（`mcp::ControlPlane::install`）。**S1 的 ❌ 已在第十五轮清空**（最后一项 `actions.rs::composition_schema!` 接上真 schema，§2.6 / §3.1）；总表里只剩芯侧那条"不再需要"的 `subtitle_text`。
 

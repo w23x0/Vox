@@ -1,4 +1,4 @@
-//! VoxBridge 内核：平台无关。
+//! Vox 内核：平台无关。
 //!
 //! 不 `use windows::*`，不碰 Tauri，不知道 WASAPI 存在。要用平台能力时只认
 //! [`ports`] 里的 trait，由 Windows 外壳在启动时注入实现。

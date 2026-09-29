@@ -1,7 +1,7 @@
 # Discord 集成初步方案（探索中 · 未拍板）
 
 > **状态：这是探索性方案文档，不是任何拍板结果。**
-> 本文把「VoxBridge × Discord 专属增强适配」的方向、能力边界、工程代价、卡住的决策点全部摊开。
+> 本文把「Vox × Discord 专属增强适配」的方向、能力边界、工程代价、卡住的决策点全部摊开。
 > **所有带 ⚠️ 的条目都待定，需要你逐一确认。** 拍板结果写进
 > [`docs/architecture/DECISIONS.md`](../architecture/DECISIONS.md) B 区，代码落地后以代码为准。
 >
@@ -11,7 +11,7 @@
 
 ## 1. 为什么现在要碰 Discord
 
-VoxBridge 现有的「听人说话」用 WASAPI **进程环回**抓指定程序的声音（`Discord.exe` 那一整棵进程树），
+Vox 现有的「听人说话」用 WASAPI **进程环回**抓指定程序的声音（`Discord.exe` 那一整棵进程树），
 只能拿到整摊**混合了所有人的**混音，而且**抓不到是谁在说话**。只要目标是「分清频道里的每个人、
 给每个人独立字幕 / 独立翻译方向」，进程环回就**够不着**——能拆出每人的唯一途径是
 Discord Bot 的**语音音频流接收**。
@@ -106,7 +106,7 @@ Discord 收进每个用户的音频是 **20 ms 一帧的 opus**（分片发送�
 
 | | 方案 | 理由 / 代价 |
 | --- | --- | --- |
-| a | 用现成 **`opus` crate**（link libopus） | 快、稳，把手腾出来做身份 / 字幕 / 翻译。**但新引外部依赖**，VoxBridge 目前音频链路 0 编解码依赖，`vox-dsp` 只有 RNNoise（`nnnoiseless`）+ resample，没有 opus。 |
+| a | 用现成 **`opus` crate**（link libopus） | 快、稳，把手腾出来做身份 / 字幕 / 翻译。**但新引外部依赖**，Vox 目前音频链路 0 编解码依赖，`vox-dsp` 只有 RNNoise（`nnnoiseless`）+ resample，没有 opus。 |
 | b | 自研 opus 解码 | 从零写 opus 解码器是数周 + 体量、且极容易出错。只有想要全离线 / 极致精简依赖链才值得。 |
 
 > ⚠️ **未定**。推荐 **a**，但「要不要为这个打破无额外依赖」也属于你才能拍。
@@ -142,7 +142,7 @@ Application、拿 Token、填进设置页。这是就此方案的一个「信任
 3. 若走 Bot 深度：先做**一个 proof-of-concept**——做进 Gateway hello → 鉴权 → 加入 / 退出频道 →
    收到第一帧用户音频 → 解码成 PCM。全放在新 crate `crates/vox-discord/`，只跟现有 `vox-net`
    （纯 WebSocket）对接，**不侵入**主内核。
-4. 字幕落到前端：**只复用现有的 `voxbridge://event` 单一事件通道**，不新增通道。
+4. 字幕落到前端：**只复用现有的 `vox://event` 单一事件通道**，不新增通道。
 
 ---
 

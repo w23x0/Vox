@@ -2,7 +2,7 @@
 
 > 口径与 `docs/architecture/DECISIONS.md` 一致：**代码与本文件打架时以代码为准**，然后回头把这里改对。
 >
-> 本文件只回答一个问题：**VoxBridge 跑在哪些平台、什么时候做。**
+> 本文件只回答一个问题：**Vox 跑在哪些平台、什么时候做。**
 > 技术细节（音频/悬浮窗/热键的跨平台实现路径）也记在这里，因为它们直接决定"什么时候做"的答案。
 >
 > 三部分：
@@ -188,7 +188,7 @@ PulseAudio / ALSA 下只能降级整机环回或做不了。
 - **不用安装任何东西** —— Win 上 `cable.rs` 那套下载 + UAC + 静默安装 +
   `ProductDisclosure` 捐赠凭证，Linux 上**整段删掉**。PipeWire/PulseAudio 原生就能
   创建虚拟设备，调一次 API 或一条 `pw-cli`/`pactl` 命令的事。
-- **概念还在，形态变了**：标准做法是建一个 PipeWire 虚拟 sink → VoxBridge 把翻译
+- **概念还在，形态变了**：标准做法是建一个 PipeWire 虚拟 sink → Vox 把翻译
   语音写进它 → 它自动带 monitor source → 目标软件（VRChat/Discord）在录音设置里
   选这个 monitor 当麦克风。
 - **唯一保留的用户引导**：目标软件仍要手动选那个虚拟设备 —— 这跟 Win 上选 VB-CABLE

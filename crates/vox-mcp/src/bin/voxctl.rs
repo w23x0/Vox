@@ -1,4 +1,4 @@
-//! `voxctl`：VoxBridge 控制面 CLI。
+//! `voxctl`：Vox 控制面 CLI。
 //!
 //! **CLI 不是第二份实现**（设计稿 §2.2.2）：它只做三件事——把命令翻译成一条 JSON-RPC
 //! 请求、交给协议层、打印结果。动作子命令走的是**本机 HTTP**（`vox_mcp::client` 那条瘦客户端
@@ -28,12 +28,12 @@
 //! `serve` 起的就是装配层用的同一个 [`vox_mcp::serve`]，**同一个 `handle`**：HTTP 面与
 //! `--probe` 出来的字节因此逐字节相同（`tests/http.rs` 里有一条用例钉住这件事）。
 //! 它不注入后端（`backend = None`），所以 `tools/call` 会如实回 `-32603`"后端未接入"——
-//! 账本与设备由外壳（桌面装配层 `app/` 里的 `mcp.rs` / 无屏档 `crates/voxbridge-headless`）注入，
+//! 账本与设备由外壳（桌面装配层 `app/` 里的 `mcp.rs` / 无屏档 `crates/vox-headless`）注入，
 //! CLI 只是协议面的第二个人口：**动作子命令要打的是那个有账本的控制面，不是 `serve` 起的这个**。
 //!
 //! `serve-stdio` 是**桥**，不是第二个服务端（设计稿 §2.2.1）：它把 stdin 上换行分隔的 JSON-RPC
 //! 转成对本机 `/mcp` 的 POST，把响应（含 `subscriptions/listen` 的 SSE 事件）原样写回 stdout。
-//! 它同样不拥有账本——第二个 VoxBridge 实例会抢声卡。
+//! 它同样不拥有账本——第二个 Vox 实例会抢声卡。
 //!
 //! 退出码：`0` 成功 ｜ `1` 领域失败（`isError`）｜ `2` 传输/协议失败 ｜ `3` 用法错误。
 
@@ -55,7 +55,7 @@ fn usage() -> String {
         .join(", ");
     format!(
         "\
-voxctl —— VoxBridge 控制面 CLI
+voxctl —— Vox 控制面 CLI
 
 用法：voxctl <子命令> [选项]
 

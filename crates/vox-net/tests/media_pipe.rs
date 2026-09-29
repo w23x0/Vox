@@ -519,7 +519,7 @@ async fn a_wrong_token_is_rejected_before_upgrade() {
 
 // ── 8 ────────────────────────────────────────────────────────────────────────
 
-/// `Sec-WebSocket-Protocol: voxbridge.media.v1.<token>` 能连上，且 101 回同一个子协议名。
+/// `Sec-WebSocket-Protocol: vox.media.v1.<token>` 能连上，且 101 回同一个子协议名。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_browser_subprotocol_channel_works() {
     let listener = MediaListener::bind(options(PipeConfig::default())).expect("绑得上回环");

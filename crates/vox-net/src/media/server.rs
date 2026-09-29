@@ -44,8 +44,8 @@ use super::{ws_config, DEFAULT_PIPE};
 /// 媒体面唯一路径。控制面是 `/mcp`，两条管子互不可用（设计稿 §2.5.1）。
 pub const PATH: &str = "/audio";
 
-/// 浏览器那条凭据通道的子协议前缀（`Sec-WebSocket-Protocol: voxbridge.media.v1.<token>`）。
-pub const SUBPROTOCOL_PREFIX: &str = "voxbridge.media.v1.";
+/// 浏览器那条凭据通道的子协议前缀（`Sec-WebSocket-Protocol: vox.media.v1.<token>`）。
+pub const SUBPROTOCOL_PREFIX: &str = "vox.media.v1.";
 
 /// 监听参数。由外壳装配期填（`Settings.net` + `SecretStore`）。
 #[derive(Debug, Clone)]

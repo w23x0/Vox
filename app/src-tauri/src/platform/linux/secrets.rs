@@ -15,7 +15,7 @@ use vox_core::settings::ModelProvider;
 
 /// 服务名用应用的 bundle id，跟 `tauri.conf.json` 里的 identifier 一致，
 /// 用户在 Seahorse/KWallet 里看到的就是这个。
-const SERVICE: &str = "com.voxbridge.app";
+const SERVICE: &str = "com.vox.app";
 
 pub struct SecretServiceStore;
 
@@ -101,7 +101,7 @@ mod tests {
     /// 跟真机的 Secret Service 打一次来回：存 → 读 → 删。
     ///
     /// 默认 `#[ignore]`：CI / 容器里没有密钥服务，跑了必然失败。本机验收用
-    /// `cargo test -p voxbridge --lib -- --ignored secret_service_round_trip`。
+    /// `cargo test -p vox --lib -- --ignored secret_service_round_trip`。
     #[test]
     #[ignore = "需要真机上跑着 Secret Service（gnome-keyring / KWallet）"]
     fn secret_service_round_trip() {

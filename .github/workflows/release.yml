@@ -36,7 +36,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
-          releaseName: "VoxBridge v__VERSION__"
+          releaseName: "Vox v__VERSION__"
           releaseBody: "Download the installer from the assets below. Existing users can update in-app via About -> Check for updates."
           releaseDraft: false
           prerelease: false
@@ -112,7 +112,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: v__VERSION__
-          releaseName: "VoxBridge v__VERSION__"
+          releaseName: "Vox v__VERSION__"
           releaseBody: "Download the installer for your platform from the assets below. Windows and AppImage builds can update in-app via About -> Check for updates; deb/rpm users need to download the new package manually."
           releaseDraft: false
           prerelease: false

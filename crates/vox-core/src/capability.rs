@@ -313,7 +313,7 @@ pub struct HostFacts {
     pub off: BTreeMap<Capability, UnavailableReason>,
     /// 这台机器上"译音该往哪个设备送才算虚拟麦"。`virtual_mic` 位为假时是 `None`。
     ///
-    /// 由外壳填：Linux = 节点名 `voxbridge_virtual_mic`（**接线后才非空**）；
+    /// 由外壳填：Linux = 节点名 `vox_virtual_mic`（**接线后才非空**）；
     /// Windows = 用户在设置里选的 VB-CABLE 端点，所以这里恒 `None`，仍走 `settings.output_device`。
     pub virtual_mic_device: Option<String>,
 }

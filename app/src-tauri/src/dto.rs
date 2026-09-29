@@ -270,7 +270,7 @@ mod tests {
                 running: false,
                 bound_port: None,
                 error: None,
-                state_file: "/tmp/voxbridge-test/control.json".to_string(),
+                state_file: "/tmp/vox-test/control.json".to_string(),
             },
         }
     }

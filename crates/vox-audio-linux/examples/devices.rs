@@ -5,7 +5,7 @@
 //! ```
 //!
 //! 检查点：默认设备有且只有一个被标出来；正在放声音的程序排在前面且 `active=true`；
-//! 自己（voxbridge 这个进程）不出现在列表里。
+//! 自己（vox 这个进程）不出现在列表里。
 
 use vox_audio_linux::{pipewire_available, LinuxDeviceRegistry};
 use vox_core::ports::DeviceRegistry;

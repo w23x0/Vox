@@ -81,13 +81,13 @@ HDMI 的 monitor，而目标程序正好在往 HDMI 放音，于是"默认源"�
 ### 2.2 虚拟麦成立（替代 VB-CABLE，且不用装东西、不用提权）
 
 ```
-pw-cli create-node adapter '{ factory.name=support.null-audio-sink node.name=voxbridge_test_sink
+pw-cli create-node adapter '{ factory.name=support.null-audio-sink node.name=vox_test_sink
                               media.class=Audio/Sink object.linger=true audio.position=[FL FR] }'
-→ 节点出现：82 | Audio/Sink | voxbridge_test_sink；端口 88/90 in playback_FL/FR，95/101 out monitor_FL/FR
+→ 节点出现：82 | Audio/Sink | vox_test_sink；端口 88/90 in playback_FL/FR，95/101 out monitor_FL/FR
 把声音灌进去再从 monitor 录：peak=0.143 rms=0.0572（源同前）→ 全链路通
 ```
 
-标准用法：VoxBridge 建一个自己的 sink → 翻译语音写进去 → 目标程序（VRChat / Discord）
+标准用法：Vox 建一个自己的 sink → 翻译语音写进去 → 目标程序（VRChat / Discord）
 在录音设置里选这个 sink 的 **monitor** 当麦克风。**"让用户去设置里选设备"这一步和
 Windows 上选 VB-CABLE 完全一样**，所以用户引导可以照搬。
 
@@ -311,7 +311,7 @@ for note in platform::startup_notes() { runtime.notify(…); }     // linux: Pip
 | `DeviceRegistry::virtual_cable_installed` | Linux 上语义变为"PipeWire 可用"（虚拟设备随时能建）。UI 侧 VB-CABLE 那一页在 Linux 隐藏（见 §5.4） |
 | `PlaybackSink::open(device, 24 kHz 输入率)` | **已落地**：`pw_stream` 方向 output，请求 48k/2ch f32；`vox-dsp::ring::DropRing` 供渲染回调取数据；24k → 目标率用注入的 `ResampleFactory`。真机实测：3 秒音渲染 264 696 个样本（≈2.75 s × 48 k × 2ch）、丢弃 0、`device_latency_ms` 21 ms（真的从 `pw_stream_get_time` 读出来的） |
 | `PlaybackSink::stats()` | `pw_stream_get_time()` → `queued_samples` / `device_latency_ms`；`dropped_samples` 由环缓冲计数 |
-| 虚拟麦 | **已落地**（`vox-audio-linux/src/virtual_sink.rs`）：`create_object("adapter", …)` + `factory.name=support.null-audio-sink` + `media.class=Audio/Sink`，固定名 `voxbridge_virtual_mic`。真机验证：`wpctl status` 里出现「VoxBridge Virtual Mic」，端口是 `playback_FL/FR` + `monitor_FL/FR`（立体声），退出即删不留幽灵设备；`cargo run -p vox-audio-linux --example virtual_mic` 可手动复现 |
+| 虚拟麦 | **已落地**（`vox-audio-linux/src/virtual_sink.rs`）：`create_object("adapter", …)` + `factory.name=support.null-audio-sink` + `media.class=Audio/Sink`，固定名 `vox_virtual_mic`。真机验证：`wpctl status` 里出现「Vox Virtual Mic」，端口是 `playback_FL/FR` + `monitor_FL/FR`（立体声），退出即删不留幽灵设备；`cargo run -p vox-audio-linux --example virtual_mic` 可手动复现 |
 | 能力门（替代 `osver.rs`） | 连不上 PipeWire socket / 版本 < 1.0 → `PortError` 带明确文案（"需要 PipeWire；纯 PulseAudio/ALSA 环境不支持按进程抓音"）。**不偷偷降级成整机环回**（沿用 `audio.rs:1-8` 的既有方针） |
 
 `CaptureTarget` / `AudioApp` 这些内核类型**不需要改**：Windows 用 exe 名标识程序，
@@ -384,7 +384,7 @@ KDE/wlroots → 以后可加 `gtk-layer-shell`；纯 Wayland 且没有 XWayland 
 
 | 组件 | Windows 现状 | Linux 方案 |
 | --- | --- | --- |
-| `sys/secrets.rs` | DPAPI（`CryptProtectData`） | **已落地**：`keyring` → Secret Service（`platform/linux/secrets.rs`）；本机实测存→读→删往返成功（`cargo test -p voxbridge --lib -- --ignored secret_service_round_trip`）。没有 Secret Service 的机器会拿到明确错误，**不做明文兜底** |
+| `sys/secrets.rs` | DPAPI（`CryptProtectData`） | **已落地**：`keyring` → Secret Service（`platform/linux/secrets.rs`）；本机实测存→读→删往返成功（`cargo test -p vox --lib -- --ignored secret_service_round_trip`）。没有 Secret Service 的机器会拿到明确错误，**不做明文兜底** |
 | `sys/clock.rs` | `GetLocalTime` | **已落地**：`chrono::Local`（`platform/linux/clock.rs`），`now_ms` 仍走单调 `Instant` |
 | `sys/fatal.rs` | `MessageBoxW` | stderr + GTK 对话框（GTK 已在依赖里） |
 | `winminmax.rs` | `WM_GETMINMAXINFO` 子类化 | **删**；`tauri.conf.json` 已有 `minWidth/minHeight`，Linux 上 `set_min_size` 就够 |
@@ -452,7 +452,7 @@ cd app/ui && npm ci
 ```bash
 rustup target add x86_64-pc-windows-gnu          # 必须 gnu，不能 msvc，原因见下
 sudo apt install -y gcc-mingw-w64-x86-64
-cargo check -p voxbridge --target x86_64-pc-windows-gnu            # 整个装配层，含 Win32 路径
+cargo check -p vox --target x86_64-pc-windows-gnu            # 整个装配层，含 Win32 路径
 cargo check -p vox-audio-win -p vox-overlay-win \
             --target x86_64-pc-windows-msvc --all-targets          # 纯 Rust 的那几个 crate
 ```
@@ -498,16 +498,16 @@ Linux   : cargo test --workspace                        → 全绿（本块是 P
             逐 crate 明细随时点变化，当前数字一律见 docs/architecture/DIRECTIONS.md §10.7）
 Linux   : cargo clippy --workspace --all-targets        → 新增代码零警告（vox-core/vox-net
             的 3 条是既有的，不在本轮范围内）
-Linux   : ./target/debug/voxbridge（GDK_BACKEND=x11）    → 真机启动成功：窗口 960x640、
+Linux   : ./target/debug/vox（GDK_BACKEND=x11）    → 真机启动成功：窗口 960x640、
             居中 (825,413)、IsViewable、_NET_WM_STATE_FOCUSED，WebKitWebProcess /
             WebKitNetworkProcess 子进程都在，stderr 只剩一条 appindicator 弃用警告
-Linux   : cargo test -p voxbridge --lib -- --ignored secret_service_round_trip
+Linux   : cargo test -p vox --lib -- --ignored secret_service_round_trip
                                                         → 密钥服务存/读/删往返通过
 Linux   : cargo run -p vox-audio-linux --example devices → 与同刻 pw-dump 一致
 Linux   : cargo test -p vox-audio-linux -- --ignored virtual_sink_lifecycle
           → 虚拟麦"建 → 图里查得到 → 删 → 查不到"往返通过（真机 PipeWire）
 Linux   : cargo run -p vox-audio-linux --example virtual_mic + wpctl/pw-dump
-          → 系统 Sinks 里出现「VoxBridge Virtual Mic」，monitor_FL/FR 端口齐全，退出后消失
+          → 系统 Sinks 里出现「Vox Virtual Mic」，monitor_FL/FR 端口齐全，退出后消失
 Linux   : smoke -- tone 3       → 渲染 264 696 样本、丢弃 0、设备延迟 21 ms
 Linux   : smoke -- app pw-cat 4 → 协商 48k/2ch、192 000 个单声道样本（精确）、峰值 0.0884
 Linux   : smoke -- vmic 20 + pw-record 录 monitor（pw-link 显式连）
@@ -524,16 +524,16 @@ Linux   : cargo run -p vox-overlay-linux --example snapshot
             全部符合设计（人工核对过像素）
 Linux   : 真机 app 日志 → 热键监听打开并盯住 4 个输入设备（键盘 ×2、鼠标 ×2）
 Linux   : npm run tauri:build -- --bundles deb
-          → 出 `target/release/bundle/deb/VoxBridge_0.1.4_amd64.deb`（12 MB）；
+          → 出 `target/release/bundle/deb/Vox_0.1.4_amd64.deb`（12 MB）；
             Depends 干净（libpipewire-0.3-0 + Tauri 自动识别的 webkit/gtk/appindicator，
             我们自己写的那三个会跟自动识别重复，已删）；.desktop 有 Categories
             （Tauri 默认模板给的是空分类）
-Linux   : sudo dpkg -i 那个 deb → /usr/bin/voxbridge 能起：主窗口 960x640 可见、
+Linux   : sudo dpkg -i 那个 deb → /usr/bin/vox 能起：主窗口 960x640 可见、
             热键监听盯上真键盘、托盘初始化；验完 `dpkg -r vox-bridge` 卸掉
 Linux   : sudo <evdev_end_to_end 测试二进制> --ignored
           → 造一个 uinput 虚拟键盘，真的打 KEY_F8 按下+松开，
             监听器收到 SpeakPressed + SpeakReleased（按住说话就靠这个 release）
-Windows : cargo check -p voxbridge --target x86_64-pc-windows-gnu       → 通过（全量，含装配层）
+Windows : cargo check -p vox --target x86_64-pc-windows-gnu       → 通过（全量，含装配层）
 Windows : cargo check -p vox-audio-win -p vox-overlay-win -p vox-osc --target
           x86_64-pc-windows-msvc --all-targets                          → 通过
 UI      : cd app/ui && npm run verify → 全绿
@@ -550,8 +550,8 @@ cd app/ui && npm run dev
 GDK_BACKEND=x11 python3 tools/linux-verify/webkit_shot.py \
     "http://127.0.0.1:5183/?mock=1" /tmp/ui.png
 # ② 真 app 窗口的像素（ImageMagick 对 X 窗口做 XGetImage）
-./target/debug/voxbridge &
-import -window "$(xwininfo -root -tree | grep '"VoxBridge"' | awk '{print $1}')" /tmp/app.png
+./target/debug/vox &
+import -window "$(xwininfo -root -tree | grep '"Vox"' | awk '{print $1}')" /tmp/app.png
 ```
 
 结果：① 前端在 WebKitGTK 里正常渲染（侧栏 7 项、两张流水线卡、Maple Mono CN 中文、
@@ -619,7 +619,7 @@ PipeWire 图的实际状态一致）。这同时证明了三件事：NVIDIA + We
    | 场景 | 探针 | 关窗后 | 进程 |
    | --- | --- | --- | --- |
    | 正常会话（GNOME + AppIndicator 扩展，`busctl` 里 `org.kde.StatusNotifierWatcher` 有主） | `= true` | `WM_STATE: Withdrawn`（收进托盘） | 活着 |
-   | `DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/voxbridge-no-such-bus`（模拟裸 GNOME） | `= false` | `WM_STATE: Iconic`（最小化） | 活着 |
+   | `DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/vox-no-such-bus`（模拟裸 GNOME） | `= false` | `WM_STATE: Iconic`（最小化） | 活着 |
 
    外加一条：窗口被收进托盘后再启动一次 → 单实例插件把已运行的实例叫到前面
    （实测窗口从 `Withdrawn` 回到 `IsViewable`）。
@@ -630,7 +630,7 @@ PipeWire 图的实际状态一致）。这同时证明了三件事：NVIDIA + We
      所以建链另起一个连接（守护线程自己的主循环）。
    - **`stream.node_id()` 在服务端建出节点之前返回 `PW_ID_ANY`**（实测 4294967295），
      而"等节点建出来"又需要 roundtrip —— 绕回来了。解法：采集流用一个**唯一名字**
-     （`voxbridge-capture-<pid>-<纳秒>`），守护按名字在图里找它。
+     （`vox-capture-<pid>-<纳秒>`），守护按名字在图里找它。
    - **守护的 `start()` 不能等第一次结果**：采集线程要接着跑主循环、节点才会被建出来，
      在 `start()` 里等就成了死锁（守护等节点、采集线程等守护，2 秒后双双超时）。
 

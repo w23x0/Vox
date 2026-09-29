@@ -1,6 +1,6 @@
 [package]
 name = "vox-core"
-description = "VoxBridge 内核：平台无关的账本、流水线与云端协议"
+description = "Vox 内核：平台无关的账本、流水线与云端协议"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -26,8 +26,8 @@ GDK_BACKEND=x11 python3 tools/linux-verify/webkit_shot.py \\
 想抓**真 app 窗口**的像素（不是 WebKit 离屏渲染）用 ImageMagick：
 
 ```bash
-./target/debug/voxbridge &            # 会话是 Wayland 时它会自己切 GDK_BACKEND=x11
-import -window "$(xwininfo -root -tree | grep '\"VoxBridge\"' | awk '{print $1}')" /tmp/app.png
+./target/debug/vox &            # 会话是 Wayland 时它会自己切 GDK_BACKEND=x11
+import -window "$(xwininfo -root -tree | grep '\"Vox\"' | awk '{print $1}')" /tmp/app.png
 ```
 """
 import sys

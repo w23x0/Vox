@@ -1,4 +1,4 @@
-//! VoxBridge 控制面出口：动作清单 → MCP 协议面 + `voxctl`。
+//! Vox 控制面出口：动作清单 → MCP 协议面 + `voxctl`。
 //!
 //! **唯一真源**是 [`actions::ACTIONS`]：工具名、入/出参 schema、权限要求、是否长任务全写在那张
 //! 数据表里。`tools/list`、`tools/call` 的参数校验、CLI 子命令都从它推导——清单是数据不是分支，

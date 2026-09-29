@@ -352,7 +352,7 @@ pub(crate) fn is_cable_capture(name: &str) -> bool {
     n.contains("cable output") || (n.contains("vb-audio") && n.contains("output"))
 }
 
-/// 新版额外暴露的多声道播放端点。VoxBridge 只传人声，不需要它。
+/// 新版额外暴露的多声道播放端点。Vox 只传人声，不需要它。
 pub fn is_cable_multichannel_render(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     is_cable_render(name)
@@ -528,12 +528,12 @@ fn has_standalone_word(text: &str, word: &str) -> bool {
         .any(|w| w == word)
 }
 
-/// 建议的下载落盘目录：`%LOCALAPPDATA%\VoxBridge\vbcable`，取不到就用临时目录。
+/// 建议的下载落盘目录：`%LOCALAPPDATA%\Vox\vbcable`，取不到就用临时目录。
 pub fn default_download_dir() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
-    base.join("VoxBridge").join("vbcable")
+    base.join("Vox").join("vbcable")
 }
 
 /// WinHTTP 句柄的所有者。任何一步失败都要把已经开的句柄按序关掉，
@@ -594,7 +594,7 @@ pub fn download(
     }
     let dest = dir.join(ARCHIVE_FILE_NAME);
 
-    let agent = to_wide("VoxBridge");
+    let agent = to_wide("Vox");
     // SAFETY: agent 在调用期间有效；返回的句柄立刻交给 HttpHandle 托管。
     let session = match HttpHandle::new(unsafe {
         WinHttpOpen(
@@ -1190,7 +1190,7 @@ mod tests {
 
     #[test]
     fn preflight_rejects_wrong_size_archive() {
-        let dir = std::env::temp_dir().join("voxbridge_cable_test_size");
+        let dir = std::env::temp_dir().join("vox_cable_test_size");
         std::fs::create_dir_all(&dir).unwrap();
         let fake = dir.join("fake.zip");
         std::fs::write(&fake, b"not the real driver pack").unwrap();
@@ -1204,7 +1204,7 @@ mod tests {
 
     #[test]
     fn installer_lookup_finds_nested_exe() {
-        let root = std::env::temp_dir().join("voxbridge_cable_test_walk");
+        let root = std::env::temp_dir().join("vox_cable_test_walk");
         let nested = root.join("a").join("b");
         std::fs::create_dir_all(&nested).unwrap();
         let exe = nested.join(INSTALLER_EXE);
@@ -1216,7 +1216,7 @@ mod tests {
 
     #[test]
     fn installer_lookup_returns_none_when_absent() {
-        let root = std::env::temp_dir().join("voxbridge_cable_test_empty");
+        let root = std::env::temp_dir().join("vox_cable_test_empty");
         std::fs::create_dir_all(&root).unwrap();
         assert!(find_installer(&root).is_none());
         let _ = std::fs::remove_dir_all(&root);

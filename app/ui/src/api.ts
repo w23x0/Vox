@@ -1,7 +1,7 @@
 /**
  * 后端适配层。
  *
- * 生产走 Tauri `invoke` + 单通道 `voxbridge://event`；
+ * 生产走 Tauri `invoke` + 单通道 `vox://event`；
  * 浏览器里（`npm run dev` 直接开、或者渲染截图）自动切到 mock，
  * 造一份逼真的快照并定时推假事件，界面在没有 Rust 侧的时候也能整套点通。
  *
@@ -17,7 +17,7 @@ import type {
   VoxEvent,
 } from "./types.snapshot";
 
-export const EVENT_CHANNEL = "voxbridge://event";
+export const EVENT_CHANNEL = "vox://event";
 
 export interface CableActionResult {
   needs_reboot: boolean;

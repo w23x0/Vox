@@ -1,4 +1,4 @@
-# bench-dsp — VoxBridge 算子 CPU 成本实测台
+# bench-dsp — Vox 算子 CPU 成本实测台
 
 一次性性能实测台，现在收编进仓库，方便以后回归对比。**只读**依赖 [`crates/vox-dsp`](../../crates/vox-dsp)
 与 [`crates/vox-core`](../../crates/vox-core)（`path` 依赖），不写仓库任何文件。

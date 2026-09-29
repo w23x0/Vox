@@ -1,4 +1,4 @@
-# VoxBridge 项目上下文（给所有代理）
+# Vox 项目上下文（给所有代理）
 
 ## 这是什么
 
@@ -49,7 +49,7 @@ cd app/ui && npm run verify            # 前端：tsc + vite build + 类名白�
 - **芯里不许出现平台 API**：`vox-core` 不 `use windows`、不碰 Tauri、不碰 tokio（实测零命中）。
   平台能力一律走 `crates/vox-core/src/ports.rs` 的 trait，由外壳注入。
 - **单一账本**：所有状态/设置只住在 `vox-core::Runtime`，别处不许存副本。事件只有一个通道
-  `voxbridge://event`（前端一个 listener 全收）。
+  `vox://event`（前端一个 listener 全收）。
 - **热路径零新增分配**：音频回调、DSP 每帧、渲染每帧里不许新增 `Vec`/`clone`/格式化。
   已知热点见 `docs/research/BACKEND_HEALTH_CHECK.md` 与 `docs/architecture/DIRECTIONS.md` §10.3-3。
 - **性能事实（实测，别猜）**：采集链 3.03 ms/s、播放链 1.73 ms/s，**≈0.3% 单核**；

@@ -53,7 +53,7 @@ pub fn pipewire_available() -> bool {
 /// | 位 | 这一档怎么定 | 定义者 |
 /// | --- | --- | --- |
 /// | `mic` | **报开**（不进 `off`） | 采集流真的能打开（起流时才知道）。装配期没有任何否定证据：一条采集流都还没开，"麦克风被独占"要真去开流才发现；PipeWire 连不上时启动期只记一条提示，不把这一位翻假——跟桌面 Linux 侧 `host_facts()` 的注释同一条口径（§2.5.1 的 Linux 列），失败留给起流的 `PortError` → `Notice` 兜底 |
-/// | `background_service` | `false(not_wired)` | 要的是 systemd unit 在不在（EMBEDDED §3.3）。**unit 与打包已经落地**（`crates/voxbridge-headless/systemd/` 两份 + `tools/package-headless.sh`），但这一位还**没有检测者**：问 systemd 要状态得走 D-Bus（`org.freedesktop.systemd1`），而"无屏盒子上有没有 systemd 会话总线"本身还是个未知数——在位能真的问出答案之前照实报 `not_wired`（"这段路还没接上"），不拿"unit 文件存在"当凭据 |
+/// | `background_service` | `false(not_wired)` | 要的是 systemd unit 在不在（EMBEDDED §3.3）。**unit 与打包已经落地**（`crates/vox-headless/systemd/` 两份 + `tools/package-headless.sh`），但这一位还**没有检测者**：问 systemd 要状态得走 D-Bus（`org.freedesktop.systemd1`），而"无屏盒子上有没有 systemd 会话总线"本身还是个未知数——在位能真的问出答案之前照实报 `not_wired`（"这段路还没接上"），不拿"unit 文件存在"当凭据 |
 ///
 /// 其余宿主位（`captions` / `tray` / `global_hotkey` / `virtual_mic` / `program_tap` /
 /// `vr_captions` / `net_in` / `net_out` / `file_config`）**不进 `off`**：它们在

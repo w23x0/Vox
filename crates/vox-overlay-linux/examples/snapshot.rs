@@ -141,7 +141,7 @@ fn scenes() -> Vec<Scene> {
             frame: SubtitleFrame {
                 lines: vec![line(
                     Track::Speak,
-                    "VoxBridge 0.1.4 · 实时语音翻译 (Tauri + Rust)",
+                    "Vox 0.1.4 · 实时语音翻译 (Tauri + Rust)",
                     "#fff4de",
                     1.0,
                 )],

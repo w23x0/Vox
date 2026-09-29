@@ -166,7 +166,7 @@ fn shoot(path: &str) {
         .and_then(|out| String::from_utf8(out.stdout).ok())
         .and_then(|text| {
             text.lines()
-                .find(|line| line.contains("\"VoxBridge 字幕\""))
+                .find(|line| line.contains("\"Vox 字幕\""))
                 .and_then(|line| line.split_whitespace().next().map(str::to_string))
         });
     let Some(id) = id else {

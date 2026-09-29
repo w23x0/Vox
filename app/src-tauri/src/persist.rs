@@ -214,7 +214,7 @@ mod tests {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("voxbridge_persist_test_{id}"));
+        let dir = std::env::temp_dir().join(format!("vox_persist_test_{id}"));
         let _ = fs::create_dir_all(&dir);
         dir
     }
@@ -278,7 +278,7 @@ mod tests {
     #[test]
     fn load_settings_returns_default_when_dir_missing() {
         // 给一个肯定不存在的路径：`Persist::new` 只读——不建目录、也不起线程。
-        let dir = std::env::temp_dir().join("voxbridge_persist_test_nonexistent_42");
+        let dir = std::env::temp_dir().join("vox_persist_test_nonexistent_42");
         let _ = fs::remove_dir_all(&dir);
 
         let persist = Persist::new(dir.clone());

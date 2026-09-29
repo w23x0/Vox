@@ -37,7 +37,7 @@ fn virtual_keyboard_f8_reaches_the_listener() {
     }
     let mut keyboard = VirtualDevice::builder()
         .expect("建 uinput 设备失败（需要 root 与 /dev/uinput）")
-        .name("voxbridge-test-keyboard")
+        .name("vox-test-keyboard")
         .with_keys(&keys)
         .expect("声明按键能力失败")
         .build()

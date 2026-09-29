@@ -50,19 +50,19 @@ export function PipelineCard({ pipeline }: { pipeline: HomePipeline }) {
     !inputs.some((device) => device.name === speak.input_device);
 
   const [recentSpeakLanguages, rememberSpeakLanguage] = useRecentValues(
-    "voxbridge.recent.speak-languages",
+    "vox.recent.speak-languages",
     speak.target_language,
   );
   const [recentListenLanguages, rememberListenLanguage] = useRecentValues(
-    "voxbridge.recent.listen-languages",
+    "vox.recent.listen-languages",
     listen.source_language,
   );
   const [recentSpeakVoices, rememberSpeakVoice] = useRecentValues(
-    "voxbridge.recent.speak-voices",
+    "vox.recent.speak-voices",
     speak.voice,
   );
   const [recentListenVoices, rememberListenVoice] = useRecentValues(
-    "voxbridge.recent.listen-voices",
+    "vox.recent.listen-voices",
     listen.voice,
   );
 

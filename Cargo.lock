@@ -5773,6 +5773,41 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "vox"
+version = "0.2.1"
+dependencies = [
+ "chrono",
+ "keyring",
+ "openvr",
+ "parking_lot",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "vox-audio-linux",
+ "vox-audio-win",
+ "vox-core",
+ "vox-dsp",
+ "vox-input-linux",
+ "vox-input-win",
+ "vox-mcp",
+ "vox-net",
+ "vox-osc",
+ "vox-overlay-linux",
+ "vox-overlay-win",
+ "windows 0.62.2",
+ "zbus",
+]
+
+[[package]]
 name = "vox-audio-linux"
 version = "0.2.1"
 dependencies = [
@@ -5813,6 +5848,24 @@ dependencies = [
  "nnnoiseless",
  "rubato",
  "vox-core",
+]
+
+[[package]]
+name = "vox-headless"
+version = "0.2.1"
+dependencies = [
+ "chrono",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "vox-audio-linux",
+ "vox-core",
+ "vox-dsp",
+ "vox-mcp",
+ "vox-net",
 ]
 
 [[package]]
@@ -5896,59 +5949,6 @@ dependencies = [
  "vox-core",
  "vox-overlay-core",
  "windows 0.62.2",
-]
-
-[[package]]
-name = "voxbridge"
-version = "0.2.1"
-dependencies = [
- "chrono",
- "keyring",
- "openvr",
- "parking_lot",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "vox-audio-linux",
- "vox-audio-win",
- "vox-core",
- "vox-dsp",
- "vox-input-linux",
- "vox-input-win",
- "vox-mcp",
- "vox-net",
- "vox-osc",
- "vox-overlay-linux",
- "vox-overlay-win",
- "windows 0.62.2",
- "zbus",
-]
-
-[[package]]
-name = "voxbridge-headless"
-version = "0.2.1"
-dependencies = [
- "chrono",
- "parking_lot",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "vox-audio-linux",
- "vox-core",
- "vox-dsp",
- "vox-mcp",
- "vox-net",
 ]
 
 [[package]]

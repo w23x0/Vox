@@ -26,8 +26,8 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(2);
 const WIDTH: i32 = 880;
 const HEIGHT: i32 = 170;
 const DPI: u32 = 96;
-const OVERLAY_KEY: &str = "org.voxbridge.overlay.listen\0";
-const OVERLAY_NAME: &str = "VoxBridge Listen Subtitles\0";
+const OVERLAY_KEY: &str = "org.vox.overlay.listen\0";
+const OVERLAY_NAME: &str = "Vox Listen Subtitles\0";
 
 static STOP: AtomicBool = AtomicBool::new(false);
 static THREAD: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
@@ -164,7 +164,7 @@ fn run(runtime: Runtime) {
                     CONNECTED.store(true, Ordering::Release);
                 }
                 Err(error) => {
-                    tracing::warn!(%error, "VoxBridge SteamVR Overlay 连接失败");
+                    tracing::warn!(%error, "Vox SteamVR Overlay 连接失败");
                     next_retry = std::time::Instant::now() + RETRY_INTERVAL;
                 }
             }

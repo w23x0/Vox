@@ -5,7 +5,7 @@
 > `osc_send_chatbox` / `osc_set_avatar` 五个命令 + `app/ui/src/sections/Vrchat.tsx` 已在。
 > 但**方案本身仍未拍板**，下方 §5 的决策点与 §6「预想，没动代码」的措辞已过期 ——
 > 现状以 [`docs/architecture/DIRECTIONS.md`](../architecture/DIRECTIONS.md) §7 为准。
-> 本文把「在 VRChat 里，用 VRChat 官方 **OSC（OpenSoundControl）** 协议，把 VoxBridge 的
+> 本文把「在 VRChat 里，用 VRChat 官方 **OSC（OpenSoundControl）** 协议，把 Vox 的
 > **对外说话**（译文语音 + 字幕）同步进 VRChat」的方向、能力边界、工程代价、卡住的决策点全部摊开。
 > **所有带 ⚠️ 的条目都待你确认。** 拍板结果写进 [`docs/architecture/DECISIONS.md`](../architecture/DECISIONS.md) B 区，
 > 代码落地后以代码为准。
@@ -30,7 +30,7 @@
 | 你自己 / 别人从你的**虚拟形象**上看出「正在翻译」 | ✘ 要新做 | **VRChat OSC → `/avatar/parameters/*`** |
 
 目标一致的现成工具是 **VRCOSC / OSC 外挂**，但它们要么是独立程序、要么是 mod，
-要么与翻译流水线脱钩。VoxBridge 本来就**已经产出译文字幕**，只是没接上 VRChat 的
+要么与翻译流水线脱钩。Vox 本来就**已经产出译文字幕**，只是没接上 VRChat 的
 「写」通道——把这一步做成本地外部模块，是顺着现有边缘扩展，不重写核心。
 
 ⚠️ **没拍板过**：要不要做到 ChatBox 文本这一档？还是只要虚拟形象指示（轻量）？
@@ -55,7 +55,7 @@
 
 要点：
 
-- **只写不读（第一版）**：VoxBridge 单方面把状态/文本发进 VRChat。不需要收 VRChat 的
+- **只写不读（第一版）**：Vox 单方面把状态/文本发进 VRChat。不需要收 VRChat 的
   9001 反馈来驱动任何核心逻辑。⚠️ 是否要「收」由 D2 定。
 - **开关**：在**主界面的一个独立 VRChat 页**（仿「OCR」页）里开关整个 OSC 模块；
   开 / 关、以及 ChatBox 文本、指示灯是否各自分控，见 D1/D4。
@@ -130,7 +130,7 @@
 
 ### 5.4. friendlyName 与 OSC 白名单怎么处理
 
-- 需要在 VRC 的 `config.json` 写入一个如 `VoxBridge` 的 `friendlyName`，用户才能在
+- 需要在 VRC 的 `config.json` 写入一个如 `Vox` 的 `friendlyName`，用户才能在
   VRC 的 OSC 面板看到/允许这个设备。**这是「第一次必须手动」的根源**，UI 上要给步骤。
 - ⚠️ 直接改写 VRC 的 `config.json` 有一定风险面（VRC 自己也在写同文件），要不要写、
   写成什么样，得定。
@@ -157,7 +157,7 @@
 - **装配层接线**（`app/src-tauri`）：
   - 新命令 `osc_start / osc_stop`、`osc_send_chatbox(text)`、（可选）`osc_set_avatar_running(bool)`。
   - 状态：`OSC 模块是否启动`挂到 `Runtime` 附近或单独 slot（参照现在 `ocr` 的 `state.ocr` 槽）。
-  - 事件：**不新增事件通道**，仍走 `voxbridge://event`。是否需要给 UI「OSC 没开」提示走现有 `Notice`。
+  - 事件：**不新增事件通道**，仍走 `vox://event`。是否需要给 UI「OSC 没开」提示走现有 `Notice`。
   - 数据钩子：把「对外说话」的 `SubtitleDelta`（Speak track 且 `done`）喂给 `send_chatbox`。
 - **前端**：
   - **独立 VRChat 页**（仿现有 `ocr` 页）挂进 `nav.ts`；主开关 + 分项开关 + ChatBox 字数说明。
@@ -173,7 +173,7 @@
 - **连接状态徽标**：OSC 模块是否已启动；是否检测到 VRChat 已开启 OSC（第一版靠「发出去不弹错」
   反推，或读 VRChat `config.json` 的端口看本机 UDP 是否在收）。
 - **首次引导**：三步（在 VRChat 设置里开 OSC + Allow Trusted；把 VRChat 的 `friendlyName` 对到
-  VoxBridge；回这里按「测试」）。做成 `Ocr` 页那样可折叠的三条。
+  Vox；回这里按「测试」）。做成 `Ocr` 页那样可折叠的三条。
 - **分项**：ChatBox 开关、Avatar 指示灯开关 + 参数名输入、ChatBox 推送节奏（整句 / 流式）。
 
 > 开关的「主动选」这一诉求是满足的——它跟现有 `ocr`、`CableManager` 页的开关形态对齐。

@@ -1,4 +1,4 @@
-# VoxBridge 工程结构与模块职责
+# Vox 工程结构与模块职责
 
 > 开工前的设计文档。代码按这份文档写；文档改了代码跟着改。
 >
@@ -60,7 +60,7 @@ RNNoise 只吃 **48 kHz、480 采样一帧**，所以降噪必须放在重采样
 ## 3. 目录结构
 
 ```
-VoxBridge/
+Vox/
 ├─ Cargo.toml                  # workspace
 ├─ catalog/
 │  ├─ aliyun.json             # 阿里云模型、语言、音色与 API 元数据
@@ -160,7 +160,7 @@ tracing / parking\_lot，**既没有 tokio 也没有 tokio-tungstenite**，
 | `vox-overlay-win` | Win32 分层窗（per-pixel alpha 真透明，不用 WebView2）；CPU 渲染中日韩文字；**永久鼠标穿透的纯显示窗**，不包含按钮、状态、token 计数或拖动交互；读取设置中的位置大小 |
 | `vox-input-win` | 全局热键监听（含鼠标侧键） |
 | `app/src-tauri` | 装配：建 Runtime、注入 Windows 实现、起悬浮窗线程、开热键线程、暴露 **26 个** Tauri 命令给前端、托盘、开机自启、单实例。另外自己负责**落盘去抖 + 原子写**（`persist.rs`）、**DPAPI 加密存密钥**（`sys/secrets.rs`）、**系统时钟**（`sys/clock.rs`）、**设备低频轮询**（`devices.rs`）、**事件桥**（`events.rs`：一条事件同时喂前端、悬浮窗、落盘、开机自启开关） |
-| `app/ui` | 设置界面。**侧栏切页**，共 **7** 页（见 `nav.ts`）：首页、模型服务商、听人说话、设置、用量、字幕外观、关于。首页分别在两张主卡内配置服务商、语言和音色；模型由服务商能力表固定。服务商页管理密钥并展示完整能力。前端只认一条事件通道 `voxbridge://event`（`api.ts` 里的 `EVENT_CHANNEL`）。运行期依赖只有 react + react-dom + @tauri-apps/api + @tauri-apps/plugin-updater |
+| `app/ui` | 设置界面。**侧栏切页**，共 **7** 页（见 `nav.ts`）：首页、模型服务商、听人说话、设置、用量、字幕外观、关于。首页分别在两张主卡内配置服务商、语言和音色；模型由服务商能力表固定。服务商页管理密钥并展示完整能力。前端只认一条事件通道 `vox://event`（`api.ts` 里的 `EVENT_CHANNEL`）。运行期依赖只有 react + react-dom + @tauri-apps/api + @tauri-apps/plugin-updater |
 
 ## 6. 线程拓扑
 
@@ -198,7 +198,7 @@ tracing / parking\_lot，**既没有 tokio 也没有 tokio-tungstenite**，
 > 拍板记录连同**待拍板清单**已经整理进 `docs/architecture/DECISIONS.md`，那份是权威版本。
 > 下面这份留作速查。
 
-1. 项目落在 `C:\Users\Wang\Desktop\VoxBridge\`，`VRCQ\` 原样保留只作参考。
+1. 项目落在 `C:\Users\Wang\Desktop\Vox\`，`VRCQ\` 原样保留只作参考。
 2. 激活方式两种可切：**开关**（默认，按一下开、再按一下关）和**按住说话**。音量阀门只在开关模式下生效。
 3. 用量**只显示已用**（总计/输入/输出，今日/本月，按模型），加一个「重置计数」。不做配额、不算剩余、不查账户余额。
 4. VB-CABLE：安装时检测，没有就从官网下载并静默安装（会弹一次 UAC，可能要重启）。不打包进安装程序。

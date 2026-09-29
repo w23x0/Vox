@@ -1,4 +1,4 @@
-//! VoxBridge 算子 CPU 成本实测台。
+//! Vox 算子 CPU 成本实测台。
 //!
 //! 只读依赖仓库两个 crate（vox-dsp / vox-core，path 依赖），不写仓库任何文件。
 //! 编译：cargo build --release；跑：taskset -c 2 ./target/release/voxbench

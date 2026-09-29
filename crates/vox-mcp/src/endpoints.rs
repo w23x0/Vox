@@ -363,7 +363,7 @@ pub fn wire(composition: &Composition) -> Value {
 
 /// 清单**文档**（S0 §4.3-A）：`capabilities` + 两条腿的清单 + 派生不出来的理由。
 ///
-/// 打这份文档的两个入口——无屏档的 `--print-composition`（`voxbridge-headless`）与桌面档的
+/// 打这份文档的两个入口——无屏档的 `--print-composition`（`vox-headless`）与桌面档的
 /// 同一个开关（`app`）——都调这里，**组装只有这一处**：两边打出来的**形状**（键名、嵌套、
 /// 键顺序）逐字相同，**取值随档位与宿主事实本就不同**（能力位上限、`host`、设备名都该不一样
 /// ——同形说的是骨架，不是内容；把取值也读成"逐字相同"就会把两档该有的差别当成 bug）。

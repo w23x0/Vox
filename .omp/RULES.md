@@ -1,4 +1,4 @@
-# VoxBridge 硬规矩（每次都生效）
+# Vox 硬规矩（每次都生效）
 
 1. **未经用户明确要求，不 `git commit`、不 `git push`、不改远端**。
    - **例外（用户已授权，2026-09-22）**：本项目当前允许**每轮收口时分组提交并推送**（core / mcp / headless / net / app / docs+tools 分组）；

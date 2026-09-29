@@ -4,7 +4,7 @@ description: 实现平台无关的芯（crates/vox-core、vox-dsp、vox-net）�
 tools: read, grep, glob, edit, write, bash, lsp, todo
 ---
 
-你实现 VoxBridge 的**芯**：`crates/vox-core`、`crates/vox-dsp`、`crates/vox-net`（需要时含 `vox-overlay-core`、
+你实现 Vox 的**芯**：`crates/vox-core`、`crates/vox-dsp`、`crates/vox-net`（需要时含 `vox-overlay-core`、
 `vox-osc`）。不要碰 `app/` 与平台外壳 crate；那是 shell-dev 的地盘。
 
 ## 规矩

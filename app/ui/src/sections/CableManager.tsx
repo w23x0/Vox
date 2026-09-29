@@ -5,7 +5,7 @@
  * **能不能用读能力位 `virtual_mic`**（`hostBit`），**不是**读
  * `devices.virtual_cable_status`：那个字段只说明安装器 / 平台形态（装没装、要不要重启、
  * 这一档有没有"装驱动"这一步），只决定这一页摆哪些管理动作。位为假时不再渲染
- * "去目标程序里选 VoxBridge Virtual Mic"那句引导，改渲染 `CapabilityNote` 的 reason 文案
+ * "去目标程序里选 Vox Virtual Mic"那句引导，改渲染 `CapabilityNote` 的 reason 文案
  * （S0 §2.6 R1/R9：不静默、说清"这台设备做不到"）。
  *
  * 从 Settings.tsx 抽出来的一整块 Cable 相关 UI：状态徽标、安装/卸载按钮、
@@ -97,7 +97,7 @@ export function CableManager() {
   /**
    * 这一档没有"装 / 卸"这一步：只报状态 + 告诉用户去哪选设备。
    *
-   * **位为真才给"去目标程序里选 VoxBridge Virtual Mic"那句引导**：位为假时（比如 Linux
+   * **位为真才给"去目标程序里选 Vox Virtual Mic"那句引导**：位为假时（比如 Linux
    * 接线前的 `not_wired`）那句引导指向一个不存在的设备，正是 §1.4 的老毛病——改成
    * `CapabilityNote` 的 reason 文案（R1/R9）。
    */

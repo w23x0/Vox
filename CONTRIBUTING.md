@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for looking. VoxBridge is deliberately **conservative**: the core scope is fixed and its behavior-contrors are documented, not improvised. Bugs and good bug reports are always welcome; big direction changes need a decision tracker, not a stream of PRs.
+Thanks for looking. Vox is deliberately **conservative**: the core scope is fixed and its behavior-contrors are documented, not improvised. Bugs and good bug reports are always welcome; big direction changes need a decision tracker, not a stream of PRs.
 
 Your time is best spent **outside the core** — see below.
 
@@ -12,7 +12,7 @@ Your time is best spent **outside the core** — see below.
 
 ## Where to help — the open extension point
 
-VoxBridge treats **external modules** as its open surface. The planned Discord module (`docs/protocols/DISCORD_PROTOCOL.md`) is the concrete example: a self-contained crate (`crates/vox-discord/`) that only talks to existing `vox-net` and the single event channel — it **does not** touch the mic / VB-CABLE / loopback / protocol internals.
+Vox treats **external modules** as its open surface. The planned Discord module (`docs/protocols/DISCORD_PROTOCOL.md`) is the concrete example: a self-contained crate (`crates/vox-discord/`) that only talks to existing `vox-net` and the single event channel — it **does not** touch the mic / VB-CABLE / loopback / protocol internals.
 
 That's the bar: if your idea fits as an out-of-process module on the existing edge, it's welcome. Anything that rewires the core needs a decision first.
 
@@ -34,7 +34,7 @@ npm run dev                  # UI only: http://127.0.0.1:5183/?mock=1
 ## Building blocks to honor
 
 - Frontend/backend fields are `snake_case` — no camelCase aliases.
-- Every status flows over one event channel: `voxbridge://event`.
+- Every status flows over one event channel: `vox://event`.
 - WebSocket JSON shapes live only in `crates/vox-core/src/cloud/protocol.rs`.
 - `vox-core` stays free of Tauri, Win32/PipeWire, tokio, and audio devices — platform abilities come in as traits. Platform shells live in `vox-*-win` / `vox-*-linux`; see [`docs/platform/LINUX.md`](docs/platform/LINUX.md).
 - Provider metadata is edited in `catalog/*.json` (or the Rust build checks/`catalog_updater`), never hard-coded.

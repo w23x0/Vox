@@ -30,7 +30,7 @@ const SCRIPT: &[(u64, Track, &str)] = &[
     (
         6200,
         Track::Speak,
-        "VoxBridge 0.1.4 · 实时语音翻译 (Tauri + Rust)",
+        "Vox 0.1.4 · 实时语音翻译 (Tauri + Rust)",
     ),
 ];
 
@@ -53,7 +53,7 @@ fn main() {
             std::process::exit(1);
         }
     };
-    println!("悬浮窗已起。跑 {seconds} 秒，期间用 xwininfo / xprop 查 VoxBridge 字幕。");
+    println!("悬浮窗已起。跑 {seconds} 秒，期间用 xwininfo / xprop 查 Vox 字幕。");
     overlay.show();
 
     let started = Instant::now();

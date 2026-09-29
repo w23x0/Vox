@@ -1,6 +1,6 @@
 > 状态：已完成（2026-09-21）｜ 条目已全部落地（WASAPI 样板抽到 `crates/vox-audio-win/src/capture/shared.rs`、`ProcGuard` 消失、`build.rs` 合成 `MiniCatalog`、`vox-audio-win/src/resample.rs` 改成 `Resample` trait 等，逐条清单见 `docs/architecture/DIRECTIONS.md` §7；仅 §4.2 一条按本文自评“收益小，可不动”）｜ 保留作留痕，别照它施工。
 
-# VoxBridge 后端 Rust 代码体检报告
+# Vox 后端 Rust 代码体检报告
 
 **扫描范围**：`crates/vox-core`、`vox-net`、`vox-dsp`、`vox-audio-win`、`vox-input-win`、`vox-overlay-win` 全部 `.rs`，加 `app/src-tauri/src/` 装配层。只读不编译。
 

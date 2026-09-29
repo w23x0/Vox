@@ -6,9 +6,9 @@
 //!
 //! ```text
 //! --config <settings.json 路径>      （装配层直接用它，并取它的父目录当配置目录）
-//! $VOXBRIDGE_CONFIG_DIR
-//! $XDG_CONFIG_HOME/voxbridge
-//! $HOME/.config/voxbridge
+//! $VOX_CONFIG_DIR
+//! $XDG_CONFIG_HOME/vox
+//! $HOME/.config/vox
 //! ```
 //!
 //! 后三级就是 [`dir_from`]。都拿不到 → 报错退出，**不猜一个目录**：往错误的地方写
@@ -32,16 +32,16 @@ pub const SECRET_FILE: &str = "secret.json";
 pub const CONTROL_FILE: &str = "control.json";
 
 /// 配置目录的环境变量（第一优先）。
-pub const ENV_CONFIG_DIR: &str = "VOXBRIDGE_CONFIG_DIR";
-/// 配置目录在 XDG / HOME 下的名字。跟桌面档的 identifier 同源（`com.voxbridge.app`）。
-pub const APP_DIR: &str = "voxbridge";
+pub const ENV_CONFIG_DIR: &str = "VOX_CONFIG_DIR";
+/// 配置目录在 XDG / HOME 下的名字。跟桌面档的 identifier 同源（`com.vox.app`）。
+pub const APP_DIR: &str = "vox";
 
 /// 配置目录三级回落里**后三级**（`--config` 由调用方优先，它只看父目录）。
 ///
 /// 纯函数：参数就是"那三个环境变量各自的值"，读环境的事交给 [`dir_from_env`]。
 /// 空值当没设（`XDG_CONFIG_HOME=` 这种写法不该把目录顶成相对路径）。
 pub fn dir_from(
-    voxbridge: Option<&Path>,
+    vox: Option<&Path>,
     xdg_config_home: Option<&Path>,
     home: Option<&Path>,
 ) -> Option<PathBuf> {
@@ -49,7 +49,7 @@ pub fn dir_from(
         path.filter(|path| !path.as_os_str().is_empty())
             .map(Path::to_path_buf)
     };
-    if let Some(dir) = nonempty(voxbridge) {
+    if let Some(dir) = nonempty(vox) {
         return Some(dir);
     }
     if let Some(xdg) = nonempty(xdg_config_home) {
@@ -186,18 +186,18 @@ mod tests {
     fn xdg_then_home_are_the_fallbacks() {
         assert_eq!(
             dir_from(None, Some(Path::new("/xdg")), Some(Path::new("/home/u"))).as_deref(),
-            Some(Path::new("/xdg/voxbridge"))
+            Some(Path::new("/xdg/vox"))
         );
         assert_eq!(
             dir_from(None, None, Some(Path::new("/home/u"))).as_deref(),
-            Some(Path::new("/home/u/.config/voxbridge"))
+            Some(Path::new("/home/u/.config/vox"))
         );
         assert_eq!(dir_from(None, None, None), None, "一个都没有就不猜目录");
     }
 
     #[test]
     fn empty_env_values_are_unset() {
-        // `VOXBRIDGE_CONFIG_DIR=` / `XDG_CONFIG_HOME=` 是"设了个空"，不是"设了这个目录"：
+        // `VOX_CONFIG_DIR=` / `XDG_CONFIG_HOME=` 是"设了个空"，不是"设了这个目录"：
         // 空字符串会让后面的 join 变成一个相对路径，配置就落到进程的 cwd 里去了。
         assert_eq!(
             dir_from(
@@ -206,7 +206,7 @@ mod tests {
                 Some(Path::new("/home/u"))
             )
             .as_deref(),
-            Some(Path::new("/home/u/.config/voxbridge"))
+            Some(Path::new("/home/u/.config/vox"))
         );
     }
 

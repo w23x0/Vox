@@ -87,7 +87,7 @@ export function VrchatPage() {
     if (testing) return;
     setTesting(true);
     try {
-      await api.oscSendChatbox("VoxBridge test message");
+      await api.oscSendChatbox("Vox test message");
       toast("success", t("vrchat.sent"));
     } catch (e: unknown) {
       toast("danger", t("vrchat.sendFailed", { error: String(e) }));

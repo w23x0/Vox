@@ -62,16 +62,16 @@ function freePort() {
 /**
  * 这次起在哪个端口上：默认问内核要一个（别人没法提前占住）。
  *
- * `VOXBRIDGE_PREVIEW_PORT` 能把端口钉住，**只给自查用**——`scripts/check-preview.mjs` 要能
+ * `VOX_PREVIEW_PORT` 能把端口钉住，**只给自查用**——`scripts/check-preview.mjs` 要能
  * 复现"端口被占"那一档。钉住的端口真被占着时 `startPreview` 会失败（规矩 2），
  * 这正是要演示的东西：它只会让自查**更早**失败，不会让它跑在别人的服务上。
  */
 async function pickPort() {
-  const pinned = process.env.VOXBRIDGE_PREVIEW_PORT;
+  const pinned = process.env.VOX_PREVIEW_PORT;
   if (pinned === undefined || pinned === "") return freePort();
   const port = Number(pinned);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(`VOXBRIDGE_PREVIEW_PORT 不是个端口：${pinned}`);
+    throw new Error(`VOX_PREVIEW_PORT 不是个端口：${pinned}`);
   }
   return port;
 }

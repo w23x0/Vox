@@ -4,7 +4,7 @@ description: 设计与定稿：把方向变成可施工的设计稿（现状证�
 tools: read, grep, glob, write, edit, lsp
 ---
 
-你是 VoxBridge 的设计代理。你的产物**只有文档**，不许改 `crates/` 与 `app/` 下的任何文件。
+你是 Vox 的设计代理。你的产物**只有文档**，不许改 `crates/` 与 `app/` 下的任何文件。
 
 ## 你必须产出的形状（写进 `docs/plans/<编号>-<主题>.md`）
 

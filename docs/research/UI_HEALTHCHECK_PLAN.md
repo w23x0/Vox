@@ -1,6 +1,6 @@
 > 状态：已完成（2026-09-21）｜ 第一批 T1–T9、D1、D2、R1、R2 已落地，仅 R3（拆 `App.tsx` 的 `document.keydown` 大闭包）从未开工、本文要求单独点头——见 `docs/architecture/DIRECTIONS.md` §6.2 / §7 ｜ 保留作留痕，别照它施工 ｜ **第二十轮状态注（2026-09-22）**：§验收 的 `npm run verify` 链**已扩展**，写稿当时 5 步、现为 9 步，**以 `app/ui/package.json` 的 `verify` 为准**（下文链枚举已按此改写；本文件其余内容仍按写稿当时时点阅读）。
 
-# VoxBridge 前端代码体检 · 执行方案
+# Vox 前端代码体检 · 执行方案
 
 > 来源：2026-08-22 对 `app/ui/src/` 的代码体检。
 > 本文件是**可执行的作业清单**——子代理按本文件干活，不需要再读体检报告原文。
@@ -13,7 +13,7 @@
 3. **前端不持有状态**：一切状态从后端 `Snapshot` 来。本次作业**不碰** store 的事件归约与乐观更新逻辑。
 4. **i18n 多语 label 住 catalog JSON 的 {zh,en,ja}**，不在前端字典里硬编码模型名/语言名。
 5. **不动 Rust 侧**。`start_pipeline` / `stop_pipeline` / `open_dashscope_console` 这些命令在后端**保留**（成本极低、保持后端完整），只在**前端 `VoxApi` 接口里摘掉**。
-6. **不碰**以下刻意设计：单通道事件 `voxbridge://event`、`focus.ts` 列槽导航算法、`Latency.tsx` 的分段计算、catalog 单数据源 + 覆盖版机制。
+6. **不碰**以下刻意设计：单通道事件 `vox://event`、`focus.ts` 列槽导航算法、`Latency.tsx` 的分段计算、catalog 单数据源 + 覆盖版机制。
 7. **不改 i18n 三语字典的内容/结构**（除非某条 key 因删组件而彻底没人用，见下文「死 key 清理」——需独立裁决，默认不动字典）。
 
 ## 验收（子代理作业完成的硬门槛）

@@ -226,7 +226,7 @@ fn tools_list_is_generated_from_the_action_table() {
     // 身份：规范 SHOULD 在每条结果的 `_meta` 里自报家门，而且别拿它做安全判断。
     assert_eq!(
         result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
-        json!("voxbridge")
+        json!("vox")
     );
 }
 
@@ -318,7 +318,7 @@ fn discover_carries_versions_capabilities_and_identity() {
     assert_eq!(result["cacheScope"], json!("public"));
     assert_eq!(
         result["_meta"]["io.modelcontextprotocol/serverInfo"],
-        json!({ "name": "voxbridge", "version": env!("CARGO_PKG_VERSION") })
+        json!({ "name": "vox", "version": env!("CARGO_PKG_VERSION") })
     );
 }
 

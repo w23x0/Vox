@@ -1,4 +1,4 @@
-# VoxBridge 拍板记录
+# Vox 拍板记录
 
 > 谁改了主意，就改这份文档，别改代码注释。代码和这里打架时**以代码为准**，
 > 然后回头把这里改对。
@@ -15,7 +15,7 @@
 
 ## A. 已拍板
 
-1. **项目位置**：落在 `C:\Users\Wang\Desktop\VoxBridge\`。旧项目 `VRCQ\` 原样保留，
+1. **项目位置**：落在 `C:\Users\Wang\Desktop\Vox\`。旧项目 `VRCQ\` 原样保留，
    只作参考，不动一个字。
 2. **激活方式两种可切**：**开关**（默认，按一下开、再按一下关）和**按住说话**。
    音量阀门**只在开关模式下生效**（按住说话时你的手就是阀门）。
@@ -52,13 +52,13 @@
     **无边化**（`--border: transparent`，功能分隔线走 `--divider`）、
     阴影统一纯垂直单层、打包 `GlassUI Mono` 字体（6 个 woff2，分发不依赖
     系统字体）、侧栏高度 `--app-h` 平滑跟随、激活态用 `accent-soft`、
-    标题栏改为固定应用名 "VoxBridge"（页面名只在内容区 h1 出现一次）。
+    标题栏改为固定应用名 "Vox"（页面名只在内容区 h1 出现一次）。
     主按钮**保持蓝色**（用户拍板，不按 glassui 的近黑按钮规则翻转）。
     顺手修了 `index.html` 主题 key 与 `theme.ts` 不一致导致的首帧闪白。
 14. **发版自动化与更新签名密钥轮换**（2026-08-22）。推 `v*` tag 触发
     `.github/workflows/release.yml`：CI 自动构建 NSIS、用仓库 Secret
     `TAURI_SIGNING_PRIVATE_KEY` 签名，并创建 GitHub Release 与 `latest.json`。
-    本地不再手动构建发版。签名私钥在 `tools/signing/voxbridge_private.key`
+    本地不再手动构建发版。签名私钥在 `tools/signing/vox_private.key`
     （已 gitignore、无密码），Secret 值就是文件原文那一整行 base64。
     因旧私钥无法在本机恢复使用，轮换到新密钥对：**≤0.1.3 的安装无法应用内
     升级到 0.1.4，需手动安装一次**；0.1.4 起自更新正常。
@@ -429,7 +429,7 @@ b 的实现量很小：settings 里加一个 `Vec<(String, String)>`，
 
 ### B13. Discord 专属增强适配（**第二阶段预研，尚未拍板**）
 
-> 初心是让 VoxBridge「和 Discord 高度配合」。完整摊开了方向、能力边界、延迟与工程代价，
+> 初心是让 Vox「和 Discord 高度配合」。完整摊开了方向、能力边界、延迟与工程代价，
 > **没有结论**，详见 [`docs/protocols/DISCORD_PROTOCOL.md`](../protocols/DISCORD_PROTOCOL.md)。
 
 **背景**
@@ -462,7 +462,7 @@ b 的实现量很小：settings 里加一个 `Vec<(String, String)>`，
 后端 → 前端**只有一个通道**：
 
 ```
-voxbridge://event
+vox://event
 ```
 
 所有事件都从这个通道来，用 `kind` 字段区分。**不要再开第二个通道**，

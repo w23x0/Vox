@@ -18,7 +18,7 @@
         ],
         "section": "sound",
         "priority": "optional",
-        "desktopTemplate": "linux/voxbridge.desktop.hbs"
+        "desktopTemplate": "linux/vox.desktop.hbs"
       },
       "rpm": {
         "depends": [

@@ -10,7 +10,7 @@
 //! 拿到密钥。真要加密得有独立口令（systemd `LoadCredential=` / age），那是下一轮的事。
 //! 所以：文件里**真的有**密钥时，装配层会发一条 `Notice` 把这件事说出来（[`stored_keys`]）。
 //!
-//! 环境变量覆盖（`VOXBRIDGE_API_KEY_<服务商>`，例 `VOXBRIDGE_API_KEY_ALIYUN`）是给
+//! 环境变量覆盖（`VOX_API_KEY_<服务商>`，例 `VOX_API_KEY_ALIYUN`）是给
 //! "一次性试跑"用的（EMBEDDED §3.5-①）：读的时候优先于文件，**写的时候不碰它**
 //! ——环境变量改不了，`store` 写的一律是文件。两边都有时以环境变量为准，直到它被取消。
 
@@ -25,8 +25,8 @@ use vox_core::settings::ModelProvider;
 
 use crate::config::SECRET_FILE;
 
-/// 环境变量前缀：`VOXBRIDGE_API_KEY_ALIYUN` / `VOXBRIDGE_API_KEY_GEMINI` / …
-pub const ENV_API_KEY_PREFIX: &str = "VOXBRIDGE_API_KEY_";
+/// 环境变量前缀：`VOX_API_KEY_ALIYUN` / `VOX_API_KEY_GEMINI` / …
+pub const ENV_API_KEY_PREFIX: &str = "VOX_API_KEY_";
 
 /// 某个服务商的环境变量名（大写 `as_id()`）。**唯一**的取名处，测试也用这个。
 pub fn env_var_for(provider: ModelProvider) -> String {
@@ -291,7 +291,7 @@ mod tests {
                 .as_deref(),
             Some("from-env")
         );
-        // 空值当没设（`VOXBRIDGE_API_KEY_X=` 这种写法不该把文件里的密钥顶掉）。
+        // 空值当没设（`VOX_API_KEY_X=` 这种写法不该把文件里的密钥顶掉）。
         std::env::set_var(&var, "   ");
         assert_eq!(
             store

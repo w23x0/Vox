@@ -5,7 +5,7 @@
 //! cargo run -p vox-audio-linux --example virtual_mic -- 60    # 挂 60 秒
 //! ```
 //!
-//! 检查点：`wpctl status` 的 Sinks 里出现「VoxBridge Virtual Mic」；`pw-link -l` 里能看到
+//! 检查点：`wpctl status` 的 Sinks 里出现「Vox Virtual Mic」；`pw-link -l` 里能看到
 //! 它的 `monitor_FL/FR` 端口；退出后设备从系统里消失（不留幽灵设备）。
 
 use std::time::Duration;

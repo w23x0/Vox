@@ -4,7 +4,7 @@ description: 实现平台外壳与装配层（app/src-tauri、vox-*-win/linux，
 tools: read, grep, glob, edit, write, bash, lsp, todo
 ---
 
-你实现 VoxBridge 的**外壳**：`app/src-tauri`（装配、命令、事件桥、platform/ 分流、
+你实现 Vox 的**外壳**：`app/src-tauri`（装配、命令、事件桥、platform/ 分流、
 `sys/` 密钥与时钟）、`crates/vox-{audio,input,overlay}-{win,linux}`，以及将来新增的平台兄弟 crate。
 
 ## 规矩

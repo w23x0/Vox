@@ -13,8 +13,8 @@
 //!
 //! ```text
 //! pw-record /tmp/vmic.wav &          # 先起录音
-//! pw-link voxbridge_virtual_mic:monitor_FL pw-record:input_FL
-//! pw-link voxbridge_virtual_mic:monitor_FR pw-record:input_FR
+//! pw-link vox_virtual_mic:monitor_FL pw-record:input_FL
+//! pw-link vox_virtual_mic:monitor_FR pw-record:input_FR
 //! ```
 //!
 //! 然后看 `/tmp/vmic.wav` 不是静音（`sox`/`ffmpeg` 都行；本仓库的验证脚本用的是

@@ -1,4 +1,4 @@
-# VoxBridge
+# Vox
 
 A desktop real-time speech translator for live conversations — **Windows** and **Linux**. Two independent pipelines run at once:
 
@@ -54,10 +54,10 @@ Released Linux packages are built on Ubuntu 24.04, so they need **glibc ≥ 2.39
 Don't use `cargo build --release` for shipping; if you build the binary by hand, pass the custom protocol feature:
 
 ```powershell
-cargo build --release -p voxbridge --features custom-protocol
+cargo build --release -p vox --features custom-protocol
 
 # Optional SteamVR/OpenVR overlay build
-cargo build --release -p voxbridge --features "custom-protocol,steamvr-overlay"
+cargo build --release -p vox --features "custom-protocol,steamvr-overlay"
 ```
 
 ## Test
@@ -75,13 +75,13 @@ cargo run -p vox-audio-linux --example smoke -- app pw-cat 5   # capture a progr
 cargo run -p vox-audio-linux --example virtual_mic 15     # create the virtual microphone for 15s
 cargo run -p vox-overlay-linux --example live -- 20       # real caption overlay, scripted subtitles
 cargo test -p vox-input-linux -- --ignored                # real key events through a uinput keyboard (needs root)
-cargo test -p voxbridge --lib -- --ignored secret_service_round_trip   # Secret Service round trip
+cargo test -p vox --lib -- --ignored secret_service_round_trip   # Secret Service round trip
 ```
 
 ## Layout
 
 ```text
-VoxBridge/
+Vox/
 ├─ catalog/            # provider metadata: aliyun.json, gemini.json, gpt.json
 ├─ crates/
 │  ├─ vox-core/        # platform-neutral core: settings, protocol, state machine, usage
@@ -115,7 +115,7 @@ Both pipelines run independently; `vox-core::Runtime` is the single source of tr
 
 ## Contributing
 
-VoxBridge is deliberately conservative: core scope is fixed. External modules are the open extension point — see **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — including the planned Discord out-of-process module (`docs/protocols/DISCORD_PROTOCOL.md`, second phase, undecided).
+Vox is deliberately conservative: core scope is fixed. External modules are the open extension point — see **[`CONTRIBUTING.md`](CONTRIBUTING.md)** — including the planned Discord out-of-process module (`docs/protocols/DISCORD_PROTOCOL.md`, second phase, undecided).
 
 ## Docs
 

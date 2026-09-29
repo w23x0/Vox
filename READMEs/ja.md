@@ -1,4 +1,4 @@
-# VoxBridge
+# Vox
 
 ライブ会話のためのデスクトップ向けリアルタイム音声翻訳アプリ（**Windows** / **Linux**）。2 つの独立したパイプラインが同時に動作します:
 
@@ -42,7 +42,7 @@ npm run tauri:build      # NSIS を target/release/bundle/nsis/ に生成
 配布に `cargo build --release` は使わないでください。バイナリを手動でビルドする場合は、custom protocol フィーチャーを渡してください:
 
 ```powershell
-cargo build --release -p voxbridge --features custom-protocol
+cargo build --release -p vox --features custom-protocol
 ```
 
 ## テスト
@@ -55,7 +55,7 @@ npm run verify           # app/ui 内: 型チェック、本番ビルド、a11y/
 ## ディレクトリ構成
 
 ```text
-VoxBridge/
+Vox/
 ├─ catalog/            # プロバイダのメタデータ: aliyun.json、gemini.json、gpt.json
 ├─ crates/
 │  ├─ vox-core/        # プラットフォーム非依存のコア: 設定、プロトコル、状態機械、利用統計
@@ -81,7 +81,7 @@ VoxBridge/
 
 ## 貢献 (Contributing)
 
-VoxBridge は意図的に保守的で、コアスコープは固定されています。外部モジュールが拡張のための公開ポイントです — **[`../CONTRIBUTING.md`](../CONTRIBUTING.md)** を参照してください — また、計画中の Discord アウトプロセスモジュール（`docs/protocols/DISCORD_PROTOCOL.md`、第 2 期・未定）も含まれます。
+Vox は意図的に保守的で、コアスコープは固定されています。外部モジュールが拡張のための公開ポイントです — **[`../CONTRIBUTING.md`](../CONTRIBUTING.md)** を参照してください — また、計画中の Discord アウトプロセスモジュール（`docs/protocols/DISCORD_PROTOCOL.md`、第 2 期・未定）も含まれます。
 
 ## ドキュメント
 

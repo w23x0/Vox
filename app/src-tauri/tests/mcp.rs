@@ -13,7 +13,7 @@
 //! 跑法（要看线上的原始字节就加 `--nocapture`）：
 //!
 //! ```text
-//! cargo test -p voxbridge --test mcp -- --nocapture
+//! cargo test -p vox --test mcp -- --nocapture
 //! ```
 
 use std::collections::BTreeMap;
@@ -35,7 +35,7 @@ use vox_core::usage::Stamp;
 use vox_mcp::mcp::meta;
 use vox_mcp::transport::http::PATH;
 
-use voxbridge_lib::mcp::{self, Switch};
+use vox_lib::mcp::{self, Switch};
 
 /// 单调毫秒钟：控制面拿它算 compose token 的 TTL，用例不睡觉所以恒 0 也无所谓。
 #[derive(Default)]
@@ -93,7 +93,7 @@ fn turn_on(runtime: &Runtime, allows: bool) {
 
 /// 每个用例一个独立配置目录（用例并行跑，共用一个握手文件会互相踩）。
 fn config_dir(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("voxbridge-mcp-{}-{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("vox-mcp-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("建配置目录");
     dir

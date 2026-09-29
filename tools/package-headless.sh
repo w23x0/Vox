@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# VoxBridge 无屏档的打包脚本：出一个可复现的 tar.gz（二进制 + systemd unit + 样例配置 + README）。
+# Vox 无屏档的打包脚本：出一个可复现的 tar.gz（二进制 + systemd unit + 样例配置 + README）。
 #
 # 为什么是 tar.gz 而不是 deb（EMBEDDED §3.8）：无屏盒子多半是刷进去的镜像，装的是个目录树，
 # 不是包管理器；要装成服务就用里面那两份 unit（步骤见 README.md §2）。
@@ -20,8 +20,8 @@ export LC_ALL=C
 export TZ=UTC
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-CRATE_DIR="$REPO_ROOT/crates/voxbridge-headless"
-PACKAGE="voxbridge-headless"
+CRATE_DIR="$REPO_ROOT/crates/vox-headless"
+PACKAGE="vox-headless"
 
 TARGET=""
 # 输出目录名（`target/<三元组>/<PROFILE_DIR>`）只有 debug / release 两种。
@@ -102,8 +102,8 @@ trap 'rm -rf "$STAGE"' EXIT
 
 ROOT="$STAGE/$NAME"
 install -Dm755 "$BIN" "$ROOT/bin/$PACKAGE"
-install -Dm644 "$CRATE_DIR/systemd/user/voxbridge-headless.service" "$ROOT/systemd/user/voxbridge-headless.service"
-install -Dm644 "$CRATE_DIR/systemd/system/voxbridge-headless.service" "$ROOT/systemd/system/voxbridge-headless.service"
+install -Dm644 "$CRATE_DIR/systemd/user/vox-headless.service" "$ROOT/systemd/user/vox-headless.service"
+install -Dm644 "$CRATE_DIR/systemd/system/vox-headless.service" "$ROOT/systemd/system/vox-headless.service"
 install -Dm644 "$CRATE_DIR/settings.example.json" "$ROOT/settings.example.json"
 install -Dm644 "$CRATE_DIR/README.md" "$ROOT/README.md"
 

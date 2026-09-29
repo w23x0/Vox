@@ -1,5 +1,5 @@
 [package]
-name = "voxbridge-headless"
+name = "vox-headless"
 description = "无屏档（小主板 ARM64 Linux）入口：芯 + PipeWire + 配置进 / 状态出 + 控制面，不引 Tauri"
 version.workspace = true
 edition.workspace = true
@@ -8,7 +8,7 @@ license.workspace = true
 # 依赖表跟桌面装配层（`app/src-tauri/Cargo.toml`）的**芯侧那一段**一致，只有两条差别：
 #
 # - **没有 Tauri**（也没有 tauri-plugin-*、GTK、WebKitGTK）：无屏盒子上这些东西既装不了
-#   也不需要——验收会拿 `cargo tree -p voxbridge-headless | grep -c tauri` 钉成 0。
+#   也不需要——验收会拿 `cargo tree -p vox-headless | grep -c tauri` 钉成 0。
 # - **没有平台外壳的其余三件**（`vox-input-linux` 热键 / `vox-overlay-*` 字幕窗 /
 #   `vox-audio-win` 等）：无屏档不启动热键、不画字幕（`docs/platform/EMBEDDED.md` §3.7）。
 #

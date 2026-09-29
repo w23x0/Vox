@@ -402,7 +402,7 @@ Windows/macOS/Linux/Android/iOS/浏览器）—— 那次没有拉到平台清�
 | 5 | 内部结构 | 两条固定流水线（`docs/architecture/ARCHITECTURE.md` · 08-18，现状） | N 路 / 算子链（09-21，**未拍板**） | 现状仍是两条；目标是算子链，**拍板前不动手** |
 | 6 | 配置入口 | 只能 GUI 操作（现状） | CLI / MCP 优先，GUI 降成"出口之一"（09-21，未拍板） | 同上 |
 | 7 | MCP 的定位 | ——（09-21 前无此议题） | MCP 只是"出口 C"，芯里一份动作清单才是本体；**声音绝不走 MCP**（09-21，未拍板） | 新增，未拍板 |
-| 8 | 项目位置 | `C:\Users\Wang\Desktop\VoxBridge`（`docs/architecture/DECISIONS.md` A1） | `/home/w23x/VoxBridge`（当前工作区） | **以实际工作区为准**（A1 待改） |
+| 8 | 项目位置 | `C:\Users\Wang\Desktop\Vox`（`docs/architecture/DECISIONS.md` A1） | `/home/w23x/Vox`（当前工作区） | **以实际工作区为准**（A1 待改） |
 | 9 | 发版方式 | 本地手动构建（A14 之前） | 推 `v*` tag → CI 构建 + 签名（A14 · 08-22）；Linux 出 deb/rpm/AppImage（09-20/21） | **A14 + Linux 打包为准** |
 | 10 | 「听人说话」在 GPT 上没有用量/回合结束 | 界面照常显示用量与延迟，结果恒为空（现状） | 补能力位、按位降级，缺口自己造（09-21，未拍板） | 尚未落地，**临时按现状** |
 | 11 | 降噪是否必需 | 曾被当作流水线固定一环 | 已是可选算子（代码已有开关 + 采样率不匹配自动跳过） | **以代码为准**：可选 |
@@ -573,7 +573,7 @@ P5 的性价比最低（端侧只做上行、且现有 DSP 要重写），**建�
 （`crates/vox-audio-linux/src/virtual_sink.rs`）但**只在 `examples/` 被调用**，`app/src-tauri/`
 一处都没有；Linux 默认 `speak.output_device = None` → 译音播到系统默认输出。
 后果：**Linux 上"对方能在通话里听到译音"这条功能是断的**，而界面还在引导用户去选
-"VoxBridge Virtual Mic"。两条路：(a) 接线（把虚拟麦接进装配层，行为变更）；
+"Vox Virtual Mic"。两条路：(a) 接线（把虚拟麦接进装配层，行为变更）；
 (b) 位如实报假 + 界面按能力位降级（承认 Linux 只有"字幕 + 本地播放"）。
 
 **[待裁 2]** 组合清单是否接受第 8 个可空格 `session`（备选是塞进 `out`）。
@@ -607,7 +607,7 @@ P5 的性价比最低（端侧只做上行、且现有 DSP 要重写），**建�
 | 处置 | 内容 |
 | --- | --- |
 | **在架构内（按宿主能力位开门）** | 对外说话（麦克风→译音→耳机/虚拟麦）；听人说话（抓某个程序/通话→译音+字幕）；字幕（应用内 / 跨 App 悬浮窗）；三种 provider；密钥；设置；**控制面 MCP/CLI（Agent 面）** |
-| **在架构内**（已接线，本机位实测 `true`；引导文案可恢复） | **Linux 虚拟麦**（owner shell-dev，S0 §3.2）：`VirtualSink` 已接进装配层——`platform/linux/virtual_mic.rs` 持句柄（`ensure()` 建节点 / `shutdown()` 删节点，排在 `engine.shutdown()` 之后），`host_facts()` 的 `virtual_mic` 位以"句柄真的建出来"为凭据（本机实测为 `true`），译音按**节点名** `voxbridge_virtual_mic` 送进去；`off(not_wired)` 现在只剩"`ensure()` 还没跑过"这一种含义 |
+| **在架构内**（已接线，本机位实测 `true`；引导文案可恢复） | **Linux 虚拟麦**（owner shell-dev，S0 §3.2）：`VirtualSink` 已接进装配层——`platform/linux/virtual_mic.rs` 持句柄（`ensure()` 建节点 / `shutdown()` 删节点，排在 `engine.shutdown()` 之后），`host_facts()` 的 `virtual_mic` 位以"句柄真的建出来"为凭据（本机实测为 `true`），译音按**节点名** `vox_virtual_mic` 送进去；`off(not_wired)` 现在只剩"`ensure()` 还没跑过"这一种含义 |
 | **实现排期靠后（能力位先报真实值）** | 虚拟麦（Win VB-CABLE）；跨 App 悬浮窗；VRChat OSC；Discord；SteamVR；全局热键 |
 | **真正砍掉** | 用量/计费页与对外账本（内部日志保留）；三语 UI 收敛为 **zh + en**；OCR 姊妹模块；两套窗口边缘特例（`winminmax.rs`、大圆角/最小高度两项）——它们与服务端/多宿主无关 |
 
@@ -632,7 +632,7 @@ P5 的性价比最低（端侧只做上行、且现有 DSP 要重写），**建�
 | `architect`（S0 作者） | 按 §10.5 三条原则修订 `docs/plans/S0-COMPOSITION-MANIFEST.md`：能力位=宿主×硬件事实的映射、双流水线都在、desktop 作为宿主之一、Linux 虚拟麦接线进改动清单 | — | **已完成**（修订第 2 版；两个独立 verifier 的复核结论见 §10.4） |
 | `agent-face-dev` | 开 S1 前五步（协议校验 / `server/discover` / `tools/list` / CLI 骨架，不依赖 S0） | — | **已落地**：动作表 `actions.rs`（5 条动作，唯一真源）+ 协议面 `mcp/` + 本机 HTTP 传输（`src/transport/http.rs`：只绑 `127.0.0.1`、单路径 `/mcp`、POST-only，`voxctl serve --state-file <path> [--port <n>]`）+ **端点投影**（`src/endpoints.rs` 的 `Settings` → 清单，`tests/endpoints.rs` 15 条）+ **会话与 token**（`src/session.rs`：handle 注册表 + `c_` 前缀一次性 compose token，`tests/lifecycle.rs`）+ **`Grants`**（`crates/vox-mcp/src/ledger.rs` 的 `impl Grants for Runtime`，每次 `tools/call` 现读 `Settings.control.allow_*`，总开关关着一位都不开）；另有 `tests/protocol.rs` 13 条 + `tests/http.rs` **19 条** + `tests/resources.rs` 8 条 + `tests/voxctl.rs` 12 条 + `tests/lifecycle.rs` 4 条——`cargo test -p vox-mcp` 第十四轮当时共 **81 条** = 71 条集成 + 10 条 crate 内单测（第十四轮实测，见本节末「第十四轮收口」）。**第十轮补注**：`tests/endpoints.rs` 已由 13 条增至 **15 条**——新增的两条正是本轮两处安全护栏的钉子（见本节末「第十轮回填」）。**第十四轮复核转正**：本格当时列的"未落地"三项（资源面 / stdio 桥 / 5 个动作子命令）**现已全部落地**，逐项证据见本节末「第十四轮收口」；**第十五轮收口**：`actions.rs::composition_schema!` 那一格已由 `build.rs` 从 `Composition` 的类型生成（`vox-mcp` 的 feature `json-schema` 默认开、转发芯的 feature；`--no-default-features` 走如实放宽的占位），`tests/protocol.rs` 增至 **15 条**（新增 `every_ref_resolves_inside_its_own_schema` 与 `the_composition_cell_is_generated_from_the_manifest_type`），`cargo test -p vox-mcp` 第十五轮当时共 **83 条** = 73 条集成 + 10 条 crate 内单测——**S1 不再有未落地项** |
 | `core-dev` | 落 S0 实现（`Composition` 类型 + `Plan::build` 中转 + 能力位） | 等 S0 修订稿 | **芯侧已完成**：新增 `crates/vox-core/src/composition.rs`、`crates/vox-core/src/capability.rs`（`Composition`/`CapabilitySet`/`HostFacts`/`host_ceiling`/`CapabilityReport`/`UnavailableReason::NotWired`）；`Plan::build(config, facts)` 已改成经清单中转（`crates/vox-core/src/pipeline/mod.rs`：`build` → `Composition::of` → `Plan::from`）；`Snapshot.capabilities`（`crates/vox-core/src/runtime.rs`）与 `Runtime::set_host_facts` 已就位；`Settings.control`（`ControlSettings`：`enabled`/`port`/`allow_*`/`transcript_notify_ms`）已入芯（`crates/vox-core/src/settings.rs:76`，缺省 fail-closed + `normalize()` 夹紧）；`cargo test --workspace` 全绿 |
-| `shell-dev` | 外壳侧接线：`platform::host_kind()` / `platform::host_facts()` + `assemble()` 里注入一次；**Linux 虚拟麦**接进装配层（S0 §3.2 ①②）；**控制面接进 app 产品路径**（S1 装配侧） | S0 芯侧 | **已完成**（外壳侧本体，本机实测）：`app/src-tauri/src/platform/**` 的 `host_kind()`/`host_facts()` 两边同名（`mod.rs`/`win.rs`/`linux/mod.rs`），`lib.rs` 装配第 13 步 `virtual_mic_ensure()` + `set_host_facts(platform::host_facts())`，`devices.rs` 的 4 s tick 里 `refresh_host_facts()`（只在事实变了才再注入）；Linux 虚拟麦接线本体在 `platform/linux/virtual_mic.rs`，位此刻为 `true`（凭据 = 句柄真的建出来了；本机 `cargo test -p voxbridge --lib -- --ignored virtual_mic_is_wired` 通过）。**S0 的 UI 能力位已落地**：`app/ui/src/capabilities.ts`（`hostBit`/`capabilityNote`）+ `components/Capability.tsx`，各 section（`CableManager`/`Subtitle`/`Settings`/`Vrchat`/`PipelineCard`）按位降级；`Snapshot.capabilities` 在 `app/src-tauri/src/dto.rs` 落地；`check:capabilities` 已进 `npm run verify`。**控制面已接进 app 产品路径**：`app/src-tauri/src/mcp.rs`（装配胶水：`Switch::from_settings` + `LedgerBackend::new(runtime, runtime)` + `serve`，不自己实现 `Grants`），`lib.rs` 装配第 14 步 `mcp::start`（排在 `set_host_facts` 之后）、`shutdown()` 里先停控制面再 `persist.flush()`；**app 集成测试 4 条**（`app/src-tauri/tests/mcp.rs`：产品路径上 `tools/call` 真的可用、开关关着不监听不写握手文件、未授权的位一律拒；**第十轮增至 5 条**——新增 `a_dead_handshake_is_swept_and_a_live_one_is_kept`：pid 已死的 `control.json` 起服务前被清扫、还活着的原样保留）+ 真 app curl 冒烟走通。**第十四轮复核转正**：设置页控制屏（`app/ui/src/sections/AgentControl.tsx` + `nav.ts` 的 `agent` 项 = `PAGE_NAV` **8 页**，原 7 页）与 **热切换**（`app/src-tauri/src/mcp.rs::ControlPlane::install()` 挂 `Event::SettingsChanged`）**都已落地**，app 集成用例随之由 4 → **7 条**（`app/src-tauri/tests/mcp.rs`，第十三轮补 `the_switch_hot_starts_and_stops_the_plane` / `a_quiet_start_still_sweeps_dead_credentials`）。**第十五轮转正**：`--print-composition` 已**两档落地**（桌面 `app/src-tauri/src/composition.rs`、无屏 `crates/voxbridge-headless/src/cli.rs`，证据见本节末「第十五轮回填」）。**仍未落地**：删 `VirtualDeviceStatus`（语义已降级为"仅 Windows 安装管理"，"能不能用"只看 `virtual_mic` 位——该符号今天仍在 `app/src-tauri/src/platform/{mod,win,linux/mod}.rs`） |
+| `shell-dev` | 外壳侧接线：`platform::host_kind()` / `platform::host_facts()` + `assemble()` 里注入一次；**Linux 虚拟麦**接进装配层（S0 §3.2 ①②）；**控制面接进 app 产品路径**（S1 装配侧） | S0 芯侧 | **已完成**（外壳侧本体，本机实测）：`app/src-tauri/src/platform/**` 的 `host_kind()`/`host_facts()` 两边同名（`mod.rs`/`win.rs`/`linux/mod.rs`），`lib.rs` 装配第 13 步 `virtual_mic_ensure()` + `set_host_facts(platform::host_facts())`，`devices.rs` 的 4 s tick 里 `refresh_host_facts()`（只在事实变了才再注入）；Linux 虚拟麦接线本体在 `platform/linux/virtual_mic.rs`，位此刻为 `true`（凭据 = 句柄真的建出来了；本机 `cargo test -p vox --lib -- --ignored virtual_mic_is_wired` 通过）。**S0 的 UI 能力位已落地**：`app/ui/src/capabilities.ts`（`hostBit`/`capabilityNote`）+ `components/Capability.tsx`，各 section（`CableManager`/`Subtitle`/`Settings`/`Vrchat`/`PipelineCard`）按位降级；`Snapshot.capabilities` 在 `app/src-tauri/src/dto.rs` 落地；`check:capabilities` 已进 `npm run verify`。**控制面已接进 app 产品路径**：`app/src-tauri/src/mcp.rs`（装配胶水：`Switch::from_settings` + `LedgerBackend::new(runtime, runtime)` + `serve`，不自己实现 `Grants`），`lib.rs` 装配第 14 步 `mcp::start`（排在 `set_host_facts` 之后）、`shutdown()` 里先停控制面再 `persist.flush()`；**app 集成测试 4 条**（`app/src-tauri/tests/mcp.rs`：产品路径上 `tools/call` 真的可用、开关关着不监听不写握手文件、未授权的位一律拒；**第十轮增至 5 条**——新增 `a_dead_handshake_is_swept_and_a_live_one_is_kept`：pid 已死的 `control.json` 起服务前被清扫、还活着的原样保留）+ 真 app curl 冒烟走通。**第十四轮复核转正**：设置页控制屏（`app/ui/src/sections/AgentControl.tsx` + `nav.ts` 的 `agent` 项 = `PAGE_NAV` **8 页**，原 7 页）与 **热切换**（`app/src-tauri/src/mcp.rs::ControlPlane::install()` 挂 `Event::SettingsChanged`）**都已落地**，app 集成用例随之由 4 → **7 条**（`app/src-tauri/tests/mcp.rs`，第十三轮补 `the_switch_hot_starts_and_stops_the_plane` / `a_quiet_start_still_sweeps_dead_credentials`）。**第十五轮转正**：`--print-composition` 已**两档落地**（桌面 `app/src-tauri/src/composition.rs`、无屏 `crates/vox-headless/src/cli.rs`，证据见本节末「第十五轮回填」）。**仍未落地**：删 `VirtualDeviceStatus`（语义已降级为"仅 Windows 安装管理"，"能不能用"只看 `virtual_mic` 位——该符号今天仍在 `app/src-tauri/src/platform/{mod,win,linux/mod}.rs`） |
 | `verifier` | 复核修订稿与首批实现 | 以上各步之后 | **已完成（芯侧可验收）**：独立复核 `crates/vox-core` 实现 —— 既有测试逐字未改、差分台 10 组配置 0/10 轨迹不同（"行为不变"有证据）、`Plan` 结构未改、清单实例与实现输出逐字相等。结论：**芯侧可以验收，S0 整体尚不能验收**（UI 侧/`--print-composition`/Linux 真机三项未落地），另带 3 条星号：`Composition::of` 签名的文档漂移（D1）、缺省事实 fail-open + 旧 `virtual_cable_installed` 未拆（D2/D3）、虚拟麦缺省解析待真机实测（D9）；明细见 `agent://AuditS0Impl`。**缺陷已派修**（本轮：D1 `Composition::of` 签名统一 / D2 `virtual_cable_installed` 降级为 Windows 安装管理专用 / D3 `HostFacts::uninjected()` 缺省 fail-closed / D4 `in: []` 进 `Composition::validate()` / D6 `ops[gate]` 移出 editable 表）；原判"Linux 真机未落地"一项已转正（本机 ignored 测试通过，见 `shell-dev` 行）。（**第九轮回填补注**：该轮所列"UI 侧未落地"现已落地，"Linux 真机"已转正，只剩 `--print-composition` 仍未落地——见上面的 `shell-dev` 行；本格保留第二轮当时的结论原文。） |
 
 **第十轮回填（2026-09-22，只回填进度与状态，不改任何结论）**
@@ -682,27 +682,27 @@ POST-only）+ 端点投影（`endpoints.rs`：`Settings` → 清单）+ 会话�
 `the_switch_hot_starts_and_stops_the_plane` 钉着。（**授权不受此限**：`Grants` 每次 `tools/call` 现读，
 总闸一关下一次调用立刻全拒。）
 
-**无屏档 `voxbridge-headless` 已落地**（第十四轮补记）：`crates/voxbridge-headless/` 是与 `app/src-tauri`
+**无屏档 `vox-headless` 已落地**（第十四轮补记）：`crates/vox-headless/` 是与 `app/src-tauri`
 并列的第二个外壳、**零 Tauri**（入口 `src/main.rs`，模块 `cli.rs` / `config.rs` / `dsp.rs` / `headless.rs` /
 `mcp.rs` / `persist.rs` / `secrets.rs` / `status.rs` + `platform/` `sys/`）；
 它的清单三格不再手写，由芯的 `HostKind::shell()` 按档位派生 = `life: daemon` / `ui: none` /
 `control: ["mcp","cli","config_file"]`（`crates/vox-core/src/composition.rs` 的 `LinuxHeadless` 分支 +
-`HEADLESS_CONTROL`）；CLI 面 `voxbridge-headless [--config <settings.json>] [--print-capabilities | --dry-run]`
+`HEADLESS_CONTROL`）；CLI 面 `vox-headless [--config <settings.json>] [--print-capabilities | --dry-run]`
 （另有一直跑的 `--start` / `--run-for`），控制面复用同一份 `serve`（`src/mcp.rs` 注入 `LedgerBackend`）。
 
 **第十五轮回填（2026-09-22，只回填进度与计数，不改任何结论）**
 
 1. **`--print-composition` 两档都落地**（S0 §4.3-A 的验收出口，两档**同形**）：
-   - 无屏档：`crates/voxbridge-headless/src/cli.rs` 的 `--print-composition`（`Mode::PrintComposition`）
-     → `crates/voxbridge-headless/src/status.rs::composition_json`；
+   - 无屏档：`crates/vox-headless/src/cli.rs` 的 `--print-composition`（`Mode::PrintComposition`）
+     → `crates/vox-headless/src/status.rs::composition_json`；
    - 桌面档：`app/src-tauri/src/composition.rs`（`FLAG = "--print-composition"`，`requested()` / `print_and_exit()`；
      排在 Tauri 之前、只 `Builder::build()` 不 `run()`，不建窗口 / 不注册命令 / 不起托盘热键）；
    - 两边**同一个派生**：`vox_mcp::endpoints::manifest`（`crates/vox-mcp/src/endpoints.rs`）——
      **与 S1 的 `describe_endpoint` 是同一个函数**，所以这份打印与 Agent 面看到的是同一份清单；
      清单走 `wire` 文本往返一趟，与线上形态逐字同形；退出码 `0` 成功 / `2` 打不出来。
-2. **无屏档交付补齐**：systemd 两份 unit（`crates/voxbridge-headless/systemd/user/voxbridge-headless.service`
-   与 `.../system/voxbridge-headless.service`）+ 样例配置 `crates/voxbridge-headless/settings.example.json`
-   + `crates/voxbridge-headless/README.md` + 可复现打包脚本 `tools/package-headless.sh`
+2. **无屏档交付补齐**：systemd 两份 unit（`crates/vox-headless/systemd/user/vox-headless.service`
+   与 `.../system/vox-headless.service`）+ 样例配置 `crates/vox-headless/settings.example.json`
+   + `crates/vox-headless/README.md` + 可复现打包脚本 `tools/package-headless.sh`
    （tar 的排序 / 时间戳 / 属主钉死、二进制 `--locked` 编；产物落 `tools/bundle/`，已 gitignore）。
 3. **`composition_schema!` 已接真 schemars**：`crates/vox-mcp/build.rs` 用
    `schema_for!(vox_core::composition::Composition)` 生成并把 `$ref` 重定域到本 schema 内，
@@ -710,9 +710,9 @@ POST-only）+ 端点投影（`endpoints.rs`：`Settings` → 清单）+ 会话�
    `vox-mcp` 的 feature `json-schema` **默认开**（转发芯的 feature），`--no-default-features` 时
    build 脚本什么都不写、宏走**如实占位**（不是假 schema）。
 4. **无屏档 `background_service` 仍如实 `not_wired`**：unit 与打包这一轮落地了，但这一位**还没有检测者**
-   （问 systemd 要状态得走 D-Bus），`crates/voxbridge-headless/src/platform/linux.rs` 照实报
-   `false(not_wired)`——**不拿"unit 文件存在"当凭据**；`crates/voxbridge-headless/README.md` §5
-   "还没做（不许广告）"与 `crates/voxbridge-headless/src/status.rs` 的用例钉着这一条。
+   （问 systemd 要状态得走 D-Bus），`crates/vox-headless/src/platform/linux.rs` 照实报
+   `false(not_wired)`——**不拿"unit 文件存在"当凭据**；`crates/vox-headless/README.md` §5
+   "还没做（不许广告）"与 `crates/vox-headless/src/status.rs` 的用例钉着这一条。
 5. **计数（2026-09-22 第二十三轮收口实测）**：`cargo test --workspace` = **601 passed / 0 failed / 5 ignored**
    （第十五轮当时是 570、第十四轮当时是 561、第十轮当时是 477）；
    `cargo test -p vox-mcp -- --list | grep -c ': test$'` = **87**（= 76 条集成 + 11 条 crate 内单测；
@@ -806,4 +806,4 @@ clippy **0 warning**、`npm run verify` 全绿——链见 `app/ui/package.json`
 - 平台范围与调研沉淀：`docs/platform/SCOPE.md`；Linux 执行与实测：`docs/platform/LINUX.md`。
 - 架构分层（现状描述）：`docs/architecture/ARCHITECTURE.md`。
 - 2026-09-21 那轮讨论的完整原文：omp 会话 `01a0c29c-befd-70c1-b21d-e297d1c481f4`
-  （`~/.omp/agent/sessions/-VoxBridge/2026-09-21T06-17-27-549Z_…jsonl`），`omp -r 01a0c29c` 可续。
+  （`~/.omp/agent/sessions/-Vox/2026-09-21T06-17-27-549Z_…jsonl`），`omp -r 01a0c29c` 可续。

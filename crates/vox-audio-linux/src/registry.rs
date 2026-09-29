@@ -235,19 +235,15 @@ mod tests {
             2,
             NodeRecord {
                 media_class: CLASS_SOURCE.to_owned(),
-                name: "voxbridge_virtual_mic.monitor".to_owned(),
+                name: "vox_virtual_mic.monitor".to_owned(),
                 description: String::new(),
                 ..Default::default()
             },
         );
-        let devices = devices_of_class(
-            &snapshot,
-            CLASS_SOURCE,
-            Some("voxbridge_virtual_mic.monitor"),
-        );
+        let devices = devices_of_class(&snapshot, CLASS_SOURCE, Some("vox_virtual_mic.monitor"));
         assert_eq!(devices[0].name, "USB 麦克风");
         assert!(!devices[0].is_default);
-        assert_eq!(devices[1].name, "voxbridge_virtual_mic.monitor");
+        assert_eq!(devices[1].name, "vox_virtual_mic.monitor");
         assert!(devices[1].is_default);
     }
 }

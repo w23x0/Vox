@@ -1,14 +1,14 @@
 [package]
-name = "voxbridge"
-description = "VoxBridge —— 实时语音翻译（装配层）"
+name = "vox"
+description = "Vox —— 实时语音翻译（装配层）"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-default-run = "voxbridge"
+default-run = "vox"
 
 # 二进制名带 _lib 后缀是 Tauri 模板的约定，避免和 crate 名冲突。
 [lib]
-name = "voxbridge_lib"
+name = "vox_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

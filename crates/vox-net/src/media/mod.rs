@@ -19,7 +19,7 @@
 //! # 凭据与 Origin
 //!
 //! 两条通道（都不是 URL query）：`Authorization: Bearer <token>`（非浏览器），
-//! `Sec-WebSocket-Protocol: voxbridge.media.v1.<token>`（浏览器只能设子协议）。
+//! `Sec-WebSocket-Protocol: vox.media.v1.<token>`（浏览器只能设子协议）。
 //! 带 `Origin` 的握手必须逐字命中 `MediaOptions::allowed_origins`，空白名单 = 拒一切
 //! （任意网页都能向 `localhost` 开 WebSocket，"同机"不等于"可信"）。
 

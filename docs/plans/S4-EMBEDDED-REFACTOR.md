@@ -23,7 +23,7 @@
 
 | # | 问题 | 证据（2026-09-26 核） |
 | --- | --- | --- |
-| 1 | **装配层复制了一份，不是重构** | `crates/voxbridge-headless/src/{persist,mcp,dsp,secrets}.rs` 与 `app/src-tauri/src/{persist,mcp,dsp}.rs`、`sys/secrets.rs` 各有一份；按"去缩进后逐行集合差"粗算，`persist` 差 270 行、`mcp` 差 292 行、`dsp` 差 28 行。`EMBEDDED.md` §3.10 第 1–3 条（抽 `platform/`、控制面下沉、`EventSink`）**一条都没做**。再加手机档就是第三份 |
+| 1 | **装配层复制了一份，不是重构** | `crates/vox-headless/src/{persist,mcp,dsp,secrets}.rs` 与 `app/src-tauri/src/{persist,mcp,dsp}.rs`、`sys/secrets.rs` 各有一份；按"去缩进后逐行集合差"粗算，`persist` 差 270 行、`mcp` 差 292 行、`dsp` 差 28 行。`EMBEDDED.md` §3.10 第 1–3 条（抽 `platform/`、控制面下沉、`EventSink`）**一条都没做**。再加手机档就是第三份 |
 | 2 | **清单只是换了个壳，流水线仍是写死的** | `vox_core::composition::Op` 已有 `Mono / Denoise / Gate / Resample` 且"数组顺序即执行顺序"，但 `pipeline/mod.rs::Plan::from` 把它压回几个布尔（`Plan.denoise: bool`、`passthrough`、`hot_update`…），真正的执行顺序仍写在 `Worker` 里（`pipeline/mod.rs` 约 3000 行） |
 | 3 | **没有回声消除** | `grep -rniE "aec\|echo.?cancel\|回声" --include=*.rs crates app/src-tauri/src` 零命中（本轮实跑）。桌面靠用户戴耳机回避；盒子外放译音 + 开麦 = 自己的译音被录回去再翻一遍 |
 | 4 | **音频只押 PipeWire，对嵌入式偏重** | 无屏档唯一音频后端是 `vox-audio-linux`（`pipewire = "0.10"`）；随之要 PipeWire daemon + WirePlumber + `systemd --user` + `enable-linger`，且实时优先级、linger 自启、Lite 系统是否预装都标着 `[未核实]`（`docs/platform/EMBEDDED.md` §3.2、§6） |
@@ -37,7 +37,7 @@
 
 ```
                  ┌──────────────── 宿主入口（薄）────────────────┐
-                 │ app/src-tauri   voxbridge-headless   (将来) android │
+                 │ app/src-tauri   vox-headless   (将来) android │
                  │  只负责：本机有哪些端口 + 本机能力位 + 入口参数     │
                  └──────────────────────┬────────────────────────┘
                                         │
@@ -106,7 +106,7 @@
 
 1. 新建 `crates/vox-host`：把两份装配层里**同义**的部分收进来——配置目录三级回落、`settings/usage` 持久化（去抖 + 原子写）、
    密钥后端选择、控制面胶水（`Switch` / `LedgerBackend` / 握手文件清扫）、事件出口 `EventSink` trait、装配顺序与退出顺序。
-2. `app/src-tauri` 与 `voxbridge-headless` 改成薄入口：只提供本机端口工厂 + `host_kind()` / `host_facts()` + 入口参数；
+2. `app/src-tauri` 与 `vox-headless` 改成薄入口：只提供本机端口工厂 + `host_kind()` / `host_facts()` + 入口参数；
    Tauri 命令变成 `vox-host` API 的薄包装。
 3. `Denoise` / `Resample` 的 impl 挪进 `vox-dsp`，删掉两份 `dsp.rs`。
 4. 按 `.omp/RULES.md` #5：迁移全部调用方，不留 shim。
@@ -138,7 +138,7 @@
 
 | 阶段 | 验收 |
 | --- | --- |
-| S4-A | `cargo test --workspace` 全绿且既有测试**逐字未改**；`cargo tree -p voxbridge-headless` 不含 tauri/gtk/webkit；两个入口 crate 里不再有 `persist` / `mcp` 胶水 / `dsp` 适配器的第二份 |
+| S4-A | `cargo test --workspace` 全绿且既有测试**逐字未改**；`cargo tree -p vox-headless` 不含 tauri/gtk/webkit；两个入口 crate 里不再有 `persist` / `mcp` 胶水 / `dsp` 适配器的第二份 |
 | S4-B | 差分台（沿用 S0 做法：多组配置 × 两条流水线）事件轨迹与重构前**逐字相等**；`Plan` 里不再有"装不装某一节"的布尔 |
 | S4-C · ALSA | 本机 `snd-aloop` 回环设备上"采 → 播"跑通（ignored 用例 + example） |
 | S4-C · 半双工 | 用例：播放中上行为静音、播放结束 + 尾巴后恢复；去掉该逻辑即红 |

@@ -16,14 +16,14 @@ members = [
     # 两个装配层。放进 workspace 是为了让 `cargo test/clippy --workspace` 真的覆盖到它。
     "app/src-tauri",
     # 无屏档（小主板 ARM64 Linux）的入口：跟 app 并列的第二个外壳，**不依赖 Tauri**。
-    "crates/voxbridge-headless",
+    "crates/vox-headless",
 ]
 
 [workspace.package]
 version = "0.2.1"
 edition = "2021"
 license = "MIT"
-authors = ["VoxBridge"]
+authors = ["Vox"]
 
 [patch.crates-io]
 # openvr_sys 2.0.3 ships checked-in bindings, so ordinary builds do not need

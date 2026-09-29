@@ -50,7 +50,7 @@ use crate::probe::{
 const START_TIMEOUT: Duration = Duration::from_secs(8);
 /// 采集流名字前缀。**每条流带唯一后缀**：`stream.node_id()` 在连上之前是
 /// `PW_ID_ANY`，所以链路守护只能按名字找自己（见 `link_keeper.rs`）。
-const NODE_NAME_PREFIX: &str = "voxbridge-capture";
+const NODE_NAME_PREFIX: &str = "vox-capture";
 
 /// 采集计划：`start` 时定下来，之后线程照着做。
 #[derive(Debug)]

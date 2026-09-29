@@ -136,7 +136,7 @@ export function AboutPage() {
   return (
     <div className="panel">
       <div className="panel-top">
-        <div className="panel-title">VoxBridge</div>
+        <div className="panel-title">Vox</div>
         <span className="badge badge-running">v{version}</span>
       </div>
       <div className="panel-body">

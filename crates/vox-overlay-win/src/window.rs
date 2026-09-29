@@ -184,7 +184,7 @@ fn create(
     register_class()?;
 
     let class = wide(WINDOW_CLASS);
-    let title = wide("VoxBridge Subtitle");
+    let title = wide("Vox Subtitle");
     // 扩展样式各有分工：
     // LAYERED   —— per-pixel alpha 的前提，真透明只能靠它
     // TOOLWINDOW  —— 不进 Alt+Tab 和任务栏
@@ -674,8 +674,8 @@ mod tests {
 
     #[test]
     fn wide_is_null_terminated() {
-        let w = wide("VoxBridge");
-        assert_eq!(w.len(), "VoxBridge".len() + 1);
+        let w = wide("Vox");
+        assert_eq!(w.len(), "Vox".len() + 1);
         assert_eq!(w.last().copied(), Some(0));
     }
 

@@ -581,7 +581,7 @@ pub async fn set_virtual_cable_multichannel_visible(
 /// Linux：虚拟麦克风由 PipeWire 原生提供，没有"装"这一步。
 #[cfg(not(windows))]
 fn virtual_device_not_needed() -> String {
-    "Linux 不需要安装虚拟声卡：虚拟麦克风由 PipeWire 原生提供，在目标程序的录音设置里选「VoxBridge 虚拟麦」即可。"
+    "Linux 不需要安装虚拟声卡：虚拟麦克风由 PipeWire 原生提供，在目标程序的录音设置里选「Vox 虚拟麦」即可。"
         .to_string()
 }
 

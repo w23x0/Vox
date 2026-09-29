@@ -91,7 +91,7 @@ Android **没有官方的虚拟麦克风接口**；"给别的 App 造一个麦�
 | `mic` | `false(permission)`；授权 + 前台服务起来后 `true` **`[未核实]`** | "需要麦克风权限，且要开着应用（点开始）" |
 | `program_tap` | `false(unsupported)` **`[未核实]`** | "这台设备抓不到别的 App 的声音（通话类系统不给抓）" |
 | `virtual_mic` | `false(unsupported)` **`[未核实]`** | "这台设备不能给别的 App 当麦克风，请戴耳机听译音" |
-| `captions` | **应用内** `true`；跨 App 悬浮窗要 `SYSTEM_ALERT_WINDOW`，排在实现靠后 **`[未核实]`** | 跨 App 未开 → "字幕只在 VoxBridge 窗口里显示" |
+| `captions` | **应用内** `true`；跨 App 悬浮窗要 `SYSTEM_ALERT_WINDOW`，排在实现靠后 **`[未核实]`** | 跨 App 未开 → "字幕只在 Vox 窗口里显示" |
 | `global_hotkey` | `false(unsupported)` **`[未核实]`** | "这台设备没有全局热键"（区块撤下 + 一句说明；不许静默） |
 | `tray` | `false(unsupported)` **`[未核实]`** | "手机没有系统托盘"（同上） |
 | `background_service` | `false(permission)` **`[未核实]`** | "手机不会让它自己跑，要你点开始" |

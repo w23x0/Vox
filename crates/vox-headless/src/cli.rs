@@ -68,17 +68,17 @@ pub enum Invocation {
 
 pub fn usage() -> String {
     "\
-voxbridge-headless —— 无屏档（小主板 ARM64 Linux）入口：芯 + PipeWire + 配置进 / 状态出 + 控制面
+vox-headless —— 无屏档（小主板 ARM64 Linux）入口：芯 + PipeWire + 配置进 / 状态出 + 控制面
 
 用法：
-  voxbridge-headless [--config <settings.json>]
+  vox-headless [--config <settings.json>]
                      [--print-capabilities | --print-composition | --dry-run]
                      [--start <speak|listen|all>] [--run-for <秒>]
 
 开关：
   --config <path>         settings.json 的路径（要的是文件，不是目录；目录请用环境变量
-                          VOXBRIDGE_CONFIG_DIR）。缺省按三级回落取：
-                          $VOXBRIDGE_CONFIG_DIR → $XDG_CONFIG_HOME/voxbridge → $HOME/.config/voxbridge
+                          VOX_CONFIG_DIR）。缺省按三级回落取：
+                          $VOX_CONFIG_DIR → $XDG_CONFIG_HOME/vox → $HOME/.config/vox
   --print-capabilities    装配后打一份 CapabilityReport JSON（stdout），退出（只读：不碰 PipeWire、
                           不建配置目录、不写文件、不监听端口）
   --print-composition     装配后打一份 Composition 清单 JSON（两条腿 + 有效能力位，stdout），退出（只读，同上）
@@ -89,9 +89,9 @@ voxbridge-headless —— 无屏档（小主板 ARM64 Linux）入口：芯 + Pip
   -h, --help              打这一页
 
 环境变量：
-  VOXBRIDGE_LOG           日志级别（tracing 的 EnvFilter 语法；缺省只打本 crate 的 info）
-  VOXBRIDGE_CONFIG_DIR    配置目录（第一优先）
-  VOXBRIDGE_API_KEY_<服务商>  API 密钥（例 VOXBRIDGE_API_KEY_ALIYUN）；读的时候优先于密钥文件
+  VOX_LOG           日志级别（tracing 的 EnvFilter 语法；缺省只打本 crate 的 info）
+  VOX_CONFIG_DIR    配置目录（第一优先）
+  VOX_API_KEY_<服务商>  API 密钥（例 VOX_API_KEY_ALIYUN）；读的时候优先于密钥文件
 
 退出码：0 成功 ｜ 2 运行期失败 ｜ 3 用法错误
 "
@@ -219,10 +219,10 @@ mod tests {
 
     #[test]
     fn config_takes_a_file_path() {
-        let args = args_of(&["--config", "/etc/voxbridge/settings.json"]);
+        let args = args_of(&["--config", "/etc/vox/settings.json"]);
         assert_eq!(
             args.config.as_deref(),
-            Some(std::path::Path::new("/etc/voxbridge/settings.json"))
+            Some(std::path::Path::new("/etc/vox/settings.json"))
         );
     }
 

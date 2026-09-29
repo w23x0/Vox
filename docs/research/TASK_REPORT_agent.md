@@ -1,6 +1,6 @@
 > 状态：已完成（2026-09-21）｜ P0 / P1 全部落地，更新模块路径 B（模型目录在线更新）已实现（`app/src-tauri/src/catalog_updater.rs`）、路径 A（整程序自动更新）未做——见本文自述与 `docs/architecture/DIRECTIONS.md` §7 ｜ 保留作留痕，别照它施工。
 
-# VoxBridge 三项问题 · 交办给 agent 的修改任务
+# Vox 三项问题 · 交办给 agent 的修改任务
 
 > 调研结论（2026-08-21）。下面每个问题给出「根因 → 目标 → 改动清单」。方向键是最紧急、改动最小的，全提为 P0；i18n 分两步；更新模块两条路径。
 
@@ -100,7 +100,7 @@ if (!open) {
 ### 路径 B（推荐，满足你「主要更新模型厂商模型」，改动最小）
 1. `app/src-tauri/Cargo.toml`：加 `reqwest`（复用 rustls 栈）或 `tauri-plugin-http`。
 2. `app/src-tauri/src/commands.rs` 新增 `check_catalog_update` / `apply_catalog_update`：
-   - 拉远程 catalog（GitHub raw：`https://raw.githubusercontent.com/<owner>/VoxBridge/<branch>/catalog/aliyun.json`）。
+   - 拉远程 catalog（GitHub raw：`https://raw.githubusercontent.com/<owner>/Vox/<branch>/catalog/aliyun.json`）。
    - 校验 `schema_version` 与 `verified_at`（复用 `crates/vox/core/build.rs:121-167` 的断言逻辑抽成普通函数）。
    - 落盘 `app_data_dir()/catalog/`（用户可写目录，不写安装目录）。
 3. 前端 `catalog.ts` 改为「运行时经 Tauri command 拿：优先读 app_data 覆盖版，回落内置默认版」。

@@ -120,7 +120,7 @@ pub fn install(app: &tauri::AppHandle, state: &Arc<AppState>) -> tauri::Result<(
 
     TrayIconBuilder::new()
         .icon(icon)
-        .tooltip("VoxBridge")
+        .tooltip("Vox")
         .menu(&menu)
         // 左键单击显示主窗口，不弹菜单。右键才弹。
         .show_menu_on_left_click(false)

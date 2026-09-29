@@ -44,11 +44,11 @@ const LEGACY_INITIALIZE: &str = "initialize";
 ///
 /// 名字**不加工厂前缀**：规范没有前缀要求，工具名也一样不带 `vox_`；规范还明确说
 /// `serverInfo` 不保证唯一、别拿它做去歧义。
-pub const SERVER_NAME: &str = "voxbridge";
+pub const SERVER_NAME: &str = "vox";
 pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// `server/discover` 的 `instructions`：给模型的自然语言引导（设计稿 §2.3.3 逐字）。
-const INSTRUCTIONS: &str = "VoxBridge 本机控制面。典型流程：list_endpoints → describe_endpoint → compose_endpoint（先 dry-run 再 apply）→ session_open → 订阅 vox://session/<handle>/transcript 读字幕 → session_close。实时音频不走本协议。";
+const INSTRUCTIONS: &str = "Vox 本机控制面。典型流程：list_endpoints → describe_endpoint → compose_endpoint（先 dry-run 再 apply）→ session_open → 订阅 vox://session/<handle>/transcript 读字幕 → session_close。实时音频不走本协议。";
 
 /// 协议层对一条消息的处理结果。
 ///

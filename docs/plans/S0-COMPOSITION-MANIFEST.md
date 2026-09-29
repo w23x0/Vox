@@ -4,14 +4,14 @@
 > **第五轮只改 §2.5.4 末尾那段的措辞与修订记录**（见下"修订记录（2026-09-22，第五轮）"）：把"三条各有一个单测"改成
 > 第九轮的实情（判据是**纯函数** + 钉子单测），补一条"**探针必须进程级**"的教训与真机 example 指路。**设计一字未改**。
 > **第六轮只改状态注与引用耐久**（见下"修订记录（2026-09-22，第六轮 · 文档修订）"）：四处「`--print-composition` 仍未落地」按实况改成**状态注**
-> （**第十五轮已两档落地**：无屏档 `voxbridge-headless --print-composition` 真跑 exit=0、stdout 合法 JSON；桌面档 `app/src-tauri/src/composition.rs`），
+> （**第十五轮已两档落地**：无屏档 `vox-headless --print-composition` 真跑 exit=0、stdout 合法 JSON；桌面档 `app/src-tauri/src/composition.rs`），
 > 并把 §1.1 / §1.5 / §2.2 / §2.3.1 / §3.1 / §4.2 里一批过期行号改成**符号优先**（`catalog.rs::supports` / `catalog.rs::supports_audio_output` / `pipeline/speak.rs::composition` / `Plan::build`）。**设计一字未改，命令体一字未改。**
 > **第七轮只补一处状态注**（见下"修订记录（2026-09-22，第七轮 · 文档修订）"）：§3.2 表后注的末句（本轮改前在第 1183 行）从裸的「`--print-composition` 仍未落地」补成**第六轮时点仍未落地 + 第十五轮已两档落地**。**设计一字未改，命令体一字未改。**
 > **实现进度（2026-09-22，第三轮时点）**：**芯侧已落地** —— `crates/vox-core/src/{composition.rs,capability.rs}`、
 > `Plan::build` 经清单中转（行为不变）、`Runtime::set_host_facts` + `Snapshot.capabilities`；
 > **外壳侧也已落地** —— `platform::host_kind()` / `host_facts()`、`assemble()` 里注入、4 秒轮询复核、
 > **Linux 虚拟麦已接线**（本机实测 `virtual_mic: enabled=true`）。测试：`cargo test --workspace` = 436 passed / 0 failed（数字由 Main 提供）。
-> **第六轮状态回填（2026-09-22）**：**UI 能力位已落地** —— `app/ui/src/capabilities.ts`（`hostBit` / `capabilityNote`，位在界面侧的唯一读数点）+ `components/Capability.tsx`，各 section（`CableManager` / `Subtitle` / `Settings` / `Vrchat` / `PipelineCard`）按位降级，`npm run verify` 已含 `check:capabilities`（`app/ui/package.json`）；`Snapshot` 的 `capabilities` 字段在 `app/src-tauri/src/dto.rs` 落地。控制面（端点投影 / 账本）见 `docs/plans/S1-AGENT-FACE.md`，本稿不重复。**第六轮那个时点仍未落地**：`--print-composition`（§4.3-A / §4.4 的命令当时跑不了）——**第十五轮已两档落地**：无屏档 `voxbridge-headless --print-composition`（真跑 exit=0、stdout 合法 JSON）、桌面档 `app/src-tauri/src/composition.rs`（排在 Tauri 之前、只 `build()`）；**命令体一个字没改**，只在 §4.3-A 与本稿三处历史记录旁加了状态注。第六轮收口时 Main 报 `cargo test --workspace` = 456 passed / 0 failed；**第四轮接线落地后 shell-dev（`CapDefiners`）报 459 passed / 0 failed / 5 ignored、`cargo clippy --workspace --all-targets` 0 warning**（都是**时点数字**，本稿不据此下结论、也不用它当验收）。
+> **第六轮状态回填（2026-09-22）**：**UI 能力位已落地** —— `app/ui/src/capabilities.ts`（`hostBit` / `capabilityNote`，位在界面侧的唯一读数点）+ `components/Capability.tsx`，各 section（`CableManager` / `Subtitle` / `Settings` / `Vrchat` / `PipelineCard`）按位降级，`npm run verify` 已含 `check:capabilities`（`app/ui/package.json`）；`Snapshot` 的 `capabilities` 字段在 `app/src-tauri/src/dto.rs` 落地。控制面（端点投影 / 账本）见 `docs/plans/S1-AGENT-FACE.md`，本稿不重复。**第六轮那个时点仍未落地**：`--print-composition`（§4.3-A / §4.4 的命令当时跑不了）——**第十五轮已两档落地**：无屏档 `vox-headless --print-composition`（真跑 exit=0、stdout 合法 JSON）、桌面档 `app/src-tauri/src/composition.rs`（排在 Tauri 之前、只 `build()`）；**命令体一个字没改**，只在 §4.3-A 与本稿三处历史记录旁加了状态注。第六轮收口时 Main 报 `cargo test --workspace` = 456 passed / 0 failed；**第四轮接线落地后 shell-dev（`CapDefiners`）报 459 passed / 0 failed / 5 ignored、`cargo clippy --workspace --all-targets` 0 warning**（都是**时点数字**，本稿不据此下结论、也不用它当验收）。
 > 本稿**不含实现代码**；除 §3.2 末尾那一条已拍的 Linux 虚拟麦接线外，`crates/` 与 `app/` 的现行行为一个字不改。
 > 口径：代码与文档打架以代码为准（`docs/architecture/DIRECTIONS.md:1-6`）；文档之间冲突**新者胜**（§8）。
 > 前置已读：`docs/architecture/DIRECTIONS.md`（§8 裁决 / §10 计划）、`.omp/AGENTS.md`、`docs/STRUCTURE.md`。
@@ -93,7 +93,7 @@
 | 2 | **★3 / 行号自伤**：§3.1 的 `ports.rs` 行把 `virtual_cable_installed` 记在 `:170`，而**D2 自己要求补的那段注释**把它推到了 `:178` | §3.1 的 `ports.rs` 行 | 按本稿自己定的**符号优先**规矩办：先给符号 `crates/vox-core/src/ports.rs::DeviceRegistry::virtual_cable_installed`，行号退成括注并回填 `:178`，并把"这 8 行是 D2 自己的注释推的"记成**行号自伤记录**（`git diff crates/vox-core/src/ports.rs` 可复现）；同批的 `DeviceRegistry` trait 头仍在 `:164`（未动） |
 | 3 | **★2 / F2（措辞）**：报告称"缺省（未注入）事实的覆盖窗口里，Speak 腿会被 `Plan::build` 以 `PortError` 拒掉（`[MissingInput]`）" | §2.5.0（两条不变量之后新增"一条容易读错的推论"）、§5.1-6 | 先说清楚：**本稿原本没有这句话**（复核核的是第五轮的**报告**，不是本稿的字面），但 §2.5.0 的六步链与 §2.5.3 的 ① 很容易被读成那个意思 → **补一段把两条腿的失败模式分开写死**：Speak 腿在缺省事实下**降级成 `Speaker`**（`speak.rs::composition` 的 `role`）、`Plan::from` 照样成功、译音**静默播到系统默认输出**；只有 **Listen 腿**（`program_tap` 关着 → `in` 为空）才是 `MissingInput`。装配第 10–13 步那条热键窄窗口里起来的也是"播到默认输出"的会话，不是"起不来" |
 | 4 | 顺带（不在三条之列）：§2.5.0 第 2 步给的例子 `麦克风被占 → off[mic] = busy` **今天没人写**（`mic` 本来就是按上限报开的那一位） | §2.5.0 第 2 步 | 例子换成今天真的会写的那几位（`captions` / `global_hotkey` / `virtual_mic`），并注明 `mic` **不在这里写**、指向 §2.5.4 的偏离条——免得下游照着一个不存在的写入点去核 |
-| 5 | 第六轮**状态回填**（不是裁决，是"文档别再说反话"） | 顶部状态行、§2.6 的 R4 / R5 两格、§3.2（表后新增"第六轮状态"注）、§4.3-B（新增一节状态注）、本节的"没改的节"表 | UI 能力位（`app/ui/src/capabilities.ts` + `components/Capability.tsx` + `check:capabilities` 进 `verify` 链）与 `Snapshot.capabilities`（`dto.rs`）已落地；§2.6 的 R4 / R5 两格从"新增 / 现状缺口"改成"已落地 / 已修"；§4.3-B 补上脚本已落地与它实际用的 URL 开关（`?host=` / `?off=<位>:<reason>` / `?virtual_mic=<reason>` 简写）；`--print-composition` **第六轮时点仍未落地**（**第十五轮已两档落地**：无屏档 `voxbridge-headless --print-composition` 真跑 exit=0、stdout 合法 JSON；桌面档 `app/src-tauri/src/composition.rs`，排在 Tauri 之前、只 `build()`——本行保留第六轮当时的记录）；§3.2 里 `VirtualDeviceStatus` 的删除与 `virtual_cable_status` → `virtual_mic_detail` 的改名**实现里没做**（两行留在表里，状态注写明"别照本表去找"）；测试数从"第三轮 436"补到"第六轮收口 456（时点数字）"。**只回填状态，不改设计**。控制面（端点投影 / 账本）属 S1 稿，本稿只指路 |
+| 5 | 第六轮**状态回填**（不是裁决，是"文档别再说反话"） | 顶部状态行、§2.6 的 R4 / R5 两格、§3.2（表后新增"第六轮状态"注）、§4.3-B（新增一节状态注）、本节的"没改的节"表 | UI 能力位（`app/ui/src/capabilities.ts` + `components/Capability.tsx` + `check:capabilities` 进 `verify` 链）与 `Snapshot.capabilities`（`dto.rs`）已落地；§2.6 的 R4 / R5 两格从"新增 / 现状缺口"改成"已落地 / 已修"；§4.3-B 补上脚本已落地与它实际用的 URL 开关（`?host=` / `?off=<位>:<reason>` / `?virtual_mic=<reason>` 简写）；`--print-composition` **第六轮时点仍未落地**（**第十五轮已两档落地**：无屏档 `vox-headless --print-composition` 真跑 exit=0、stdout 合法 JSON；桌面档 `app/src-tauri/src/composition.rs`，排在 Tauri 之前、只 `build()`——本行保留第六轮当时的记录）；§3.2 里 `VirtualDeviceStatus` 的删除与 `virtual_cable_status` → `virtual_mic_detail` 的改名**实现里没做**（两行留在表里，状态注写明"别照本表去找"）；测试数从"第三轮 436"补到"第六轮收口 456（时点数字）"。**只回填状态，不改设计**。控制面（端点投影 / 账本）属 S1 稿，本稿只指路 |
 
 **本次没改的节（避免下游误以为改过）**：
 
@@ -143,9 +143,9 @@
 
 | # | 对应 | 改了哪几节 | 改了什么 / 为什么 |
 | --- | --- | --- | --- |
-| 1 | 第十六轮复核**【重要】**：四处仍写「`--print-composition` 仍未落地」，而**两档均已落地** | 顶部状态行（第六轮状态回填那段）、第四轮修订记录第 5 行、第四轮"没改的节"表、第五轮"没改的节"表 | **不改命令体，只加状态注**：四处**保留当时的字面**（改成"第六轮那个时点仍未落地 / 当时跑不了"，history 不改口），紧跟一句实况——**第十五轮已两档落地**：无屏档 `crates/voxbridge-headless/src/cli.rs` 的 `--print-composition`（真跑 exit=0、stdout 合法 JSON）、桌面档 `app/src-tauri/src/composition.rs`（排在 Tauri 之前、只 `Builder::build()` 不 `run()`）。出处：`docs/architecture/DIRECTIONS.md` §10.7「第十五轮回填」 |
+| 1 | 第十六轮复核**【重要】**：四处仍写「`--print-composition` 仍未落地」，而**两档均已落地** | 顶部状态行（第六轮状态回填那段）、第四轮修订记录第 5 行、第四轮"没改的节"表、第五轮"没改的节"表 | **不改命令体，只加状态注**：四处**保留当时的字面**（改成"第六轮那个时点仍未落地 / 当时跑不了"，history 不改口），紧跟一句实况——**第十五轮已两档落地**：无屏档 `crates/vox-headless/src/cli.rs` 的 `--print-composition`（真跑 exit=0、stdout 合法 JSON）、桌面档 `app/src-tauri/src/composition.rs`（排在 Tauri 之前、只 `Builder::build()` 不 `run()`）。出处：`docs/architecture/DIRECTIONS.md` §10.7「第十五轮回填」 |
 | 2 | 第十六轮复核**【次要】**：一批行号引用过期（`catalog.rs` 的 4 个 `supports_*` 已删、`supports_audio_output` 现在 `:111`、`speak.rs:15-48` 覆盖不到 `composition`） | §0.2 第 1/2 行、§1.1、§1.5、§2.2、§2.3.1 的"现状代码"列、§2.5.1 的 provider 行、§2.7、§3.1 的六行、§4.2 第一层与第 6 条 | 按 `.omp/AGENTS.md` 的"**引用要耐久**"办：**符号在前、行号退成"写稿当时"的括注**——`catalog.rs::ProviderCapabilities` / `::ProviderInfo` / `::supports_audio_output`、`catalog.rs` 的 4 个 `supports_*` 自由函数（**已删**：现为 `catalog.rs::provider_capabilities` + `catalog.rs::supports(provider, bit)`）、`pipeline/speak.rs::composition`（写稿当时 `fn plan`，`:15-48`；现 `:26-130`）、`pipeline/listen.rs::composition`（写稿当时 `fn plan`，`:16-44`；现 `:30-109`）、`pipeline/mod.rs::Plan::build`（写稿当时 `:106-111`；现 `:114`）、`speak.rs` / `listen.rs` 的 `mod tests` 不再按行号指。**结论、字段与断言一个都没改。** |
-| 3 | 顺带：§4.3-A 的标题原本写"建议新增，可裁"——那是**提案时点**的说法，命令落地后留着会让下游重复实现 | §4.3-A 标题 + 新增一段 **第十五轮状态** | 标题改成"（第十五轮已两档落地；下面命令体一字未改）"；新增的状态注写明两档各自的落点、两档**同一个派生**（`vox_mcp::endpoints::manifest`，与 S1 的 `describe_endpoint` 是同一个函数）、退出码 `0` / `2`、无屏档怎么跑（`voxbridge-headless --config <settings.json>`），以及**本轮实测**的那一条（见 §4.3-A）。**命令体与下面的读法一个字没改。** |
+| 3 | 顺带：§4.3-A 的标题原本写"建议新增，可裁"——那是**提案时点**的说法，命令落地后留着会让下游重复实现 | §4.3-A 标题 + 新增一段 **第十五轮状态** | 标题改成"（第十五轮已两档落地；下面命令体一字未改）"；新增的状态注写明两档各自的落点、两档**同一个派生**（`vox_mcp::endpoints::manifest`，与 S1 的 `describe_endpoint` 是同一个函数）、退出码 `0` / `2`、无屏档怎么跑（`vox-headless --config <settings.json>`），以及**本轮实测**的那一条（见 §4.3-A）。**命令体与下面的读法一个字没改。** |
 | 4 | 顺带：§4.1 的 `npm run verify` 链注释漏了 `check:agent`（与 `docs/platform/LINUX.md` 同一个缺陷类型，权威源 `app/ui/package.json` 的 `verify` 是 **9** 步） | §4.1 的链注释 + 紧跟那句验收说明 | **只改注释里的枚举**（命令体一字未改）：`… check:cable + check:capabilities + **check:agent** + qa:home`，与 `app/ui/package.json` 逐项对齐。紧跟那句"上面三条**我没有跑**"改成"**写稿当时**我没有跑"，并补一句"第十五轮以后第三条已两档落地、无屏档那一档本轮真跑过"——否则它与第 3 行新增的 §4.3-A 状态注**互相打架** |
 
 **本次没改的节（避免下游误以为改过）**：
@@ -272,7 +272,7 @@
 | `app/src-tauri/src/dto.rs:119-125` | `DeviceSnapshotDto` 的三个虚拟麦字段；`dto.rs:8` 自己写着"`virtual_cable_installed` 保留着不去掉" |
 | `app/ui/src/types.snapshot.ts:48-60` | 前端知道的**唯一**能力：`virtual_cable_status` 五态字符串 |
 | `app/ui/src/sections/CableManager.tsx:83-95` | 界面唯一的"按位降级"：`not_applicable` 时整块换成一句 hint |
-| `app/ui/src/i18n/zh.ts:144-150`（en.ts:142-147、ja.ts:145-151 同构） | 那句 hint 的文案：让用户去目标程序里选「VoxBridge Virtual Mic」 |
+| `app/ui/src/i18n/zh.ts:144-150`（en.ts:142-147、ja.ts:145-151 同构） | 那句 hint 的文案：让用户去目标程序里选「Vox Virtual Mic」 |
 | `app/ui/scripts/check-cable.mjs:64-78` | 这条降级**有自动化断言**（Linux 上不许出现"安装/卸载/多声道"按钮） |
 
 > 结论：能力位这件事**已经有形状了，只是只有一个位、且值用字符串表达**。S0 是把它一般化，不是从零发明。
@@ -281,12 +281,12 @@
 
 事实链：
 
-1. 实现存在：`crates/vox-audio-linux/src/virtual_sink.rs:35-53`（`VirtualSink::create()` 在 PipeWire 图里建 `Audio/Sink` 节点，名字 `voxbridge_virtual_mic`，`virtual_sink.rs:18,23`），真机验证脚本 `virtual_sink.rs:102-117`、`examples/virtual_mic.rs:21-31`。
+1. 实现存在：`crates/vox-audio-linux/src/virtual_sink.rs:35-53`（`VirtualSink::create()` 在 PipeWire 图里建 `Audio/Sink` 节点，名字 `vox_virtual_mic`，`virtual_sink.rs:18,23`），真机验证脚本 `virtual_sink.rs:102-117`、`examples/virtual_mic.rs:21-31`。
 2. 文档说已落地：`docs/platform/LINUX.md:314`。
 3. 界面按"不需要装、你去别的程序里选它"来引导：`app/src-tauri/src/platform/linux/mod.rs:123-130` + `app/ui/src/i18n/zh.ts:146-147`。
 4. **但装配层从未调用它**：全仓 `grep -rn "VirtualSink"` 只命中 `crates/vox-audio-linux/src/{lib.rs,virtual_sink.rs}` 与 `crates/vox-audio-linux/examples/*`；`app/src-tauri/src/` 里对 `vox_audio_linux::` 的引用只有 `audio.rs:14,20,26`（capture/playback/registry）与 `mod.rs:134`（`pipewire_available()`）。`PlaybackSink::open` 只是把设备名塞进 `target.object`（`crates/vox-audio-linux/src/playback.rs:227-231`），不会建节点。
 
-→ **现状是"位说 ON、功能不存在"**：Linux 上默认 `speak.output_device = None`（`crates/vox-core/src/settings.rs` 的 `SpeakSettings::output_device` 缺省；写稿当时 `:135`，第三轮核到 `:137`），译音会播到系统默认输出；用户按界面指引去找「VoxBridge Virtual Mic」时，系统里根本没有这个设备。
+→ **现状是"位说 ON、功能不存在"**：Linux 上默认 `speak.output_device = None`（`crates/vox-core/src/settings.rs` 的 `SpeakSettings::output_device` 缺省；写稿当时 `:135`，第三轮核到 `:137`），译音会播到系统默认输出；用户按界面指引去找「Vox Virtual Mic」时，系统里根本没有这个设备。
 （产品意图当时**没有**找到一手文件记载；**本轮已拍**：接线——见 §3.2 末尾与 §5.1-1。）
 
 > **第三轮时点补记**：上面这条事实链**今天已不成立**——Linux 虚拟麦**已接线**（`app/src-tauri/src/platform/linux/mod.rs::virtual_mic_ensure()`，本机实测 `virtual_mic: enabled=true`）。本节保留为**写稿当时**的现状证据（"位说 ON、功能不存在"就是这个模型的起因），**不要再当成当前故障**。
@@ -662,7 +662,7 @@ impl Composition {
 | 宿主档 | 对外说话（Speak） | 听人说话（Listen） |
 | --- | --- | --- |
 | **Windows 桌面** | `in: mic` → `ops` → `out: playback{role: virtual_mic}`（设备 = VB-CABLE 输入端；`virtual_mic` 位取决于装了没）+ `captions{track: speak}` | `in: process_loopback{executable}` → `ops`（无 denoise、门恒开）→ `out: playback{role: speaker}`（默认输出；**不能**推虚拟麦，理由写在 `crates/vox-core/src/pipeline/listen.rs:6-11`）+ `captions{track: listen}`。`program_tap` 位：build ≥ 20348 为 `true`，否则 `false(unsupported)` |
-| **Linux 桌面** | 与 Windows **同形**：`in: mic` → `ops` → `out: playback{role: virtual_mic}` + `captions`。差在两格：`device` 是 PipeWire 节点名（`voxbridge_virtual_mic`），`virtual_mic` 位在**接线前 / 接线后**分别是 `false(not_wired)` / `true`（§3.2） | `in: process_loopback` → 同 Windows 的听法。`program_tap` 位 `true`（PipeWire 按程序抓，`docs/platform/LINUX.md` 已实测） |
+| **Linux 桌面** | 与 Windows **同形**：`in: mic` → `ops` → `out: playback{role: virtual_mic}` + `captions`。差在两格：`device` 是 PipeWire 节点名（`vox_virtual_mic`），`virtual_mic` 位在**接线前 / 接线后**分别是 `false(not_wired)` / `true`（§3.2） | `in: process_loopback` → 同 Windows 的听法。`program_tap` 位 `true`（PipeWire 按程序抓，`docs/platform/LINUX.md` 已实测） |
 | **Android（S2）** | `in: mic`（`mic` 位：要 `RECORD_AUDIO` + `microphone` 型前台服务，没授权时 `false(permission)`）→ `ops` → `out: playback{role: speaker}`（耳机 / 外放）+ `captions`。**`virtual_mic` 位 `false(unsupported)`** → 这一格不进清单，界面照实说"这台设备不能给别的 App 当麦克风"；产品形态 = 戴耳机听译音 + 屏幕字幕 | `in: process_loopback` **这一格进不了清单**：`program_tap` 位 `false(unsupported)`（通话类 `VOICE_COMMUNICATION` 结构性拿不到；媒体类即便允许被录也要每次授权）。**腿仍在架构里**——它在这档宿主上的实际形态要等 S2 真机定位（§5.1-4） |
 | **无屏 ARM64（S3）** | 端点形态（§2.4）：`in: net_in` → `out: net_out`；挂了 USB 声卡时可换成 `in: mic` / `out: playback{role: speaker}`（位由"设备在不在"决定）。`captions` / `virtual_mic` / `tray` / `global_hotkey` 位均为 `false` | 同左：无屏档的"听人说话"= **从网络收别人的声音**（`net_in`），不是本机抓程序（`program_tap` 位 `false`）；腿通过 `net_in` 还在 |
 
@@ -889,7 +889,7 @@ pub struct HostFacts {
     pub off: std::collections::BTreeMap<Capability, UnavailableReason>,
     /// 这台机器上"译音该往哪个设备送才算虚拟麦"。`virtual_mic` 位为假时是 `None`。
     ///
-    /// 由外壳填：Linux = 节点名 `voxbridge_virtual_mic`（**接线后才非空**，§3.2）；
+    /// 由外壳填：Linux = 节点名 `vox_virtual_mic`（**接线后才非空**，§3.2）；
     /// Windows = 用户在设置里选的 VB-CABLE 端点，所以这里恒 `None`，仍走 `settings.output_device`。
     /// 它是**数据**（一个字符串），芯读它不违反"芯不碰平台 API"。
     pub virtual_mic_device: Option<String>,
@@ -1122,7 +1122,7 @@ platform::host_facts() ──► Runtime::set_host_facts() ──┘        （�
 - `Plan`（`pipeline/mod.rs:85-101`）保持原样：它是 Worker 认的作业单，**字段一个不加、一个不减**。
 - 变更只在 `Plan::build` 内部（写稿当时 `mod.rs:106-111`；现 `:114`）：先 `Composition::of(config, &facts)`，再 `Plan::from(&composition)`。
   `facts` 只影响两处：① 位为假的条目**不进清单**（§2.5.3 上下文①）；② Speak 走虚拟麦时 `device` 的缺省解析
-  （Linux 接线后是 `voxbridge_virtual_mic`；见 §3.2 的第 ② 件事）。**除这两处外清单只由 `SessionConfig` 决定**。
+  （Linux 接线后是 `vox_virtual_mic`；见 §3.2 的第 ② 件事）。**除这两处外清单只由 `SessionConfig` 决定**。
 - **Worker 主体（`mod.rs:657-1499`）一行都不动** → 现有测试（`pipeline/mod.rs` 的 `mod tests`、`pipeline/speak.rs` 与 `pipeline/listen.rs` 的 `#[cfg(test)] mod tests`；写稿当时 `mod.rs:2157-2298`、`speak.rs:50-117`、`listen.rs:46-…`）**必须一个字不改地继续通过**。这就是"清单能表达现状"的硬证据，而不是"看着对"。
 
 **清单只吃 `SessionConfig`（`runtime.rs:38-64`），所以有一类设置项天然进不来。这条边界要写死**，否则清单会变成"设置的第二份拷贝"：
@@ -1212,7 +1212,7 @@ Main 又单独拍了第 ① 项："Linux 虚拟麦 → **接线**，接线前位
 
 | 要改的 | 做什么 |
 | --- | --- |
-| `platform/linux/mod.rs`（或同目录新开 `virtual_mic.rs`，同 owner） | 进程级持有一个 `OnceLock<VirtualSink>`：`virtual_mic_ensure()` 先 `VirtualSink::exists()`（上次没退干净的残留），需要时 `VirtualSink::create()`；成功 → `CapabilityStatus::ON`，失败 → `off(unsupported)`；`virtual_mic_device()` 返回 `VirtualSink::node_name()`（= `voxbridge_virtual_mic`，`crates/vox-audio-linux/src/virtual_sink.rs:18,81-83`）；`virtual_mic_shutdown()` 调 `destroy()`（`virtual_sink.rs:74-78`） |
+| `platform/linux/mod.rs`（或同目录新开 `virtual_mic.rs`，同 owner） | 进程级持有一个 `OnceLock<VirtualSink>`：`virtual_mic_ensure()` 先 `VirtualSink::exists()`（上次没退干净的残留），需要时 `VirtualSink::create()`；成功 → `CapabilityStatus::ON`，失败 → `off(unsupported)`；`virtual_mic_device()` 返回 `VirtualSink::node_name()`（= `vox_virtual_mic`，`crates/vox-audio-linux/src/virtual_sink.rs:18,81-83`）；`virtual_mic_shutdown()` 调 `destroy()`（`virtual_sink.rs:74-78`） |
 | `app/src-tauri/src/lib.rs` 的 `assemble`（第 5 步附近） | 调 `virtual_mic_ensure()`，结果进 `HostFacts.off`；**位为 ON 的唯一凭据就是"这个句柄真的建出来了"**（§2.5.4 的 R6） |
 | `app/src-tauri/src/lib.rs` 的 `shutdown` | 排在 `engine.shutdown()` **之后**调 `virtual_mic_shutdown()`：播放流还挂着节点时先删节点会留下悬挂的 stream |
 | `platform/win.rs` | `virtual_mic_ensure()` 只读 `cable::detect()`，**不建任何节点**（Windows 的设备由 VB-CABLE 驱动提供） |
@@ -1228,15 +1228,15 @@ Main 又单独拍了第 ① 项："Linux 虚拟麦 → **接线**，接线前位
 两个候选做法，**落地时必须实测选一个**（这是 §5.1-9 的未核实项）：
 
 - **(i) 缺省解析**：`Composition::of(&config, &facts)` 在 `role == VirtualMic` 且 `config.output_device == None` 时，用 `facts.virtual_mic_device` 补上（core-dev 一处，§3.1 的 `speak.rs` 行；字段定义见 §2.5.2 的 `HostFacts`）。**后果**：Linux 的"对外说话"默认就往虚拟麦送（Windows 行为不变，因为 Windows 那份 `HostFacts.virtual_mic_device` 是 `None`，缺省仍是系统默认输出）——这正是产品要的，但要写进 §4.3 的验收。
-- **(ii) 让用户选**：`LinuxDeviceRegistry::output_devices()`（`crates/vox-audio-linux/src/registry.rs:51-57`）本来就把 sink 列出来（`label_of` 取 `node.description` = "VoxBridge Virtual Mic"，`:86-92`），用户在界面里选它即可。**风险**：`DeviceInfo` 只有 `name` / `is_default` 两个字段（`crates/vox-core/src/ports.rs:149-152`），存的可能是 description 而不是 `node.name`，而 `target.object` 认的是节点名 → 需要给 `DeviceInfo` 加一个稳定 id（core-dev 的 `ports.rs`）。
+- **(ii) 让用户选**：`LinuxDeviceRegistry::output_devices()`（`crates/vox-audio-linux/src/registry.rs:51-57`）本来就把 sink 列出来（`label_of` 取 `node.description` = "Vox Virtual Mic"，`:86-92`），用户在界面里选它即可。**风险**：`DeviceInfo` 只有 `name` / `is_default` 两个字段（`crates/vox-core/src/ports.rs:149-152`），存的可能是 description 而不是 `node.name`，而 `target.object` 认的是节点名 → 需要给 `DeviceInfo` 加一个稳定 id（core-dev 的 `ports.rs`）。
 
 **中间态怎么表达（接线落地之前）**
 
 > **第三轮时点**：接线**已落地**（本机实测 `virtual_mic: enabled=true`）。下面这段保留为**接线前**的口径与验收依据（它同时是"位=事实"的样板：中间态只许报 `false(not_wired)`，不许报 ON）。
 
 - Linux 的 `virtual_mic` 位报 **`false(not_wired)`**（新加的 `UnavailableReason`，§2.5.2）——"实现存在、装配层没接上"，不是"平台做不到"。
-- **"去目标程序里选 VoxBridge Virtual Mic"那句引导必须撤下**（`app/ui/src/i18n/zh.ts:146-147` 那一类），换成 `not_wired` 的文案：**"这个平台还没接上"**。否则就是现状那种"位说 ON、功能不存在、文案还指着不存在的设备"（§1.4）。
-- 验收把这一条钉住：位为假时界面上**不许**出现"去选 VoxBridge Virtual Mic"的字样（§4.4）。
+- **"去目标程序里选 Vox Virtual Mic"那句引导必须撤下**（`app/ui/src/i18n/zh.ts:146-147` 那一类），换成 `not_wired` 的文案：**"这个平台还没接上"**。否则就是现状那种"位说 ON、功能不存在、文案还指着不存在的设备"（§1.4）。
+- 验收把这一条钉住：位为假时界面上**不许**出现"去选 Vox Virtual Mic"的字样（§4.4）。
 - **不许**出现第三种状态：位 ON 而设备不存在（那就是现状）。
 
 ### 3.3 agent-face-dev
@@ -1263,7 +1263,7 @@ Main 又单独拍了第 ① 项："Linux 虚拟麦 → **接线**，接线前位
 ```bash
 cargo test -p vox-core              # 芯：清单 + 能力位 + 既有行为全绿
 cd app/ui && npm run verify         # 前端：build + check:classes + check:preview + a11y + qa:narrow + check:cable + check:capabilities + check:agent + qa:home
-cargo run -p voxbridge -- --print-composition   # 人眼/脚本可观察的清单 + 有效能力位（见 §4.3-A）
+cargo run -p vox -- --print-composition   # 人眼/脚本可观察的清单 + 有效能力位（见 §4.3-A）
 ```
 
 （本稿是设计稿，上面三条**写稿当时我没有跑**——它们属于实现完成后的验收。§4.4 那条 Linux 真机检查同理；**第十五轮以后**第三条 `--print-composition` 已两档落地，无屏档那一档本轮真跑过，见 §4.3-A 的状态注。）
@@ -1314,29 +1314,29 @@ cargo run -p voxbridge -- --print-composition   # 人眼/脚本可观察的清�
 
 **A. `--print-composition`（第十五轮已两档落地；下面命令体一字未改）**
 
-> **第十五轮状态**：两档都已落地 —— 无屏档 `crates/voxbridge-headless/src/cli.rs` 的 `--print-composition`（`Mode::PrintComposition`）
-> → `crates/voxbridge-headless/src/status.rs::composition_json`；桌面档 `app/src-tauri/src/composition.rs`
+> **第十五轮状态**：两档都已落地 —— 无屏档 `crates/vox-headless/src/cli.rs` 的 `--print-composition`（`Mode::PrintComposition`）
+> → `crates/vox-headless/src/status.rs::composition_json`；桌面档 `app/src-tauri/src/composition.rs`
 > （`FLAG = "--print-composition"`，`requested()` / `print_and_exit()`；**排在 Tauri 之前、只 `Builder::build()` 不 `run()`**，
 > 不建窗口 / 不注册命令 / 不起托盘热键）。两档**同一个派生**：`vox_mcp::endpoints::manifest`（与 S1 的 `describe_endpoint` 是同一个函数），
-> 退出码 `0` 成功 / `2` 打不出来。下面命令里的 `cargo run -p voxbridge` 是**桌面档**；无屏档把二进制换成
-> `voxbridge-headless --config <settings.json>`，**读法（键名）逐字相同**。
-> **本轮实测（2026-09-22，本机）**：`./target/debug/voxbridge-headless --print-composition` → 退出码 `0`、stdout 是一份**合法 JSON**
+> 退出码 `0` 成功 / `2` 打不出来。下面命令里的 `cargo run -p vox` 是**桌面档**；无屏档把二进制换成
+> `vox-headless --config <settings.json>`，**读法（键名）逐字相同**。
+> **本轮实测（2026-09-22，本机）**：`./target/debug/vox-headless --print-composition` → 退出码 `0`、stdout 是一份**合法 JSON**
 > （顶层 `capabilities` / `speak` / `listen` / `errors`；本机实测 `.speak.session.provider` = `"aliyun"`、`.capabilities.tier` = `"linux_headless"`）。
 > 出处：`docs/architecture/DIRECTIONS.md` §10.7「第十五轮回填」；无屏档钉子用例
-> `crates/voxbridge-headless/tests/headless_entry.rs::print_composition_prints_the_two_manifests`（断言退出码 0 + stdout 可解析）。
+> `crates/vox-headless/tests/headless_entry.rs::print_composition_prints_the_two_manifests`（断言退出码 0 + stdout 可解析）。
 
 带这个参数时打印两份清单 JSON + 当前有效能力位（`CapabilityReport`）就退出，**不建 Tauri、不改任何状态**。
 先例：`app/src-tauri/src/lib.rs:54-58` 的 `platform::pre_main()` 已经是同类短路（`--vox-restore-defaults`）。
 
 ```bash
-cargo run -p voxbridge -- --print-composition | jq '.speak.session.provider'   # => "aliyun"
-cargo run -p voxbridge -- --print-composition | jq '.listen.ops[].kind'        # => "mono","gate","resample"
-cargo run -p voxbridge -- --print-composition | jq '.capabilities.tier'        # => "windows"（本机档位）
-cargo run -p voxbridge -- --print-composition | jq '.capabilities.host.mic'    # => {"enabled":true,"reason":null}
+cargo run -p vox -- --print-composition | jq '.speak.session.provider'   # => "aliyun"
+cargo run -p vox -- --print-composition | jq '.listen.ops[].kind'        # => "mono","gate","resample"
+cargo run -p vox -- --print-composition | jq '.capabilities.tier'        # => "windows"（本机档位）
+cargo run -p vox -- --print-composition | jq '.capabilities.host.mic'    # => {"enabled":true,"reason":null}
 # Linux 桌面，接线前（§3.2 的中间态）—— 这两条就是"位如实报假"的证据：
-cargo run -p voxbridge -- --print-composition | jq '.capabilities.host.virtual_mic'
+cargo run -p vox -- --print-composition | jq '.capabilities.host.virtual_mic'
 #   => {"enabled":false,"reason":"not_wired"}
-cargo run -p voxbridge -- --print-composition | jq '[.speak.out[] | select(.role=="virtual_mic")] | length'
+cargo run -p vox -- --print-composition | jq '[.speak.out[] | select(.role=="virtual_mic")] | length'
 #   => 0（位为假 → 那一格不进清单）
 ```
 
@@ -1348,7 +1348,7 @@ cargo run -p voxbridge -- --print-composition | jq '[.speak.out[] | select(.role
 
 - `?mock=1&host=windows`：虚拟麦区块给安装引导（与现状一致）；`vr_captions` 为假时不渲染 SteamVR 开关；
 - `?mock=1&host=linux`：虚拟麦区块**只给设备名引导**、**不出现**"安装/卸载"按钮（与现有 `check-cable.mjs:66-78` 一致，行为不许回归）；
-- `?mock=1&host=linux&virtual_mic=not_wired`（**中间态**）：不渲染"去目标程序里选 VoxBridge Virtual Mic"那句话，改渲染 `not_wired` 文案；
+- `?mock=1&host=linux&virtual_mic=not_wired`（**中间态**）：不渲染"去目标程序里选 Vox Virtual Mic"那句话，改渲染 `not_wired` 文案；
 - `?mock=1&host=android`：虚拟麦区块**不渲染**、"抓程序"选择器**不渲染**，且各自的 reason 文案各出现一次（**不许**出现"没有这个功能"这种说法，§2.6 R9）；
 - `?mock=1&host=embedded`：`ui` 相关区块（字幕、托盘、热键）全不渲染；
 - 任一 `(位, reason)` 组合缺 i18n 条目 → 脚本失败（`zh` / `en` 两份都要有）。
@@ -1362,21 +1362,21 @@ cargo run -p voxbridge -- --print-composition | jq '[.speak.out[] | select(.role
 
 ```bash
 # ── 态 A：接线前（今天）—— 位必须为假，且界面文案已撤下 ──
-cargo run -p voxbridge -- --print-composition | jq -r '.capabilities.host.virtual_mic.reason'   # => not_wired
-wpctl status | grep -q "VoxBridge Virtual Mic" && echo "不该有设备" || echo "OK：没有幽灵设备"
-# 界面：`?mock=1&host=linux&virtual_mic=not_wired` 下不得出现"去目标程序里选 VoxBridge Virtual Mic"
+cargo run -p vox -- --print-composition | jq -r '.capabilities.host.virtual_mic.reason'   # => not_wired
+wpctl status | grep -q "Vox Virtual Mic" && echo "不该有设备" || echo "OK：没有幽灵设备"
+# 界面：`?mock=1&host=linux&virtual_mic=not_wired` 下不得出现"去目标程序里选 Vox Virtual Mic"
 
 # ── 态 B：接线后 —— 位为真，且设备真的在、声音真的进得去 ──
 # 起「对外说话」（说话让译音产生）之后：
-wpctl status | grep -q "VoxBridge Virtual Mic"    # 必须成立
-pw-link -l | grep -q voxbridge_virtual_mic        # 端口必须在
+wpctl status | grep -q "Vox Virtual Mic"    # 必须成立
+pw-link -l | grep -q vox_virtual_mic        # 端口必须在
 pw-record /tmp/vmic.wav &                         # 从虚拟麦的监听端录一段
-pw-link voxbridge_virtual_mic:monitor_FL pw-record:input_FL
-pw-link voxbridge_virtual_mic:monitor_FR pw-record:input_FR
+pw-link vox_virtual_mic:monitor_FL pw-record:input_FL
+pw-link vox_virtual_mic:monitor_FR pw-record:input_FR
 # 停录，用 sox/ffmpeg 看不是静音（"译音真的进得去"，而不只是"设备在"）
 sox /tmp/vmic.wav -n stat 2>&1 | grep -q "Maximum amplitude: 0.0" && echo "静音 = 没接上" || echo "OK"
 # 退出应用之后：
-wpctl status | grep -q "VoxBridge Virtual Mic"    # 必须不成立（不许留幽灵设备，virtual_sink.rs:28 的 object.linger 故意不开）
+wpctl status | grep -q "Vox Virtual Mic"    # 必须不成立（不许留幽灵设备，virtual_sink.rs:28 的 object.linger 故意不开）
 ```
 
 现有可复现路径：`cargo test -p vox-audio-linux -- --ignored virtual_sink_lifecycle`（`crates/vox-audio-linux/src/virtual_sink.rs:102-117`）、
@@ -1422,7 +1422,7 @@ wpctl status | grep -q "VoxBridge Virtual Mic"    # 必须不成立（不许留�
    它是纯数据（`crates/vox-core/src/cloud/protocol.rs::SessionParams`；写稿当时 `:72-89`，第三轮核到 `:79`，目前**没有**任何 serde derive），加两个 derive 理论上零风险（只加 impl、不动字段）。风险只在"报文体是从它**手工拼**出来的"这条路径上：`cloud/gpt.rs:32-62`、`cloud/mod.rs:211-217` 分派的 `aliyun_session_update` / `gemini::setup_frame` / `gpt::session_update` 各自拼 JSON，**我没有逐条跑过**加 derive 之后这三家的报文是否逐字节不变。落地时用现有的报文断言兜底即可——`cloud/gpt.rs:190-196`（`session_update_uses_translation_config_shape`）、`cloud/protocol.rs:586-593`（`session_update_wraps_the_config_with_an_event_id`）、`cloud/mod.rs:560-564`（Gemini setup 首帧）、`:603-606` 与 `:697-700`（Aliyun `session.update` / 热更新后语言）。
 
 9. **`[未核实]` 虚拟麦的设备名怎么对上（§3.2 第 ② 件事的 (i)/(ii)）。**
-   两条链各有缺口：① `PlaybackSink::open(device)` 把名字塞进 PipeWire 的 `target.object`（`crates/vox-audio-linux/src/playback.rs:227-231`），而 `target.object` 认的是**节点名**（`voxbridge_virtual_mic`）；② 设备目录报给界面的却是 `label_of()` 取的 `node.description`（"VoxBridge Virtual Mic"，`crates/vox-audio-linux/src/registry.rs:86-92`），且 `DeviceInfo` **只有 `name` / `is_default`**（`crates/vox-core/src/ports.rs:149-152`），没有稳定 id。
+   两条链各有缺口：① `PlaybackSink::open(device)` 把名字塞进 PipeWire 的 `target.object`（`crates/vox-audio-linux/src/playback.rs:227-231`），而 `target.object` 认的是**节点名**（`vox_virtual_mic`）；② 设备目录报给界面的却是 `label_of()` 取的 `node.description`（"Vox Virtual Mic"，`crates/vox-audio-linux/src/registry.rs:86-92`），且 `DeviceInfo` **只有 `name` / `is_default`**（`crates/vox-core/src/ports.rs:149-152`），没有稳定 id。
    → 落地时**必须实测**：若 `target.object` 吃 description，就什么都不用改；否则要么走 §3.2 的 (i)（缺省解析），要么给 `DeviceInfo` 加 id（core-dev 的 `ports.rs`）。**这条不实测就会重演"位说 ON、声音进不去"**。
 
 10. **`[未核实]` `host` 从常量改成档位，有没有别的下游假设。**
@@ -1446,7 +1446,7 @@ wpctl status | grep -q "VoxBridge Virtual Mic"    # 必须不成立（不许留�
 
 | # | 实测什么 | 怎么算过 | 对应 |
 | --- | --- | --- | --- |
-| 1 | `target.object` 吃 description 还是 `node.name`（决定 §3.2 第 ② 件事走 (i) 还是 (ii)） | 起一次「对外说话」：`pw-link -l` 里播放流接在 `voxbridge_virtual_mic` 上，且监听端录到**非静音**（§4.4 态 B 的三条命令） | §5.1-9 |
+| 1 | `target.object` 吃 description 还是 `node.name`（决定 §3.2 第 ② 件事走 (i) 还是 (ii)） | 起一次「对外说话」：`pw-link -l` 里播放流接在 `vox_virtual_mic` 上，且监听端录到**非静音**（§4.4 态 B 的三条命令） | §5.1-9 |
 | 2 | Windows 那两个位（`program_tap` 的 build 门限、`tray` 收紧成"装上 × 有宿主"） | 老 build 上 `program_tap` 报 `false(unsupported)` 且界面说清；托盘安装失败时 `tray` 报 `false` | §5.1-11、§5.1-12 |
 | 3 | Android / 无屏两列的位值 | S2 / S3 真机跑 §4.3-A，把 §2.5.1 里的 `[未核实]` 逐格换成实测值 | §5.1-4 |
 

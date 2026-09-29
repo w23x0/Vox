@@ -344,7 +344,7 @@ fn discover_over_http_speaks_the_protocol_layer_result() {
     assert_eq!(result["cacheScope"], "public");
     assert_eq!(
         result["_meta"][meta::key::SERVER_INFO]["name"],
-        json!("voxbridge")
+        json!("vox")
     );
 }
 

@@ -1,4 +1,4 @@
-# VoxBridge
+# Vox
 
 라이브 대화를 위한 데스크톱 실시간 음성 번역기(**Windows** / **Linux**). 두 개의 독립적인 파이프라인이 동시에 실행됩니다:
 
@@ -42,7 +42,7 @@ npm run tauri:build      # NSIS를 target/release/bundle/nsis/에 생성
 배포에 `cargo build --release`는 사용하지 마세요. 바이너리를 수동으로 빌드할 때는 custom protocol 기능을 전달하세요:
 
 ```powershell
-cargo build --release -p voxbridge --features custom-protocol
+cargo build --release -p vox --features custom-protocol
 ```
 
 ## 테스트
@@ -55,7 +55,7 @@ npm run verify           # app/ui 내: 타입 체크, 프로덕션 빌드, a11y/
 ## 디렉터리 구조
 
 ```text
-VoxBridge/
+Vox/
 ├─ catalog/            # 프로바이더 메타데이터: aliyun.json, gemini.json, gpt.json
 ├─ crates/
 │  ├─ vox-core/        # 플랫폼 중립 코어: 설정, 프로토콜, 상태 기계, 사용량
@@ -81,7 +81,7 @@ VoxBridge/
 
 ## 기여 (Contributing)
 
-VoxBridge는 의도적으로 보수적으로 유지되며, 핵심 범위는 고정되어 있습니다. 외부 모듈이 열린 확장 지점입니다 — **[`../CONTRIBUTING.md`](../CONTRIBUTING.md)**를 참고하세요 — 계획된 Discord 아웃오브프로세스 모듈(`docs/protocols/DISCORD_PROTOCOL.md`, 2단계·미정)도 여기에 포함됩니다.
+Vox는 의도적으로 보수적으로 유지되며, 핵심 범위는 고정되어 있습니다. 외부 모듈이 열린 확장 지점입니다 — **[`../CONTRIBUTING.md`](../CONTRIBUTING.md)**를 참고하세요 — 계획된 Discord 아웃오브프로세스 모듈(`docs/protocols/DISCORD_PROTOCOL.md`, 2단계·미정)도 여기에 포함됩니다.
 
 ## 문서
 

@@ -1,5 +1,5 @@
 /**
- * 标题栏（38px）。照 GlassUI 规范：**只放固定的应用名**（VoxBridge），
+ * 标题栏（38px）。照 GlassUI 规范：**只放固定的应用名**（Vox），
  * 不放当前页面名 —— 页面名是内容区顶部的蓝色大标题（.page-head h1），
  * 两处都放页面名才是重复。主题切换、其余工具项全部在侧栏底部。
  *
@@ -7,7 +7,7 @@
  */
 
 /** 应用名（和 tauri.conf.json 的 productName 一致）。固定不变，不随页面走。 */
-const APP_NAME = "VoxBridge";
+const APP_NAME = "Vox";
 
 import { useT } from "../i18n/context";
 

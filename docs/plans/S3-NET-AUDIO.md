@@ -16,7 +16,7 @@
 | **帧层**：`crates/vox-net/src/media/{mod,frame,pipe,server,client}.rs`、`crates/vox-net/examples/media_probe.rs`、`crates/vox-net/tests/media_pipe.rs` | **已落地** | 用例 **23 条** = 集成 13 条（`tests/media_pipe.rs`：`#[test]` 5 + `#[tokio::test]` 8）+ 单测 10 条（`media/frame.rs` 5、`media/pipe.rs` 5） |
 | `CaptureTarget::Net { pipe }` 与全部调用方迁移 | **已落地** | `crates/vox-core/src/ports.rs` 的变体；四个穷尽 `match` 点已迁：`vox-audio-linux` 的 `capture.rs::resolve_plan` 与 `examples/smoke.rs`、`vox-audio-win` 的 `capture/mod.rs`（两处） |
 | `vox-net` 的依赖边与模块门面 | **已落地** | `crates/vox-net/Cargo.toml`：描述已改、`tokio` 显式 `features = ["net"]`、`parking_lot.workspace = true`；`crates/vox-net/src/lib.rs` 已加 `pub mod media;` |
-| **S3 后半**：`Settings.net` / `NetSettings`、清单派生（`listen.rs` / `speak.rs`）、`Plan.net_out` / `Deps.net_out`、`runtime.rs` 两格与守卫、无屏外壳装配（`voxbridge-headless/src/media.rs`、`media.json`）、`SecretStore` 的键值式 API、UI 的 `disabled` reason | **未做** | `grep -rn "NetSettings\|settings\.net\|net_out:\|net_in:" crates` → **零命中**；`crates/voxbridge-headless/src/platform/linux.rs::host_facts()` 今天仍只报 `background_service: not_wired` 一位 |
+| **S3 后半**：`Settings.net` / `NetSettings`、清单派生（`listen.rs` / `speak.rs`）、`Plan.net_out` / `Deps.net_out`、`runtime.rs` 两格与守卫、无屏外壳装配（`vox-headless/src/media.rs`、`media.json`）、`SecretStore` 的键值式 API、UI 的 `disabled` reason | **未做** | `grep -rn "NetSettings\|settings\.net\|net_out:\|net_in:" crates` → **零命中**；`crates/vox-headless/src/platform/linux.rs::host_facts()` 今天仍只报 `background_service: not_wired` 一位 |
 
 帧层落地时对本稿有**三处偏离**（`KeepAlivePayload`、入站侧也发保活、`flush_done` 的时机）。
 **实现已按偏离后的口径落地**，本文已回填：§0.3 逐条列，正文的 §2.1.3 / §2.4.3 / §2.6.2 已改成落地后的样子。
@@ -55,7 +55,7 @@
 | 1 | `CaptureTarget` 要不要加网络变体 | "不动 `ports.rs` 的 `CaptureTarget` 加 `net_in` 变体：清单先占名，**实现归 S3**"（`docs/plans/S0-COMPOSITION-MANIFEST.md` §3.4） | **到期**：S3 就是那一轮，所以本稿加 `CaptureTarget::Net { pipe }` | 同上（这句自己把到期时间写成了 S3） |
 | 2 | 声音管子选型 | "跨设备（**WebRTC 或现有 WebSocket**）"（`DIRECTIONS.md` §3.3 路线三）；§6.1 第 3 条列为待拍 | **拍板：裸 WebSocket + 自定义二进制帧**；WebRTC 降为第二档，代价逐条写在 §2.1.2 | §8"新者胜" |
 | 3 | 心跳来源 | "路线四：心跳来源 —— **确认**'上游管子叫醒'这条路"（`DIRECTIONS.md` §6.1 第 2 条） | **确认**，并给出落法：管子自造节拍（paced drain），**芯一行不改**（§2.4） | 同上 |
-| 4 | 无屏档的"听人说话" | "这档的'听'应该是 `net_in`，S3 目标、还没实现"（`crates/voxbridge-headless/src/headless.rs` 的 `legs_to_check` 注释） | **兑现**：`net_in` 成为这一档 Listen 腿的输入 | 本稿 §2.2、§2.3 |
+| 4 | 无屏档的"听人说话" | "这档的'听'应该是 `net_in`，S3 目标、还没实现"（`crates/vox-headless/src/headless.rs` 的 `legs_to_check` 注释） | **兑现**：`net_in` 成为这一档 Listen 腿的输入 | 本稿 §2.2、§2.3 |
 | 5 | `net_in`/`net_out` 恒假 | "没有定义者 ⇒ 实现落地前恒假"（`crates/vox-core/src/capability.rs` 头注释 + S0 §2.5.4 末表） | **保持规则、换掉结论**：本稿给定义者；落地前仍恒假（S0 规则 R8 不破） | S0 §2.5.4 R6 |
 | 6 | `UnavailableReason` 的取值 | 七种（`Unsupported` / `NotInstalled` / `Permission` / `NotBuilt` / `NotWired` / `PendingReboot` / `Busy`） | **加第八种 `Disabled`**（用户/配置把它关了）——取值与谁报它见 §2.2.3 的定义者表与 §2.6.3 的 `host_facts` | 本稿；R9 要求文案分得清"没开"与"做不到" |
 | 7 | 媒体面凭据放哪 | 本稿第 1 版写"`SecretStore` 的 `net_audio.token` / `net_audio.peer_token`"（§2.5.1、§2.5.3、§2.6.3），但**这套键值式 API 今天不存在**（§1.6） | **补 API，不搬秘密**：给 `SecretStore` 加三个键值式方法并迁四个实现（§3.1）；**不**把 token 塞进 `settings.json`——那会破掉本稿自己那条"配置文件永不承载秘密" | 本稿；`media.json` 是随进程起落的**发布面**（§2.6.3 第 4 步：停服即擦），当不了凭据的家 |
@@ -115,12 +115,12 @@
 | --- | --- |
 | `HostKind::LinuxHeadless` 的上限**只有两位**：`Mic` + `BackgroundService` | `crates/vox-core/src/capability.rs:414-418` |
 | 所以 `net_in` / `net_out` 在这一档报 `false(unsupported)`；有钉子用例把"外壳想关也关不掉、只能报 unsupported"钉死 | `crates/vox-core/src/capability.rs:708-722` |
-| 无屏外壳的 `host_facts()` 只报 `background_service: not_wired` 一位 | `crates/voxbridge-headless/src/platform/linux.rs:62-66` |
-| 无屏外壳有一条用例断言 `NetIn` / `NetOut` / `FileConfig` **不许为真**（"还没实现，不许广告"） | `crates/voxbridge-headless/src/platform/linux.rs:147-152` |
-| 装配第 2 步造 `Deps`：`transport` 走 `vox_net::WsTransport::new(handle)`（复用本进程的 tokio runtime，2 个工作线程） | `crates/voxbridge-headless/src/headless.rs:232-241`、`:47-49` |
-| `--print-capabilities` / `--print-composition` / `--dry-run` 走 `Probe::Nothing`：**不碰 PipeWire、不建目录、不写文件、不监听端口** | `crates/voxbridge-headless/src/headless.rs:62-68`；`crates/voxbridge-headless/src/cli.rs:30-38` |
-| CLI 现有开关面：`--config` / `--print-capabilities` / `--print-composition` / `--dry-run` / `--start <speak\|listen\|all>` / `--run-for <秒>` | `crates/voxbridge-headless/src/cli.rs:73-89` |
-| `legs_to_check` 只在 `settings.listen.target.is_some()` 时才验 Listen 腿 | `crates/voxbridge-headless/src/headless.rs:418-421` |
+| 无屏外壳的 `host_facts()` 只报 `background_service: not_wired` 一位 | `crates/vox-headless/src/platform/linux.rs:62-66` |
+| 无屏外壳有一条用例断言 `NetIn` / `NetOut` / `FileConfig` **不许为真**（"还没实现，不许广告"） | `crates/vox-headless/src/platform/linux.rs:147-152` |
+| 装配第 2 步造 `Deps`：`transport` 走 `vox_net::WsTransport::new(handle)`（复用本进程的 tokio runtime，2 个工作线程） | `crates/vox-headless/src/headless.rs:232-241`、`:47-49` |
+| `--print-capabilities` / `--print-composition` / `--dry-run` 走 `Probe::Nothing`：**不碰 PipeWire、不建目录、不写文件、不监听端口** | `crates/vox-headless/src/headless.rs:62-68`；`crates/vox-headless/src/cli.rs:30-38` |
+| CLI 现有开关面：`--config` / `--print-capabilities` / `--print-composition` / `--dry-run` / `--start <speak\|listen\|all>` / `--run-for <秒>` | `crates/vox-headless/src/cli.rs:73-89` |
+| `legs_to_check` 只在 `settings.listen.target.is_some()` 时才验 Listen 腿 | `crates/vox-headless/src/headless.rs:418-421` |
 | Listen 腿的清单**要求** `config.loopback_target`，没有就 `Err("还没选择监听程序。")` | `crates/vox-core/src/pipeline/listen.rs:35-38` |
 | `Runtime::start` 也拦一道：Listen 且 `settings.listen.target.is_none()` → `Notice::error("请先选择监听程序")` 并**不启动** | `crates/vox-core/src/runtime.rs:764-768` |
 
@@ -135,7 +135,7 @@
 | S1 的承诺：**音频永不进控制面协议**（`audio` content type 是一次性 base64，不是流式） | `docs/plans/S1-AGENT-FACE.md` §2.4.3 |
 | `vox-net` 今天的全部内容：`lib.rs`（`Transport` 的 WS 实现说明）+ `ws.rs`（tokio↔同步的桥接、读循环、错误映射）。**没有服务端、没有二进制帧、没有帧格式** | `crates/vox-net/src/lib.rs`、`crates/vox-net/src/ws.rs` |
 | `vox-net` 的依赖里已经有 `tokio` / `tokio-tungstenite` / `rustls` / `futures-util` / `tokio-util`；dev-deps 里已带 `rt-multi-thread`/`net` | `crates/vox-net/Cargo.toml` |
-| 无屏外壳**已经依赖 `vox-net`**（path 依赖），加媒体面不需要给无屏档新增任何包 | `crates/voxbridge-headless/Cargo.toml` 的 `vox-net = { path = "../vox-net" }` |
+| 无屏外壳**已经依赖 `vox-net`**（path 依赖），加媒体面不需要给无屏档新增任何包 | `crates/vox-headless/Cargo.toml` 的 `vox-net = { path = "../vox-net" }` |
 | 仓库已有"真机探针 example"的先例（无屏/无头环境下可复跑的观察出口） | `crates/vox-overlay-linux/examples/frame_loop_probe.rs`（`docs/architecture/DIRECTIONS.md` §10 第十轮回填引它） |
 | 能力位的消费端已经认识这两位：`app/ui/src/capabilities.ts` 的 `HOST_CAPABILITIES` 里有 `net_in`/`net_out`，i18n key 是 `capabilities.bit.netIn` / `netOut`；而 `(位, reason) → 句子` 那张表是**穷尽 `Record`**（`REASON_KEY: Record<UnavailableReason, string>`） | `app/ui/src/capabilities.ts::HOST_CAPABILITIES` / `CAPABILITY_KEY` / `REASON_KEY` / `UNAVAILABLE_REASONS`；`app/ui/scripts/check-capabilities.mjs::REASONS` / `REASON_MARK` |
 
@@ -144,16 +144,16 @@
 | 事实 | 出处（符号名；行号是**本轮**的） |
 | --- | --- |
 | `SecretStore` 只有**服务商键**那三个方法 + 三个带默认实现的 `*_for(provider)`，**没有**键值式的 `load_secret` / `store_secret` / `clear_secret` | `crates/vox-core/src/ports.rs::SecretStore`（`load_api_key` / `store_api_key` / `clear_api_key` + `load_api_key_for` / `store_api_key_for` / `clear_api_key_for`） |
-| 全仓库 `impl SecretStore` 共**四处** | `crates/voxbridge-headless/src/secrets.rs::SecretFile`、`app/src-tauri/src/sys/secrets.rs::DpapiSecretStore`、`app/src-tauri/src/platform/linux/secrets.rs::SecretServiceStore`、`crates/vox-core/src/pipeline/mod.rs` 测试里的 `MemoryStore` |
-| 四个实现的存储**本来就是 key→value**，所以加键值式方法是"把 provider 换成字符串"而不是新后端：`SecretFile` 是 `BTreeMap<String,String>` 的 0600 JSON，键就是 `provider.as_id()`；`DpapiSecretStore` 是"每个服务商一个文件"（`path_for(provider)`：`Aliyun` 走**基准文件名**，其余是 `{stem}-{id}.{ext}`）；`SecretServiceStore` 的条目名是 `format!("api-key.{}", provider.as_id())` | `crates/voxbridge-headless/src/secrets.rs::read_file` / `write_file` / `load` / `store` / `clear`；`app/src-tauri/src/sys/secrets.rs::DpapiSecretStore::path_for` 与私有 `store_secret(path, key)` / `load_secret(path)` / `clear_secret(path)`（**注意这三个名字与要加的同名 trait 方法撞名**）；`app/src-tauri/src/platform/linux/secrets.rs::user_for` |
+| 全仓库 `impl SecretStore` 共**四处** | `crates/vox-headless/src/secrets.rs::SecretFile`、`app/src-tauri/src/sys/secrets.rs::DpapiSecretStore`、`app/src-tauri/src/platform/linux/secrets.rs::SecretServiceStore`、`crates/vox-core/src/pipeline/mod.rs` 测试里的 `MemoryStore` |
+| 四个实现的存储**本来就是 key→value**，所以加键值式方法是"把 provider 换成字符串"而不是新后端：`SecretFile` 是 `BTreeMap<String,String>` 的 0600 JSON，键就是 `provider.as_id()`；`DpapiSecretStore` 是"每个服务商一个文件"（`path_for(provider)`：`Aliyun` 走**基准文件名**，其余是 `{stem}-{id}.{ext}`）；`SecretServiceStore` 的条目名是 `format!("api-key.{}", provider.as_id())` | `crates/vox-headless/src/secrets.rs::read_file` / `write_file` / `load` / `store` / `clear`；`app/src-tauri/src/sys/secrets.rs::DpapiSecretStore::path_for` 与私有 `store_secret(path, key)` / `load_secret(path)` / `clear_secret(path)`（**注意这三个名字与要加的同名 trait 方法撞名**）；`app/src-tauri/src/platform/linux/secrets.rs::user_for` |
 | token 生成是 `vox-mcp` 的**私有** `fn random_token() -> io::Result<String>`（`TOKEN_BYTES = 32` → `URL_SAFE_NO_PAD`），每次 `serve()` 调一次；`vox-net` 调不到（也不该依赖控制面 crate） | `crates/vox-mcp/src/transport/http.rs::random_token` / `TOKEN_BYTES` / `serve`（`let token = random_token()?;`）；它的 `base64.workspace` + `getrandom = "0.3"` 是**自己 crate 的**依赖，workspace 根只有 `base64 = "0.22"`，**没有** `getrandom` |
-| 控制面 token **不持久化**：`control.json`（`0600`）是唯一落点，停服即擦；`vox-mcp` 全 crate 不碰 `SecretStore` | `crates/vox-mcp/src/transport/http.rs::write_handshake` / `remove_handshake_if_ours`；`crates/voxbridge-headless/src/mcp.rs::STATE_FILE` 的注释 |
-| 能力位报告的 JSON 形状：`host` 是**每位一格**的表（`Capability::HOST` 全在），上限之外的位照 `unsupported` 报 | `crates/voxbridge-headless/src/status.rs::capabilities_json`；`crates/voxbridge-headless/src/platform/linux.rs::host_facts` 的注释与用例 `the_report_matches_the_headless_tier` |
+| 控制面 token **不持久化**：`control.json`（`0600`）是唯一落点，停服即擦；`vox-mcp` 全 crate 不碰 `SecretStore` | `crates/vox-mcp/src/transport/http.rs::write_handshake` / `remove_handshake_if_ours`；`crates/vox-headless/src/mcp.rs::STATE_FILE` 的注释 |
+| 能力位报告的 JSON 形状：`host` 是**每位一格**的表（`Capability::HOST` 全在），上限之外的位照 `unsupported` 报 | `crates/vox-headless/src/status.rs::capabilities_json`；`crates/vox-headless/src/platform/linux.rs::host_facts` 的注释与用例 `the_report_matches_the_headless_tier` |
 | i18n 文件名是 **`zh.ts` / `en.ts`**（另有 `ja.ts`，是**冻结包**：`Omit<DictShape, "capabilities">`，新 key 不加、缺的键回落 zh） | `app/ui/src/i18n/{zh,en,ja}.ts`；`ja.ts` 头注释的"保守ルール（2026-09-22 改定）" |
 | 检查脚本的 reason 全集与特征文案是两张表，注释里写的还是"**七种**" | `app/ui/scripts/check-capabilities.mjs::REASONS` / `REASON_MARK`（第 [7] 条遍历按 `REASONS` 走，zh 与 en 都要命中） |
 | 本机**没有 `sox`**（`python3` / `jq` 在 `/usr/bin/`） | `which sox python3 jq` → 只打出 `/usr/bin/python3`、`/usr/bin/jq`，退出码 **1** |
 | `vox-net` 的帧层依赖已进 manifest：`parking_lot.workspace = true`（入站排空线程的 `Mutex + Condvar`）；`base64` / `getrandom` **还没有** | `crates/vox-net/Cargo.toml` 的 `[dependencies]` |
-| `Deps` 今天只有两个构造点 | `app/src-tauri/src/lib.rs` 与 `crates/voxbridge-headless/src/headless.rs`（都在 `vox_core::pipeline::Deps { … }` 字面量里） |
+| `Deps` 今天只有两个构造点 | `app/src-tauri/src/lib.rs` 与 `crates/vox-headless/src/headless.rs`（都在 `vox_core::pipeline::Deps { … }` 字面量里） |
 
 ---
 
@@ -553,7 +553,7 @@ tokio 读循环（1 条任务）                 抖动环形缓冲             
 | 发布 | 启动时把**本机 token** 与**实际监听地址**写进 `media.json`（`0600`，先写 `.tmp` 再 rename，停服时**只删还是自己那一份**的——三条都照 `control.json` 的既有做法）。同机对端读它 |
 | 跨机配对 | 对端把同一串存进自己的 `SecretStore`（键 `net_audio.peer_token`）；S3 只做**最小可用**：一条 CLI/文档说明怎么抄，不做配对码/二维码 |
 | 通道①（非浏览器） | `Authorization: Bearer <token>`，**常数时间比较** |
-| 通道②（浏览器） | `Sec-WebSocket-Protocol: voxbridge.media.v1.<token>` —— 浏览器的 `WebSocket` 构造函数**只能设子协议、不能设请求头**，所以这条通道必须有；服务端在 101 响应里回同一个子协议名 |
+| 通道②（浏览器） | `Sec-WebSocket-Protocol: vox.media.v1.<token>` —— 浏览器的 `WebSocket` 构造函数**只能设子协议、不能设请求头**，所以这条通道必须有；服务端在 101 响应里回同一个子协议名 |
 | **不接受** | URL query（`?token=`）——会进访问日志与代理日志 |
 | 失败 | 在 **upgrade 之前**回 `401`（token 缺/错）。**不带任何 body**，也不回帧 |
 
@@ -762,7 +762,7 @@ pub fn random_token() -> PortResult<String>;
 | `PlaybackSink::stats()` | — | 把 `PipeStats` 映射到 `PlaybackStats`（`queued_samples` / `dropped_samples` / `sample_rate` / `channels`；`rendered_samples` 记"真的写进 socket 的样本数"） |
 | `PlaybackSink::flush()` / `close()` | — | `flush` **非阻塞**：只记一个意图，管子线程按"整块 → 余头 → 保活"收尾，**保活发出去才算这次 flush 办完**（§0.3 第 3 条）；`close` 关连接、停池（幂等） |
 
-#### 2.6.3 无屏外壳（`crates/voxbridge-headless/`）
+#### 2.6.3 无屏外壳（`crates/vox-headless/`）
 
 ```rust
 // 新文件 src/media.rs —— 媒体面的装配（形状照 mcp.rs：起、注入、写/擦凭据文件、关机）
@@ -843,7 +843,7 @@ pub fn host_facts(media: Option<&MediaHandle>) -> HostFacts {
 | `src/runtime.rs` | 修改 ★ | ① `SessionConfig` 加 `net_in` / `net_out` 两格；② `derive_session_config` 按 §2.3.4 的表填；③ `start()` 的 Listen 守卫加 `&& !net_listen_enabled(settings)`；④ `Snapshot` 里带一份媒体面统计（`Option<PipeStats>` 的只读投影，供状态出口用）——**若判定为不必要的公开面，可只进日志**（留给实现时定，见 §5 未决） |
 | `src/composition.rs` | 修改 | ① 端点那条钉子用例从 `assert!(Plan::from(&endpoint).is_err())` 改成"**能派生出直通作业单**"（`target == CaptureTarget::Net{..}`、`passthrough`、`net_out == Some("default")`）；② `Input::NetIn` / `Output::NetOut` 的注释去掉"[S3 目标，现状未实现]" |
 
-### 3.2 shell-dev（`crates/vox-net/` + `crates/vox-audio-{linux,win}/` + `crates/voxbridge-headless/` + `app/ui/` + `app/src-tauri/`）
+### 3.2 shell-dev（`crates/vox-net/` + `crates/vox-audio-{linux,win}/` + `crates/vox-headless/` + `app/ui/` + `app/src-tauri/`）
 
 > 「动作」列里标 **已落地** 的行是帧层这一轮真的动过的文件（对照 `git status --short crates/vox-net crates/vox-core/src/ports.rs`：`M crates/vox-net/Cargo.toml`、`M crates/vox-net/src/lib.rs`、`?? crates/vox-net/src/media/`、`?? crates/vox-net/tests/`、`?? crates/vox-net/examples/`）；**其余（含标"未做"的）都是 S3 后半**。
 
@@ -863,16 +863,16 @@ pub fn host_facts(media: Option<&MediaHandle>) -> HostFacts {
 | `crates/vox-audio-linux/src/capture.rs` | 修改（**已落地**） | `resolve_plan` 补 `CaptureTarget::Net { .. }` 分支：**报错**（网络音频由 `vox-net` 的监听侧提供），不许静默换源 |
 | `crates/vox-audio-linux/examples/smoke.rs` | 修改（**已落地**） | 打印用的 `match` 补 `Net` 分支（例子里只描述、不采集） |
 | `crates/vox-audio-win/src/capture/mod.rs` | 修改（**已落地**） | 两处 `match target` 补 `Net` 分支：都**报错**（同上） |
-| `crates/voxbridge-headless/src/media.rs` | **新增**（**未做**） | 装配媒体面 + `media.json` 发布/擦除 + token 三步（§2.6.3）+ `capture_factory` 分派壳 + `net_out_factory` |
-| `crates/voxbridge-headless/src/secrets.rs` | 修改（**未做**） | `SecretFile` 迁到键值式 `SecretStore`（§3.1）：JSON 键**保持现状**，新增 `net_audio.token` / `net_audio.peer_token` 两个键 |
-| `crates/voxbridge-headless/src/headless.rs` | 修改 ★（**未做**） | `Assembly` 起媒体面（只读模式不做）；`Daemon::start` 注入 `Deps` 两处（`Deps { … }` 字面量就在这里）；`set_host_facts` 排在媒体面之后；`shutdown` 先停流水线再 `media.shutdown()`；`legs_to_check` 把"配了媒体面"也算作"要验 Listen 腿" |
-| `crates/voxbridge-headless/src/platform/linux.rs` | 修改 ★（**未做**） | `host_facts(media)` 新签名与两位的报法（§2.6.3）；**改掉**用例 `the_report_matches_the_headless_tier` 里"`NetIn` / `NetOut` / `FileConfig` 不许为真"那段：前两位改成"按句柄报"（有句柄 → 真；无句柄 → `not_wired`；总闸关 → `disabled`），**`FileConfig` 那一位保持不动**（它归另一轮） |
-| `crates/voxbridge-headless/src/config.rs` | 修改 | 加 `MEDIA_FILE` 常量（与 `CONTROL_FILE` 同目录同形状） |
-| `crates/voxbridge-headless/src/status.rs` | 修改 | 把媒体面统计进状态出口（一条 `tracing` 结构化事件 + `--print-composition` 的 `capabilities` 已经带位，不用改形状） |
-| `crates/voxbridge-headless/src/cli.rs` | 修改 | `--help` 增一段"媒体面（`settings.json` 的 `net` 段）"；**不加新开关**（配置面负责） |
-| `crates/voxbridge-headless/settings.example.json` | 修改 | 加 `net` 段（全关 + 注释性取值） |
-| `crates/voxbridge-headless/README.md` | 修改 | §5"还没做（不许广告）"里 `net_in`/`net_out` 两行按实情改写 |
-| `app/src-tauri/src/lib.rs` | 修改（**未做**） | `Deps` 补 `net_out: None`（桌面档不接媒体面；清单也到不了那一格）。`Deps` 今天只有两个构造点：`app/src-tauri/src/lib.rs` 与 `crates/voxbridge-headless/src/headless.rs`（§1.6） |
+| `crates/vox-headless/src/media.rs` | **新增**（**未做**） | 装配媒体面 + `media.json` 发布/擦除 + token 三步（§2.6.3）+ `capture_factory` 分派壳 + `net_out_factory` |
+| `crates/vox-headless/src/secrets.rs` | 修改（**未做**） | `SecretFile` 迁到键值式 `SecretStore`（§3.1）：JSON 键**保持现状**，新增 `net_audio.token` / `net_audio.peer_token` 两个键 |
+| `crates/vox-headless/src/headless.rs` | 修改 ★（**未做**） | `Assembly` 起媒体面（只读模式不做）；`Daemon::start` 注入 `Deps` 两处（`Deps { … }` 字面量就在这里）；`set_host_facts` 排在媒体面之后；`shutdown` 先停流水线再 `media.shutdown()`；`legs_to_check` 把"配了媒体面"也算作"要验 Listen 腿" |
+| `crates/vox-headless/src/platform/linux.rs` | 修改 ★（**未做**） | `host_facts(media)` 新签名与两位的报法（§2.6.3）；**改掉**用例 `the_report_matches_the_headless_tier` 里"`NetIn` / `NetOut` / `FileConfig` 不许为真"那段：前两位改成"按句柄报"（有句柄 → 真；无句柄 → `not_wired`；总闸关 → `disabled`），**`FileConfig` 那一位保持不动**（它归另一轮） |
+| `crates/vox-headless/src/config.rs` | 修改 | 加 `MEDIA_FILE` 常量（与 `CONTROL_FILE` 同目录同形状） |
+| `crates/vox-headless/src/status.rs` | 修改 | 把媒体面统计进状态出口（一条 `tracing` 结构化事件 + `--print-composition` 的 `capabilities` 已经带位，不用改形状） |
+| `crates/vox-headless/src/cli.rs` | 修改 | `--help` 增一段"媒体面（`settings.json` 的 `net` 段）"；**不加新开关**（配置面负责） |
+| `crates/vox-headless/settings.example.json` | 修改 | 加 `net` 段（全关 + 注释性取值） |
+| `crates/vox-headless/README.md` | 修改 | §5"还没做（不许广告）"里 `net_in`/`net_out` 两行按实情改写 |
+| `app/src-tauri/src/lib.rs` | 修改（**未做**） | `Deps` 补 `net_out: None`（桌面档不接媒体面；清单也到不了那一格）。`Deps` 今天只有两个构造点：`app/src-tauri/src/lib.rs` 与 `crates/vox-headless/src/headless.rs`（§1.6） |
 | `app/src-tauri/src/sys/secrets.rs` | 修改（**未做**） | `DpapiSecretStore` 迁到键值式 `SecretStore`：**文件名规则保持现状**（`DpapiSecretStore::path_for`：`Aliyun` 走基准文件名，其余 `{stem}-{id}.{ext}`），键值式方法按同一套规则落盘；三个**按路径**的私有 `store_secret` / `load_secret` / `clear_secret` 同轮改名（§3.1） |
 | `app/src-tauri/src/platform/linux/secrets.rs` | 修改（**未做**） | `SecretServiceStore` 迁到键值式 `SecretStore`：条目名由 `user_for(provider)` 泛化（`api-key.<id>` / `net_audio.token` / `net_audio.peer_token`） |
 | `app/ui/src/capabilities.ts` | 修改 ★（**未做**） | `REASON_KEY`（`Record<UnavailableReason, string>`，**穷尽**）加 `disabled: "capabilities.reason.disabled"`。**不改它就 `tsc` 红**（缺键）；`check-capabilities.mjs` 第 [7] 条遍历读的 `UNAVAILABLE_REASONS` 就是由这张表的键导出的 |
@@ -902,7 +902,7 @@ pub fn host_facts(media: Option<&MediaHandle>) -> HostFacts {
 | 位置 | 删什么 | 为什么 |
 | --- | --- | --- |
 | `crates/vox-core/src/pipeline/mod.rs` 的 `Plan::from`（`Input::NetIn \| Input::HostFeed` 那条 `PortError`） | "`net_in` / `host_feed` 归 S3"整句 → 只留 `host_feed` | 这一轮到期 |
-| `crates/voxbridge-headless/src/platform/linux.rs` 的用例 `the_report_matches_the_headless_tier` | "`NetIn` / `NetOut` 不许为真"那两位 | 它钉的是"还没实现"，本轮实现落地 → 换成"按句柄报"的两条（`FileConfig` 那一位留着） |
+| `crates/vox-headless/src/platform/linux.rs` 的用例 `the_report_matches_the_headless_tier` | "`NetIn` / `NetOut` 不许为真"那两位 | 它钉的是"还没实现"，本轮实现落地 → 换成"按句柄报"的两条（`FileConfig` 那一位留着） |
 | `crates/vox-core/src/composition.rs` 的用例 `an_endpoint_is_the_minimal_instance` | "端点今天跑不起来"那条断言（`Plan::from(&endpoint).is_err()`，"网络进/网络出还没实现，不许被装成今天的作业单"） | 同上（换成"能派生出直通作业单"） |
 
 ---
@@ -934,7 +934,7 @@ cargo run -p vox-net --example media_probe -- --help   # 探针自报用法（`-
 | 5 | `an_overrun_drops_the_oldest_block` | 环满丢最旧，`dropped_ms` 增长，深度不变（照 `INPUT_QUEUE_SIZE` 的既有策略） |
 | 6 | `no_peer_means_no_callback_at_all` | 只有监听、没有对端：`on_chunk` **零调用**、`padded_ms == 0`（"对端还没来" ≠ "抖动"） |
 | 7 | `a_wrong_token_is_rejected_before_upgrade` | 错 token → `401`（**不是**"连上再关"）；`Origin` 不在白名单 → `403`；`allowed_origins` 为空时带 `Origin` 一律 403 |
-| 8 | `the_browser_subprotocol_channel_works` | `Sec-WebSocket-Protocol: voxbridge.media.v1.<token>` 能连上，且 101 回同一个子协议名 |
+| 8 | `the_browser_subprotocol_channel_works` | `Sec-WebSocket-Protocol: vox.media.v1.<token>` 能连上，且 101 回同一个子协议名 |
 | 9 | `a_rate_mismatch_kills_the_connection` | 帧头 `rate` ≠ 声明率 → 断连 + `rate_mismatch` 计数（**不许**静默重采样） |
 | 10 | `a_malformed_frame_is_counted_and_the_connection_dies` | 坏 magic / 版本 / `kind` / `flags` / `channels≠1` / 超长 / 文本帧：逐条 `bad_frames` + 断连 |
 | 11 | `the_sink_coalesces_and_sends_a_keepalive` | `push` 攒成 `block_ms` 一帧；空闲 `keepalive_ms` 发一个 20 字节 `keepalive` 帧；`flush` 发余头 |
@@ -965,7 +965,7 @@ cargo test -p vox-core          # 清单/能力位/两条腿的既有用例全�
 ### 4.4 无屏档真跑（本机可复现的端到端）
 
 > **今天跑到哪一步（第二十三轮核）**：整段是 **S3 后半**的验收——② 要无屏外壳的媒体面装配
-> （`crates/voxbridge-headless/src/media.rs` 还没写），所以第②步之后**没有 `media.json` 可读**。
+> （`crates/vox-headless/src/media.rs` 还没写），所以第②步之后**没有 `media.json` 可读**。
 > 今天能跑的替代是直接对着探针自己的 `--listen` 跑（同进程既听又说，见 `media_probe.rs` 头注释）：
 > 那验的是**帧层**（§4.2），不是外壳装配。
 > ① 今天打出来的**不是** `not_wired` 而是 `{"enabled":false,"reason":"unsupported"}`——这两位还没进
@@ -982,13 +982,13 @@ mkdir -p /tmp/vb && cat > /tmp/vb/settings.json <<'JSON'
 JSON
 
 # ── ① 只读模式：不许 bind、不许 connect ⇒ 两位如实报假（诚实，不是缺陷） ──
-cargo run -p voxbridge-headless -- --config /tmp/vb/settings.json --print-capabilities \
+cargo run -p vox-headless -- --config /tmp/vb/settings.json --print-capabilities \
   | jq -c '.host.net_in, .host.net_out'
 #   期望（S3 后半落地后）：{"enabled":false,"reason":"not_wired"} ×2
 #   今天实际：{"enabled":false,"reason":"unsupported"} ×2（两位还没进无屏档的上限，见本节顶部的标注）
 
 # ── ② 常驻模式：媒体面真的起来 ──
-cargo run -p voxbridge-headless -- --config /tmp/vb/settings.json --start listen --run-for 30 &
+cargo run -p vox-headless -- --config /tmp/vb/settings.json --start listen --run-for 30 &
 sleep 2
 cat /tmp/vb/media.json
 #   期望：{"listen":"127.0.0.1:<实际端口>","token":"<43 字符>","pid":<pid>,"rate_hz":16000}
@@ -1096,7 +1096,7 @@ test ! -f /tmp/vb/media.json && echo "OK：凭据文件已擦"
 2. **本稿唯一新增的公共接口是 `SecretStore` 的三个键值式方法**（§3.1）：它是"媒体面凭据要持久、又不能进配置"
    这条约束的唯一出口。四个实现**必须同轮迁**，且**键名兼容是硬要求**（老用户盘上的密钥要照读）。
 3. **必须同轮落地的三处耦合**（否则中间态是外壳 bug）：`capability.rs` 的上限表 ↔
-   `voxbridge-headless/src/platform/linux.rs` 的 `host_facts`；`listen.rs` 的输入选择 ↔ `runtime.rs` 的启动守卫；
+   `vox-headless/src/platform/linux.rs` 的 `host_facts`；`listen.rs` 的输入选择 ↔ `runtime.rs` 的启动守卫；
    `Deps.net_out` ↔ 两个外壳的装配（`app/src-tauri/src/lib.rs` 补 `None`）。
 4. **留给下一轮拍的两个岔路**（都不阻塞本稿）：`wss` 服务端（要证书分发）、
    纯中继腿的产品入口（要加第三条腿，S0 §3.4 已把它排在清单落地之后）。

@@ -1,4 +1,4 @@
-//! VoxBridge 装配层。
+//! Vox 装配层。
 //!
 //! 这个 crate 自己不做任何业务判断：它把 Windows 的实现塞进 `vox-core` 的每个
 //! 端口，把线程按 docs/architecture/ARCHITECTURE.md §6 的拓扑摆好，再把内核事件转成前端认的那一个
@@ -118,7 +118,7 @@ pub fn run() {
         Err(e) => {
             tracing::error!("Tauri 应用构建失败：{e}");
             platform::alert(
-                "VoxBridge 启动失败",
+                "Vox 启动失败",
                 &format!("初始化时出错，应用无法启动。\n\n{e}"),
             );
             return;
