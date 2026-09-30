@@ -49,6 +49,11 @@ vox-osc = { path = "../../crates/vox-osc" }
 # （`LedgerBackend` + 用户开关）并起停，协议面一行都不碰（`src/mcp.rs`）。
 vox-mcp = { path = "../../crates/vox-mcp" }
 
+# 共享宿主层（S4-A）。桌面档**开** `secret-service`：Linux 的密钥后端走
+# gnome-keyring / KWallet（走 D-Bus），这是桌面档自己的既有选择。
+# 无屏档不开——它用 0600 文件兜底，开了会让 `cargo tree -p vox-headless` 拖进 keyring/zbus。
+vox-host = { workspace = true, features = ["secret-service"] }
+
 [target.'cfg(windows)'.dependencies]
 # `windows` 必须按 target 门控：它的 `windows-future` 子 crate 在非 Windows 上
 # 编不过（`windows_threading::submit` 不存在），会直接把 Linux 的 workspace 检查

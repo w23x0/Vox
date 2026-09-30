@@ -14,6 +14,9 @@ members = [
     "crates/vox-overlay-win",
     "crates/vox-osc",
     "crates/vox-mcp",
+    # 共享宿主层：两个装配层（桌面 / 无屏）共用的那一半。放进 workspace 是为了让
+    # `cargo test/clippy --workspace` 真的覆盖到它。
+    "crates/vox-host",
     # 两个装配层。放进 workspace 是为了让 `cargo test/clippy --workspace` 真的覆盖到它。
     "app/src-tauri",
     # 无屏档（小主板 ARM64 Linux）的入口：跟 app 并列的第二个外壳，**不依赖 Tauri**。
@@ -40,6 +43,7 @@ parking_lot = "0.12"
 vox-core = { path = "crates/vox-core" }
 vox-dsp = { path = "crates/vox-dsp" }
 vox-overlay-core = { path = "crates/vox-overlay-core" }
+vox-host = { path = "crates/vox-host" }
 # 三个 Windows crate 共用同一个版本，避免同时链两份 windows。
 windows = "0.62"
 rubato = "0.16"

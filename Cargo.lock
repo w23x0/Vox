@@ -5819,6 +5819,7 @@ dependencies = [
  "vox-audio-win",
  "vox-core",
  "vox-dsp",
+ "vox-host",
  "vox-input-linux",
  "vox-input-win",
  "vox-mcp",
@@ -5898,8 +5899,26 @@ dependencies = [
  "vox-audio-linux",
  "vox-core",
  "vox-dsp",
+ "vox-host",
  "vox-mcp",
  "vox-net",
+]
+
+[[package]]
+name = "vox-host"
+version = "0.2.1"
+dependencies = [
+ "chrono",
+ "keyring",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+ "vox-core",
+ "vox-dsp",
+ "vox-mcp",
+ "windows 0.62.2",
 ]
 
 [[package]]

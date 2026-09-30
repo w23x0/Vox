@@ -19,6 +19,11 @@ vox-core.workspace = true
 vox-dsp.workspace = true
 vox-net = { path = "../vox-net" }
 vox-mcp = { path = "../vox-mcp" }
+# 共享宿主层（S4-A）。**不开** `secret-service`：无屏盒子常常没有 keyring 守护
+# （EMBEDDED §3.6），开了会把 keyring/zbus 拖进这棵依赖树——
+# `cargo tree -p vox-headless | grep -ciE '\b(tauri|tao|wry|gtk|webkit2gtk|keyring|zbus)\b'` = 0
+# 是验收项。密钥走 `SecretBackend::File`（配置目录下的 0600 文件）。
+vox-host.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

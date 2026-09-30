@@ -1,0 +1,53 @@
+[package]
+name = "vox-host"
+description = "共享宿主层：桌面档（Tauri）与无屏档共用的配置目录 / 落盘 / 密钥后端 / 控制面胶水 / 事件与报告出口"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# 依赖表按 `docs/plans/S4-A-HOST-LAYER.md` §3.1 / §3.5 **一次写到位**，之后的工单不再动它。
+#
+# 三条硬规矩（验收会拿 `cargo tree` 钉）：
+#
+# 1. **不引 tokio**：共享层要碰的每一件都不需要它。控制面走 `vox_mcp::transport::http`
+#    （`std::net::TcpListener` + 每连接一个线程）；流水线引擎的 `TransportFactory` 由**入口**
+#    建好后注入，runtime 句柄的保活也留在入口（无屏的 `Daemon._net` 就是干这个的）。
+# 2. **不引界面那套**：tauri / tauri-plugin-* / gtk / webkit / wry / tao / openvr 一律没有。
+#    `cargo tree -p vox-host | grep -ciE 'tauri|tao|wry|gtk|webkit|zbus'` = 0 是验收项。
+# 3. **`keyring` 默认关**：只有桌面 Linux 需要 Secret Service；无屏盒子常常没有 keyring 守护
+#    （`docs/platform/EMBEDDED.md` §3.6），留成开着的默认会让 `cargo tree -p vox-headless`
+#    拖进 keyring/zbus。所以它是 optional + `target_os = "linux"` 双重门控，由桌面档开。
+[dependencies]
+vox-core.workspace = true
+vox-mcp = { path = "../vox-mcp" }
+vox-dsp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+# 本地日期（用量按天/按月分桶）走挂钟时间 + 本地时区。只要 clock + std，不要默认那一堆。
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+
+[dev-dependencies]
+# 只有搬过来的那条日志用例用（`events.rs::subtitle_text_never_reaches_the_log` 要一个真的
+# subscriber 抓一遍输出）。运行期不引。
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[features]
+# Secret Service（gnome-keyring / KWallet，走 D-Bus 会话总线）。**默认关**，理由见文件头第 3 条。
+secret-service = ["dep:keyring"]
+default = []
+
+[target.'cfg(windows)'.dependencies]
+# DPAPI 加密（`secrets::dpapi`）+ `control::process_alive` 的 Windows 分支
+# （OpenProcess / CloseHandle）。`windows` 必须按 target 门控：它的 `windows-future` 子 crate
+# 在非 Windows 上编不过，会把 Linux 的 workspace 检查卡死在依赖树里。
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security_Cryptography",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "4", optional = true }
