@@ -19,8 +19,9 @@ use crate::entry::HostPorts;
 use crate::paths::{self, Paths};
 use crate::persist::Persist;
 
-/// 同步扫一遍设备目录。**今天两份 8 行的同形函数合并成这一份**（`app/src-tauri/src/devices.rs::scan`
-/// 与 `crates/vox-headless/src/headless.rs::scan_devices`）。
+/// 同步扫一遍设备目录。**今天两份 8 行的同形函数合并成这一份**（S4-A §1.2-D9 的
+/// `devices::scan` 与 `headless::scan_devices`）——那两个函数都已删掉，现在只剩本这一处实现，
+/// 两个外壳都在调它。
 ///
 /// 跟两个外壳同口径：任一项失败就给空列表——界面上少几个选项，比整个面板打不开好。
 pub fn scan_devices(registry: &dyn vox_core::ports::DeviceRegistry) -> DeviceSnapshot {
