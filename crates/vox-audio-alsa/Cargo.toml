@@ -1,0 +1,21 @@
+[package]
+name = "vox-audio-alsa"
+description = "ALSA 音频 I/O：麦克风采集、播放、设备目录（无屏档缺省后端）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vox-core.workspace = true
+# 播放侧的 DropRing 在 vox-dsp 里（与 vox-audio-win / vox-audio-linux 共用同一份）。
+vox-dsp.workspace = true
+tracing.workspace = true
+# 只为了 errno 常量（EPIPE / ESTRPIPE / EAGAIN），判读 io 结果要用。
+# alsa 依赖 libc，所以这不新增任何编译产物。
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# alsa 是 libasound 的薄封装；编译期要 libasound2-dev（.pc + 头文件），
+# 运行期只要 libasound2。默认 feature 只有 std，不开 alsa-sys 的 use-bindgen
+# （那会把 bindgen + clang 拖进来，交叉编译时是纯负担）。
+alsa = "0.12.1"

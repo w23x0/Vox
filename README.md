@@ -26,7 +26,7 @@ Built with **Tauri 2 + React 19 + Rust**. The UI handles config and status; audi
 Prereqs, both platforms: Node.js `^20.19.0` or `>=22.12.0`, Rust stable, and an API key (or the frontend Mock, which needs none).
 
 - **Windows**: Windows 11 x64, VS Build Tools (C++ desktop), WebView2, target `x86_64-pc-windows-msvc`. OpenVR bindings are vendored under `vendor/openvr_sys`; LLVM/Clang is not required for the regular build.
-- **Linux**: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `libpipewire-0.3-dev`, `clang` + `libclang-dev` (bindgen for `libspa-sys`), `patchelf` (AppImage), plus `build-essential`/`pkg-config`. Full list and the reason for each: [`docs/platform/LINUX.md`](docs/platform/LINUX.md) §7.
+- **Linux**: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `libpipewire-0.3-dev`, `libasound2-dev` (ALSA backend for the headless build, `vox-audio-alsa`), `clang` + `libclang-dev` (bindgen for `libspa-sys`), `patchelf` (AppImage), plus `build-essential`/`pkg-config`. Full list and the reason for each: [`docs/platform/LINUX.md`](docs/platform/LINUX.md) §7.
 
 ```powershell
 cd app\ui
@@ -93,6 +93,7 @@ Vox/
 │  ├─ vox-input-win/   # global hotkeys (GetAsyncKeyState polling)
 │  ├─ vox-overlay-win/ # Win32 transparent caption window
 │  ├─ vox-audio-linux/ # PipeWire capture/playback, per-program capture, virtual microphone
+│  ├─ vox-audio-alsa/  # ALSA capture/playback/devices, default backend for the headless build (S4-C, under construction)
 │  ├─ vox-input-linux/ # global hotkeys (evdev)
 │  └─ vox-overlay-linux/# GTK transparent caption window (XWayland), swash glyph raster
 ├─ app/

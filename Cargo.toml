@@ -6,6 +6,7 @@ members = [
     "crates/vox-net",
     "crates/vox-audio-win",
     "crates/vox-audio-linux",
+    "crates/vox-audio-alsa",
     "crates/vox-input-linux",
     "crates/vox-input-win",
     "crates/vox-overlay-core",
