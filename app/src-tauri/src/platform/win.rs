@@ -45,7 +45,7 @@ pub fn capture_factory() -> CaptureFactory {
 
 pub fn playback_factory() -> PlaybackFactory {
     Box::new(|| {
-        let rf = crate::dsp::resample_factory();
+        let rf = vox_dsp::ports::resample_factory();
         Box::new(vox_audio_win::WinPlayback::new(rf))
     })
 }

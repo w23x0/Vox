@@ -31,7 +31,7 @@ pub fn platform() -> PortResult<Platform> {
         // 播放：请求设备率交给 PipeWire 在图里转，重采样器用芯那一份；
         // 与桌面 Linux 侧 `platform/linux/audio.rs` 逐行同形。
         playback: Box::new(|| {
-            let resample = crate::dsp::resample_factory();
+            let resample = vox_dsp::ports::resample_factory();
             Box::new(vox_audio_linux::LinuxPlayback::new(resample))
         }),
         // 设备目录：PipeWire 图里数节点。无状态，全进程共用一个。

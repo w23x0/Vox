@@ -38,7 +38,7 @@ use crate::cli::{self, Mode, Start};
 use crate::config::{self, Paths};
 use crate::persist::Persist;
 use crate::secrets::SecretFile;
-use crate::{dsp, mcp, platform, status, sys};
+use crate::{mcp, platform, status, sys};
 
 /// 装配层的错误：一律"是什么就是什么"，没有自定义错误类型——这一层只把别处的失败串起来。
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -235,8 +235,8 @@ impl Daemon {
             transport: Box::new(move || Box::new(vox_net::WsTransport::new(handle.clone()))),
             capture: platform.capture,
             playback: platform.playback,
-            denoise: dsp::denoise_factory(),
-            resample: dsp::resample_factory(),
+            denoise: vox_dsp::ports::denoise_factory(),
+            resample: vox_dsp::ports::resample_factory(),
         };
 
         let engine = PipelineEngine::new(runtime.clone(), deps);

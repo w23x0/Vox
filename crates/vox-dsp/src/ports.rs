@@ -1,50 +1,49 @@
 //! `Denoise` / `Resample` 两个端口的实现。
 //!
-//! `vox-dsp` 里的 `Denoiser` / `Resampler` 方法签名跟端口对得上，但它没有 impl
-//! 那两个 trait（trait 在 vox-core，类型在 vox-dsp，都不是本 crate 的，孤儿规则
-//! 不让我们在这儿直接 impl）。所以这里套一层 newtype——纯转发，零逻辑。
+//! 两个 trait 住在 `vox_core::ports`，而 [`crate::Denoiser`] / [`crate::Resampler`] 是**本
+//! crate 的本地类型**——本地类型实现外部 trait 满足 coherence 要求，所以这里直接 impl，
+//! 不用再套一层 newtype 转发（`docs/plans/S4-A-HOST-LAYER.md` §1.4 的核实）。
+//!
+//! 两个工厂因此也不在装配层里了：桌面（`app/src-tauri`）与无屏（`crates/vox-headless`）
+//! 以前各留一份同形的适配器，现在共用本文件这一份。
 
 use vox_core::pipeline::{DenoiseFactory, ResampleFactory};
 use vox_core::ports::{Denoise, PortResult, Resample};
 
-struct DenoiseAdapter(vox_dsp::Denoiser);
+use crate::{Denoiser, Resampler};
 
-impl Denoise for DenoiseAdapter {
+impl Denoise for Denoiser {
     fn process(&mut self, samples: &[f32]) -> Vec<f32> {
-        self.0.process(samples)
+        Denoiser::process(self, samples)
     }
 
     fn reset(&mut self) {
-        self.0.reset()
+        Denoiser::reset(self)
     }
 }
 
-struct ResampleAdapter(vox_dsp::Resampler);
-
-impl Resample for ResampleAdapter {
+impl Resample for Resampler {
     fn process(&mut self, samples: &[f32]) -> Vec<f32> {
-        self.0.process(samples)
+        Resampler::process(self, samples)
     }
 
     fn flush(&mut self) -> Vec<f32> {
-        self.0.flush()
+        Resampler::flush(self)
     }
 
     fn reset(&mut self) {
-        self.0.reset()
+        Resampler::reset(self)
     }
 }
 
 /// 降噪工厂。失败时内核会退化成不降噪，不会把流水线弄挂。
 pub fn denoise_factory() -> DenoiseFactory {
-    Box::new(|| -> PortResult<Box<dyn Denoise>> {
-        Ok(Box::new(DenoiseAdapter(vox_dsp::Denoiser::new()?)))
-    })
+    Box::new(|| -> PortResult<Box<dyn Denoise>> { Ok(Box::new(Denoiser::new()?)) })
 }
 
 /// 重采样工厂。同率时 `Resampler` 内部零开销透传。
 pub fn resample_factory() -> ResampleFactory {
-    Box::new(|from, to| Box::new(ResampleAdapter(vox_dsp::Resampler::new(from, to))))
+    Box::new(|from, to| Box::new(Resampler::new(from, to)))
 }
 
 #[cfg(test)]

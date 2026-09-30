@@ -31,7 +31,6 @@
 
 pub mod cli;
 pub mod config;
-mod dsp;
 pub mod headless;
 pub mod mcp;
 pub mod persist;

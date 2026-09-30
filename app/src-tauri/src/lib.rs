@@ -27,7 +27,6 @@ mod catalog_updater;
 mod commands;
 mod composition;
 mod devices;
-mod dsp;
 mod dto;
 mod events;
 pub mod mcp;
@@ -193,8 +192,8 @@ fn assemble(app: &tauri::AppHandle) -> Result<Arc<AppState>, Box<dyn std::error:
             transport: net::transport_factory(tokio_handle),
             capture: platform::capture_factory(),
             playback: platform::playback_factory(),
-            denoise: dsp::denoise_factory(),
-            resample: dsp::resample_factory(),
+            denoise: vox_dsp::ports::denoise_factory(),
+            resample: vox_dsp::ports::resample_factory(),
         },
     );
     runtime.set_control(Arc::clone(&engine) as Arc<_>);
