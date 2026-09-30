@@ -3,6 +3,11 @@
 //! 装配与退出顺序在这一层，因为它是**两个外壳真正共有的那一段**——它们做的事一件不多、
 //! 一件不少，只是前后各自插着宿主特有的步骤（桌面多出托盘/热键/设备/悬浮/虚拟麦/OSC，
 //! 无屏多出自建 tokio runtime）。把共有的那 7 步收在这里，两边的注释就只剩"差在哪"。
+//!
+//! 有一步要挑明：**共有的顺序不等于"每次都在 `Core::assemble` 里做完"**。第 5–7 步
+//! （宿主事实 / 启动提示 / 落盘监听）要看那一位"本机有什么"的定义者有没有就位——桌面档的
+//! 五位事实要等悬浮窗/头显/事件桥/热键/托盘起来，所以它走 [`Finish::AfterHostSteps`] 自己补做。
+//! 见 [`Finish`]。
 
 use std::sync::Arc;
 
@@ -47,6 +52,30 @@ pub enum PersistMode {
     ReadOnly,
 }
 
+/// 共有的第 5–7 步（宿主事实 / 启动提示 / 落盘监听）**在哪儿做完**。
+///
+/// 第 1–4 步（落盘 → 设置+时钟+`Runtime` → 密钥 → 用量）两个入口逐字同序，账本那时候刚建好、
+/// 还没有任何宿主特有的东西起来。**第 5–7 步则要看那一位"本机有什么"的定义者有没有就位**：
+///
+/// - 无屏档：档位、PipeWire、systemd 单元这三样在装配期就已经是定值（`platform::host_facts`
+///   里逐位写死了），所以三步都在 [`Core::assemble`] 里做完。
+/// - 桌面档：五位宿主事实的定义者分别在悬浮窗 / 头显 / 事件桥 / 热键 / 托盘那几步里才起来，
+///   启动提示要读托盘 `install()` 刚写下的"看得见吗"，而落盘由 `events::wire` 的**复合监听器**
+///   一起做（同一个监听器里既转发给前端又落盘）。早做就会漏掉它们，所以三步都推给入口。
+///
+/// 这一位就是把这个差异说出来的：**顺序不变量保住的是"每一步在正确的时刻做"，
+/// 而"正确的时刻"两个入口不一样。**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Finish {
+    /// 第 5–7 步在 [`Core::assemble`] 里做完（无屏档）。
+    InAssemble,
+    /// 第 5–7 步**都不做**，由入口在自己的宿主特有步骤跑完之后自己做（桌面档）。
+    /// 入口自己做完的形状照旧：注入事实、发启动提示、落盘监听（桌面的那一条已经包含在
+    /// 自己的复合监听器里，所以**不用**再调 `Persist::attach_to`——挂两个监听器会让
+    /// 每条事件被分派两次）。
+    AfterHostSteps,
+}
+
 /// 芯的那一半：两个入口**逐字同序**的那 7 步跑完之后的产物。
 pub struct Core {
     pub runtime: Runtime,
@@ -66,13 +95,19 @@ impl Core {
     /// 5. `runtime.set_host_facts((ports.facts)())` —— **必须在控制面开门之前**，
     ///    事实还没齐就开门，先连上来的客户端会拿到一份建立在默认事实上的清单
     /// 6. `(ports.startup_notes)()` → `Notice`（受 `Notes` 控制）
-    /// 7. `persist.attach_to(&runtime)`（无屏走这条；桌面由自己的复合监听器代替，
-    ///    它的监听器里既转发给前端又落盘）
+    /// 7. `persist.attach_to(&runtime)`
+    ///
+    /// 第 5–7 步受 [`Finish`] 控制：桌面档的宿主特有步骤（悬浮窗 / 头显 / 事件桥 / 热键 /
+    /// 托盘）是那五位事实的定义者，早注入会漏掉它们，所以它传 [`Finish::AfterHostSteps`]，
+    /// 自己在那几步之后补做——见 [`Finish`] 的注释。控制面**不归这一层**（桌面是
+    /// `ControlPlane::install` + `reconcile`，无屏是 `control::start`），但两个入口都在
+    /// 事实注入之后才开门，那条不变量因此在这两个入口各自的顺序代码里。
     pub fn assemble(
         paths: Paths,
         ports: &HostPorts,
         persist_mode: PersistMode,
         notes: Notes,
+        finish: Finish,
     ) -> Result<Core, Box<dyn std::error::Error + Send + Sync>> {
         // 1. 落盘层。读不出来就用默认值（配置坏了也不该让服务起不来——
         //    起不来连控制面都没有，用户就没法远程修它）。
@@ -107,26 +142,29 @@ impl Core {
         // 4. 用量账本。**要在挂落盘监听之前**灌进去。
         runtime.load_usage(paths::load_usage(&paths.usage()));
 
-        // 5. 宿主事实。**只报关掉的位**，位由芯算（档位上限 − 关掉的）。
-        //    必须在控制面开门之前注入。
-        let facts = (ports.facts)();
-        tracing::info!(
-            tier = ?facts.host,
-            off = ?facts.off.keys().map(|bit| bit.id()).collect::<Vec<_>>(),
-            "宿主事实已注入（位由芯算）"
-        );
-        runtime.set_host_facts(facts);
+        if finish == Finish::InAssemble {
+            // 5. 宿主事实。**只报关掉的位**，位由芯算（档位上限 − 关掉的）。
+            //    必须在控制面开门之前注入。
+            let facts = (ports.facts)();
+            tracing::info!(
+                tier = ?facts.host,
+                off = ?facts.off.keys().map(|bit| bit.id()).collect::<Vec<_>>(),
+                "宿主事实已注入（位由芯算）"
+            );
+            runtime.set_host_facts(facts);
 
-        // 6. 启动提示：只是给人看的事实（PipeWire 在不在、托盘有没有宿主），不改任何位。
-        //    探它要连一次 PipeWire，而提示的出口是 journal，所以报告模式跳过。
-        if notes == Notes::Always {
-            for note in (ports.startup_notes)() {
-                runtime.notify(Notice::warning(note));
+            // 6. 启动提示：只是给人看的事实（PipeWire 在不在、托盘有没有宿主），不改任何位。
+            //    探它要连一次 PipeWire，而提示的出口是 journal，所以报告模式跳过。
+            if notes == Notes::Always {
+                for note in (ports.startup_notes)() {
+                    runtime.notify(Notice::warning(note));
+                }
             }
-        }
 
-        // 7. 落盘监听：设置/用量一变就标脏（真正的写盘在去抖线程里）。
-        persist.attach_to(&runtime);
+            // 7. 落盘监听：设置/用量一变就标脏（真正的写盘在去抖线程里）。
+            //    排在 `load_usage` 之后（否则刚读出来的那份会被当成"变了"再写一遍）。
+            persist.attach_to(&runtime);
+        }
 
         Ok(Core {
             runtime,

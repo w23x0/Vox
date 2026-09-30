@@ -9,14 +9,17 @@
 //!
 //! 每个 tick 还顺手刷新一次**宿主事实**（能力位，S0 §2.5.0 第 3 步）：设备/宿主侧的事实
 //! 跟设备列表一样会变，界面按能力位降级，所以两者搭同一个 tick 一起报。
+//!
+//! **扫设备目录那一份实现住在共享宿主层**（`vox_host::scan_devices`）：它与无屏档装配那一份
+//! 原本是逐字同形的两个 8 行函数（S4-A §1.2-D9），合并成一份，两个外壳都不留第二份。
+//! 留在本文件的只有**线程**——无屏档刻意不装它（没有界面要秒级反映插拔）。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::Mutex;
-use vox_core::ports::DeviceRegistry;
-use vox_core::runtime::{DeviceSnapshot, Runtime};
+use vox_core::runtime::Runtime;
 
 use crate::state::AppState;
 
@@ -38,7 +41,7 @@ pub fn start(state: &Arc<AppState>) {
             // 不再出现在下拉框里，而界面上一切正常，用户只会觉得设备识别很烂。
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 loop {
-                    let snapshot = scan(state.registry.as_ref());
+                    let snapshot = vox_host::scan_devices(state.registry.as_ref());
                     state.runtime.set_devices(snapshot);
                     if refresh_host_facts(&state.runtime) {
                         // 事实变了 ⇒ 能力位可能变了。设备列表没变时 `set_devices` 的去重会把
@@ -97,17 +100,6 @@ fn refresh_host_facts(runtime: &Runtime) -> bool {
     tracing::debug!("宿主事实变了，重新注入能力位");
     runtime.set_host_facts(facts);
     true
-}
-
-/// 同步扫一遍。命令 `refresh_devices` 也用这个，但要在别的线程上跑。
-pub fn scan(registry: &dyn DeviceRegistry) -> DeviceSnapshot {
-    // 任一项失败就给空列表——UI 上少几个选项，比整个面板打不开好。
-    DeviceSnapshot {
-        inputs: registry.input_devices().unwrap_or_default(),
-        outputs: registry.output_devices().unwrap_or_default(),
-        audio_apps: registry.audio_apps().unwrap_or_default(),
-        virtual_cable_installed: registry.virtual_cable_installed(),
-    }
 }
 
 #[cfg(test)]

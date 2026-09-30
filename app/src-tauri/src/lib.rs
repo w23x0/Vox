@@ -17,10 +17,13 @@
 // 但显式门控一下更清楚（发布构建没有控制台这件事只有 Windows 有）。
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::Manager;
-use vox_core::{PipelineEngine, Runtime};
+use vox_host::core::{Finish, Notes, PersistMode};
+use vox_host::secrets::SecretBackend;
+use vox_host::{Core, HostPorts};
 
 // ── 平台无关 ────────────────────────────────────────────────────────────────
 mod catalog_updater;
@@ -51,6 +54,22 @@ use state::AppState;
 /// 所以共享层只给 `SecretBackend` 一个"完整路径"，文件名由各档自己写死
 /// （S4-A §9 M5.1 / M5.4）。
 const DESKTOP_SECRET_FILE: &str = "secret.bin";
+
+/// 这一档挑哪个密钥后端。**"选哪一个"的决策在这一档**（Windows DPAPI 落盘 / 桌面 Linux 走
+/// Secret Service），机制在 `vox_host::secrets`。`HostPorts` 要的是后端**选择**而不是建好的
+/// 存储（芯在第 3 步自己挂，顺手好报"盘上真有明文密钥"那条提示），所以这里给枚举而不是
+/// `Arc<dyn SecretStore>`。
+#[cfg(windows)]
+fn secret_backend(path: PathBuf) -> SecretBackend {
+    SecretBackend::Dpapi { path }
+}
+
+/// 桌面 Linux：Linux 不用文件存密钥，走 Secret Service（gnome-keyring / KWallet），
+/// `path` 用不上——无屏档那个 0600 明文 `secret.json` 属于那一档。
+#[cfg(not(windows))]
+fn secret_backend(_path: PathBuf) -> SecretBackend {
+    SecretBackend::SecretService
+}
 
 /// 应用入口。`main.rs` 只调这一个函数。
 pub fn run() {
@@ -108,7 +127,13 @@ pub fn run() {
             commands::quit_app,
         ])
         .setup(|app| {
-            let state = assemble(app.handle())?;
+            let state = assemble(app.handle())
+                // Tauri 的 `setup` 要 `Box<dyn Error>`，而共享层那几步的错误类型是
+                // `Box<dyn Error + Send + Sync>`。两者之间**没有** `From`（裸的
+                // `dyn Error` 本身不是 `Send`），所以显式收成一个 `io::Error` 递回去——
+                // 它只负责把那句话原样带出去：`build()` 的 `Err(e)` 分支拿 `e` 弹框给用户看，
+                // 显示的仍是原来那句。
+                .map_err(std::io::Error::other)?;
             app.manage(state);
             Ok(())
         })
@@ -156,30 +181,56 @@ pub fn run() {
 ///
 /// 这里的每一步都尽量"失败不致命"：设备枚举、悬浮窗、热键任何一样起不来，都只是
 /// 记一条 `Notice` 让界面告诉用户，不把整个应用拖死——用户至少得能进设置窗改配置。
-fn assemble(app: &tauri::AppHandle) -> Result<Arc<AppState>, Box<dyn std::error::Error>> {
+///
+/// 形状：**入口参数（本机有哪些端口 + 本机能力位）→ 共享的前 4 步（`vox_host::Core::assemble`）
+/// → Tauri 特有的那几步**。第 5–7 步（事实 / 启动提示 / 落盘监听）也在下面自己做，理由见
+/// 第 12、13 步的注释与 `vox_host::core::Finish`。
+fn assemble(
+    app: &tauri::AppHandle,
+) -> Result<Arc<AppState>, Box<dyn std::error::Error + Send + Sync>> {
     // 配置目录只有这一处真源（Tauri 给的 `app_config_dir`）；目录里的文件名由
-    // `vox_host::paths` 定。密钥文件名是这一档自己的口味（下面第 2 步），不进 `Paths`。
+    // `vox_host::paths` 定。密钥文件名是这一档自己的口味（下面 `secret_backend`），不进 `Paths`。
     let paths = vox_host::Paths::from_dir(app.path().app_config_dir()?);
-    // start() 而不是 new()：去抖线程要持一份 Arc 才能保证对象活着
-    // （详见 `vox_host::persist::Persist::start` 的注释）。
     // 目录自己留一份：控制面的握手文件（`control.json`）也落在同一个目录里（第 14 步）。
-    let persist = vox_host::Persist::start(paths.dir.clone());
     let config_dir = paths.dir.clone();
 
-    // 1. 设置 + 时钟 + Runtime。
-    let settings = persist.load_settings();
-    let clock = platform::clock();
-    let runtime = Runtime::new(settings, Arc::clone(&clock));
+    // 本机有什么。**一次列清**：`Core::assemble` 读它建账本，`ports.engine()` 吃掉它装流水线。
+    let ports = HostPorts {
+        kind: platform::host_kind,
+        facts: platform::host_facts,
+        clock: platform::clock(),
+        secret: secret_backend(paths.dir.join(DESKTOP_SECRET_FILE)),
+        capture: platform::capture_factory(),
+        playback: platform::playback_factory(),
+        registry: platform::registry(),
+        startup_notes: platform::startup_notes,
+    };
+    // 后面两步（启动提示、事实）要等宿主特有步骤跑完才问，但 `ports.engine()` 会把这一份
+    // 吃掉，所以先把那两个"本机有什么"的问法存成函数指针（`fn` 是 `Copy`）。
+    let host_facts = ports.facts;
+    let startup_notes = ports.startup_notes;
+    // 设备目录全进程只构造一个：账本（`state.registry`）与 4 秒轮询线程（`devices::start`）共用它。
+    let registry = Arc::clone(&ports.registry);
 
-    // 2. 密钥库（Windows：DPAPI 落盘；Linux：Secret Service）。
-    //    set_secret_store 会顺手把存着的密钥读进来。
-    //    `secret.bin` 是**桌面档自己的**文件名：DPAPI 密文，与无屏档那个 0600 明文的
-    //    `secret.json` 同目录、不同名——内容格式不一样，混在一起会互相读不懂
-    //    （`vox_host::secrets::SecretBackend` 各带各的路径，见 `platform::secret_store`）。
-    runtime.set_secret_store(platform::secret_store(paths.dir.join(DESKTOP_SECRET_FILE)));
-
-    // 3. 用量账本。要在挂落盘监听之前灌进去，免得刚读出来就又写一遍。
-    runtime.load_usage(persist.load_usage());
+    // ── 共用的第 1–4 步 ────────────────────────────────────────────────────
+    // 落盘（建目录 + 起去抖线程）→ 设置 + 时钟 + `Runtime` → 密钥库
+    // （`set_secret_store` 会顺手把存着的密钥读进来）→ 用量账本。
+    // 逐条与无屏档同源，顺序理由随注释搬进了 `vox_host::core::Core::assemble`。
+    // `Finish::AfterHostSteps`：共享层那 7 步里的第 5–7 步（事实 / 启动提示 / 落盘监听）
+    // **推迟**到下面那几步之后，因为这五位宿主事实的定义者（悬浮窗 / 头显 / 事件桥 / 热键 /
+    // 托盘）还没起来——早注入就是漏报（§2.5.4）。
+    //
+    // 下面第 4–14 步的编号是**这一档自己的**，与改动前逐条相同（后面几条注释里引用的
+    // "第 13 步""第 14 步"指的就是它们）。
+    let core = Core::assemble(
+        paths,
+        &ports,
+        PersistMode::Writing,
+        Notes::Never,
+        Finish::AfterHostSteps,
+    )?;
+    let runtime = core.runtime;
+    let persist = core.persist;
 
     // 4. 窗口先亮出来。后面任何一步失败，用户至少看得见界面。
     if let Some(w) = app.get_webview_window("main") {
@@ -195,21 +246,14 @@ fn assemble(app: &tauri::AppHandle) -> Result<Arc<AppState>, Box<dyn std::error:
         }
     }
 
-    // 5. 流水线引擎。tokio 复用 Tauri 那一个 runtime。
-    let tokio_handle = tauri::async_runtime::handle().inner().clone();
-    let engine = PipelineEngine::new(
-        runtime.clone(),
-        vox_core::pipeline::Deps {
-            transport: net::transport_factory(tokio_handle),
-            capture: platform::capture_factory(),
-            playback: platform::playback_factory(),
-            denoise: vox_dsp::ports::denoise_factory(),
-            resample: vox_dsp::ports::resample_factory(),
-        },
+    // 5. 流水线引擎。tokio 复用 Tauri 那一个 runtime（句柄由入口备好，闭包捕获进去；
+    //    runtime 的保活是 Tauri 自己的事）。降噪 / 重采样两节由 `vox-host` 从
+    //    `vox_dsp::ports` 取，入口不发言。`engine()` 同时把引擎注入账本。
+    let engine = ports.engine(
+        &runtime,
+        net::transport_factory(tauri::async_runtime::handle().inner().clone()),
     );
-    runtime.set_control(Arc::clone(&engine) as Arc<_>);
 
-    let registry = platform::registry();
     // 控制面（Agent 面）的 reconciler。**这里只是构造**：不监听、不起服务、也不挂监听器——
     // 开门在第 14 步（事实齐了才开，见 `vox_host::control` 的头注释）。
     let control = Arc::new(vox_host::ControlPlane::new(
@@ -270,7 +314,9 @@ fn assemble(app: &tauri::AppHandle) -> Result<Arc<AppState>, Box<dyn std::error:
     // 12. 平台前置条件的提醒（Linux：PipeWire 在不在、托盘有没有宿主）。放进 Notice
     //     而不是启动失败，因为设置窗、密钥、目录更新这些功能不依赖它们。
     //     **必须排在托盘之后**：托盘那条要读 `install()` 刚写下的"看得见吗"。
-    for note in platform::startup_notes() {
+    //     （`Core::assemble` 传的是 `Notes::Never` + `Finish::AfterHostSteps`，
+    //     就是为了把这一步原样留在这里。）
+    for note in startup_notes() {
         runtime.notify(vox_core::event::Notice::warning(note));
     }
 
@@ -282,7 +328,7 @@ fn assemble(app: &tauri::AppHandle) -> Result<Arc<AppState>, Box<dyn std::error:
     //     就是那个句柄**（§3.2 ①）；Windows 上只读探测 VB-CABLE，不建节点。
     //     返回的那一位不用接：它在下面跟其余事实一起报（`virtual_mic_ensure()` 只负责"把路打开"）。
     platform::virtual_mic_ensure();
-    let facts = platform::host_facts();
+    let facts = host_facts();
     tracing::debug!(
         tier = ?facts.host,
         off = ?facts.off.keys().map(|bit| bit.id()).collect::<Vec<_>>(),
@@ -309,6 +355,12 @@ fn assemble(app: &tauri::AppHandle) -> Result<Arc<AppState>, Box<dyn std::error:
 
 /// 退出前收摊。
 ///
+/// **刻意保持顺序代码**，不抽成 `Shutdown` 之类的步骤链（S4-A §9 M1）：桌面退出 11 步里夹着
+/// 托盘/热键/悬浮/头显/虚拟麦这些宿主特有的步骤，闭包链不比顺序代码清楚，而这一层唯一要
+/// 保护的东西就是那个顺序——见末尾那条不变量。
+/// 托盘是这 11 步里的第 1 步，`state.control` 第 2 步，`state.engine` 第 7 步，
+/// `state.persist.flush()` 第 11 步。
+///
 /// 顺序是有讲究的，**竖旗不等于停下**——所有"还能改账本"的线程必须先真的
 /// join 掉，才能 flush，否则它们会在 flush 之后把 `dirty` 重新标脏，那份改动
 /// 永远不落盘（静默丢数据）。
@@ -323,6 +375,10 @@ fn assemble(app: &tauri::AppHandle) -> Result<Arc<AppState>, Box<dyn std::error:
 /// 6. Linux 的虚拟麦节点排在**工作线程之后**：播放流还挂在节点上时先删节点，
 ///    会留下一条指向不存在节点的悬挂 stream。
 /// 7. 最后 flush。此时没有别的线程能碰账本了。
+///
+/// **唯一要守住的不变量：`state.control.shutdown()` < `state.engine.shutdown()` <
+/// `state.persist.flush()`。** 无屏档那一份在 `vox_headless::headless::Daemon::shutdown`，
+/// 同一句话、同一条不变量（S4-A §9 M1）。
 fn shutdown(app: &tauri::AppHandle) {
     let Some(state) = app.try_state::<Arc<AppState>>() else {
         return;

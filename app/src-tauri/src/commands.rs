@@ -196,7 +196,7 @@ pub async fn refresh_devices(state: State<'_>) -> Result<(), String> {
 
     // 设备枚举要走 COM，阻塞几十毫秒，必须在阻塞线程池上跑，不能卡 UI 线程。
     let snapshot =
-        tauri::async_runtime::spawn_blocking(move || crate::devices::scan(registry.as_ref()))
+        tauri::async_runtime::spawn_blocking(move || vox_host::scan_devices(registry.as_ref()))
             .await
             .map_err(|e| format!("设备枚举线程异常：{e}"))?;
 
@@ -276,7 +276,7 @@ mod cable_admin {
                             InstallOutcome::Failed(format!("以下应用仍在占用虚拟麦克风：{names}")),
                             None,
                             None,
-                            crate::devices::scan(registry.as_ref()),
+                            vox_host::scan_devices(registry.as_ref()),
                         );
                     }
                     if close_blockers {
@@ -285,7 +285,7 @@ mod cable_admin {
                                 InstallOutcome::Failed(message),
                                 None,
                                 None,
-                                crate::devices::scan(registry.as_ref()),
+                                vox_host::scan_devices(registry.as_ref()),
                             );
                         }
                         std::thread::sleep(std::time::Duration::from_millis(800));
@@ -376,7 +376,7 @@ mod cable_admin {
                 } else {
                     None
                 };
-                let devices = crate::devices::scan(registry.as_ref());
+                let devices = vox_host::scan_devices(registry.as_ref());
                 (outcome, restore_result, hide_outcome, devices)
             })
             .await
@@ -464,7 +464,7 @@ mod cable_admin {
         let registry = Arc::clone(&state.registry);
         let (outcome, devices) = tauri::async_runtime::spawn_blocking(move || {
             let outcome = vox_audio_win::set_multichannel_endpoint_enabled(visible);
-            let devices = crate::devices::scan(registry.as_ref());
+            let devices = vox_host::scan_devices(registry.as_ref());
             (outcome, devices)
         })
         .await

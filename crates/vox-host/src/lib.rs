@@ -15,7 +15,7 @@
 //! events     事件出口：trait EventSink + LogSink（结构化日志那一半）
 //! report     两端逐字同形的两个报告出口（能力位 / 清单）
 //! core       芯的那一半：Core::assemble（共用装配步骤 1–7）+ scan_devices
-//! entry      HostPorts：宿主入口注入进来的那一份
+//! entry      HostPorts：宿主入口注入进来的那一份 + 引擎那一半（deps / engine）
 //! ```
 //!
 //! **不碰界面那套**（tauri / gtk / webkit / wry / tao / openvr 一个都没有），也**不碰 tokio**
@@ -34,7 +34,7 @@ pub mod report;
 pub mod secrets;
 
 pub use control::{ControlPlane, Status, Switch, CONTROL_FILE};
-pub use core::{scan_devices, Core};
+pub use core::{scan_devices, Core, Finish, Notes, PersistMode};
 pub use entry::HostPorts;
 pub use events::{EventSink, LogSink};
 pub use paths::{dir_from, dir_from_env, Paths, SETTINGS_FILE, USAGE_FILE};

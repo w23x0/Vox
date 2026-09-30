@@ -8,9 +8,9 @@
 //! | 时钟 | `GetLocalTime` | `chrono::Local`（`vox_host::clock::LocalClock`，与无屏档共用） |
 //! | 密钥库 | DPAPI 加密落盘 | Secret Service（`keyring`） |
 //!
-//! **"选哪一个"的决策留在这一层，机制在 `vox_host::secrets`**（S4-A W3）：`secret_store`
-//! 底下是 `SecretBackend::{Dpapi, SecretService}`，加解密与权限位都在共享层，本 crate
-//! 只留"这一档挑哪个"。
+//! **"选哪一个"的决策留在这一层，机制在 `vox_host::secrets`**（S4-A W3/W5）：`lib.rs` 的
+//! `secret_backend` 底下是 `SecretBackend::{Dpapi, SecretService}`，加解密与权限位都在共享层，
+//! 本 crate 只留"这一档挑哪个"。
 //! | 启动期致命提示 | `MessageBoxW` | stderr + 日志 |
 //! | 音频三件套 | WASAPI（`vox-audio-win`） | PipeWire（`vox-audio-linux`） |
 //! | 全局热键 | `GetAsyncKeyState` 轮询 | evdev |

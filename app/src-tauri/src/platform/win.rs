@@ -4,15 +4,13 @@
 //! 真正的活儿在 `crates/vox-audio-win`、`vox-input-win`、`vox-overlay-win` 里。
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use vox_core::capability::{Capability, CapabilityStatus, HostFacts, UnavailableReason};
 use vox_core::composition::HostKind;
 use vox_core::pipeline::{CaptureFactory, PlaybackFactory};
-use vox_core::ports::{Clock, DeviceRegistry, HotkeyHost, PortResult, SecretStore};
+use vox_core::ports::{Clock, DeviceRegistry, HotkeyHost, PortResult};
 use vox_core::runtime::Runtime;
-use vox_host::secrets::SecretBackend;
 
 use super::{GeometryCallback, OverlayFailure, VirtualDeviceStatus};
 use crate::state::OverlayHandle;
@@ -29,12 +27,6 @@ pub fn pre_main() -> bool {
 
 pub fn clock() -> Arc<dyn Clock> {
     Arc::new(crate::sys::clock::SystemClock::new())
-}
-
-pub fn secret_store(path: PathBuf) -> Arc<dyn SecretStore> {
-    // DPAPI 密文的落盘位置由调用方给（`secret.bin`，与无屏档的 `secret.json` 同目录不同名，
-    // 内容格式不一样，混在一起会互相读不懂）。加解密本身在 `vox_host::secrets::dpapi`。
-    SecretBackend::Dpapi { path }.build()
 }
 
 pub fn alert(title: &str, body: &str) {
