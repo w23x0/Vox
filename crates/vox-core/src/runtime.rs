@@ -788,8 +788,11 @@ impl Runtime {
                 state: PipelineState::Starting,
             });
         }
-        self.dispatch(vec![command]);
+        // 先发 `Starting` 再派命令：引擎在别的线程上起会话，派出去之后随时可能报
+        // `Ready`。反过来的话 `Ready` 会抢在 `Starting` 前面到监听器，界面就停在
+        // "启动中"（aarch64 CI 在 qemu 下抓到过这个交错）。
         self.emit(events);
+        self.dispatch(vec![command]);
     }
 
     /// `Settings` + 流水线 → 这条流水线要用的 [`SessionConfig`]。**唯一的映射**：
@@ -1243,6 +1246,53 @@ mod tests {
         fn drain(&self) -> Vec<PipelineCommand> {
             std::mem::take(&mut *self.commands.lock())
         }
+    }
+
+    /// 引擎一收到 `Start` 就可能在别的线程上报 `Ready`，所以 `Starting` 必须在命令
+    /// 派出去之前就已经到了监听器手里。这里的假引擎在 `apply` 那一刻记下监听器
+    /// 有没有见过 `Starting`。
+    #[test]
+    fn starting_reaches_listeners_before_the_engine_gets_the_start_command() {
+        struct StartProbe {
+            seen_starting: Arc<std::sync::atomic::AtomicBool>,
+            at_apply: Mutex<Option<bool>>,
+        }
+        impl PipelineControl for StartProbe {
+            fn apply(&self, cmd: PipelineCommand) -> PortResult<()> {
+                if matches!(cmd, PipelineCommand::Start(_)) {
+                    let seen = self.seen_starting.load(std::sync::atomic::Ordering::SeqCst);
+                    *self.at_apply.lock() = Some(seen);
+                }
+                Ok(())
+            }
+        }
+
+        let rt = Runtime::new(Settings::default(), Arc::new(TestClock));
+        let seen_starting = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = Arc::clone(&seen_starting);
+        rt.add_listener(Arc::new(move |event| {
+            if let Event::PipelineState {
+                state: PipelineState::Starting,
+                ..
+            } = event
+            {
+                flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }));
+        let probe = Arc::new(StartProbe {
+            seen_starting,
+            at_apply: Mutex::new(None),
+        });
+        rt.set_control(probe.clone());
+        rt.set_api_key("sk-test");
+
+        rt.start(Pipeline::Speak);
+
+        assert_eq!(
+            *probe.at_apply.lock(),
+            Some(true),
+            "引擎拿到 Start 时监听器还没收到 Starting：Ready 可能抢在 Starting 前面"
+        );
     }
 
     #[test]
