@@ -1053,3 +1053,11 @@ cargo run -p vox-headless --bin vox-headless -- --config "$D/settings.json" --ru
 - **M3 · U5（`chrono` 进 `vox-host`）、U6（`report.rs` 进 `vox-host`）按原稿执行。**
 - **M4 · 施工环境。** 工作会话可以调用 `cargo build/test/clippy/fmt`；worktree 共用 `CARGO_TARGET_DIR=/home/w23x/vox-wt/target`。
   U7 里预判的两处（`keyring` optional + target 门控写法、`windows` feature 名）由 W1 实跑确认，不对就改 `Cargo.toml` 并在报告里写明。
+- **M5 · W1 审查裁决（2026-09-30，W1 已合入）。**
+  1. `vox-host` 里的 `config_file_decides_the_directory` 去掉了 `paths.secret()` 那一句断言（`Paths` 不再管密钥文件名）。**W3 必须让"无屏密钥文件是 `<dir>/secret.json`"这条断言继续活在 `crates/vox-headless`**（它的归属地），不许随旧文件一起消失。
+  2. 类型名保留 `SecretFile`（不改 `FileStore`），W3 迁移时写 `vox_host::secrets::file::SecretFile`。
+  3. `tests/host.rs` 不建（0 条用例的文件就是占位，RULES #4）。§3.2 模块图里那一行作废。
+  4. W3 收尾时：`SecretFile::new(config_dir)` 若已无调用方就删（只留 `at_path`）；`SECRET_FILE` 只保留 `vox_host::secrets::file::SECRET_FILE` 一份定义，`vox-headless` 引用它，不留重复常量。
+  5. `HostPorts` 不 derive `Clone`（字段是 `Box<dyn Fn>`）；时钟构造函数名是 `vox_host::clock::local_clock()`。
+  6. W1 期间旧实现与 `vox-host` 并存，测试名是"翻倍"的：W1 合入后 main 为 641 passed / 0 failed / 6 ignored（多出的 ignored 是 `secret-service` feature 统一后 `vox` 测试二进制里编进了 `secret_service_round_trip`）。§6.3-D 的总数期望作废，**以测试名对账为准**：W3–W5 每一步都要求"main 上已有的测试名一个不少"。
+  7. §6.3-E 桌面 `speak.ops` 的期望值应为 `["mono","denoise","level","gate","resample"]`（5 节，含既有的 `level`），原稿写漏。
