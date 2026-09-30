@@ -25,6 +25,7 @@ use crate::catalog::{self, ActivationMode};
 use crate::event::{Event, Notice, Pipeline, PipelineState};
 use crate::gate::{GateConfig, GateStatus};
 use crate::latency::LatencySnapshot;
+use crate::pipeline::OpTiming;
 use crate::ports::{
     AudioApp, Clock, DeviceInfo, HotkeyBindings, HotkeyEvent, HotkeyHost, PortResult, SecretStore,
 };
@@ -115,6 +116,13 @@ pub struct PipelineStatus {
     pub gate: Option<GateStatus>,
     pub last_error: Option<String>,
     pub latency: LatencySnapshot,
+    /// 各算子节的耗时与实时倍率，一次一快照。`None` = 这一轮还没报过
+    /// （会话刚起、或压根没跑过音频，例如直通模式没有 `emit_latency` 那个节流点）。
+    ///
+    /// **只在这里存，不进 [`Snapshot`]**：进快照 / DTO / 控制面是 S4-C 的一张独立
+    /// 工单（要动 `app/src-tauri` 与 `vox-host` 的文件）。读取口是
+    /// [`Runtime::op_timings`]，拉取式，**不发事件**。
+    pub op_timings: Option<Vec<OpTiming>>,
 }
 
 impl Default for PipelineStatus {
@@ -125,6 +133,7 @@ impl Default for PipelineStatus {
             gate: None,
             last_error: None,
             latency: LatencySnapshot::default(),
+            op_timings: None,
         }
     }
 }
@@ -1045,6 +1054,38 @@ impl Runtime {
             pipeline,
             latency: Box::new(latency),
         }]);
+    }
+
+    /// 各算子节的计量快照更新。**不发 `Event`**：这一格是拉取式的（见
+    /// [`Runtime::op_timings`]），进事件流会改线路形状。旧会话的迟到数据照旧丢弃。
+    ///
+    /// 调用点是 `Worker::emit_latency` 那个 500 ms 节流点，与 `on_latency` 同点
+    /// 同频——那儿的分配口径（`RollingMetric::summary` 的 `collect()+sort`）是今天
+    /// 就有的，热路径（每拍/每帧）的零分配不受影响。
+    pub fn on_op_timings(&self, pipeline: Pipeline, session_id: u64, timings: Vec<OpTiming>) {
+        let mut s = self.inner.state.write();
+        let Some(slot) = Self::live_pipeline_mut(&mut s, pipeline, session_id) else {
+            return;
+        };
+        slot.op_timings = Some(timings);
+    }
+
+    /// 某条流水线各算子节的耗时与实时倍率（**拉取式，不发事件**）。
+    ///
+    /// 一行一节，顺序 = 清单 `ops` 的顺序。`None` = 这一轮还没报过
+    /// （刚起、或没跑过音频）。
+    ///
+    /// S4-B 只把计量做在芯里并给出这个口；**进 `Snapshot` / 界面 / 控制面是 S4-C
+    /// 的一张独立工单**（它要改 `app/src-tauri/src/dto.rs`、`vox-host`、
+    /// `vox-mcp`、`app/ui` 那一批文件）。在那张工单落地前控制面读不到这一格——
+    /// **这是有意的**，不是漏了。
+    pub fn op_timings(&self, pipeline: Pipeline) -> Option<Vec<OpTiming>> {
+        self.inner
+            .state
+            .read()
+            .pipeline(pipeline)
+            .op_timings
+            .clone()
     }
 
     /// 模型吐字幕。`done` = 这一段说完了；`replace` = 服务端整句重写，字幕要整行替换。

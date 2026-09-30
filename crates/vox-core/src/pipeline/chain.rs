@@ -17,6 +17,7 @@
 //! `ports` / `gate` 的现成返回值**按值搬**进 [`BlockOut`]，不拷贝、不 `clone()`、
 //! 不格式化。缓冲的容量建链时一次性给，跨块复用。
 use std::mem;
+use std::time::Instant;
 
 use crate::cloud::protocol::OUTPUT_SAMPLE_RATE;
 use crate::composition::{Composition, Op, RateRef};
@@ -24,6 +25,58 @@ use crate::gate::{ActivationGate, GateConfig, GateStatus};
 use crate::ports::{AudioChunk, CaptureFormat, Denoise, PortError, PortResult, Resample};
 
 use super::{Deps, DENOISE_RATE};
+
+/// 链上最多几节。`Composition::OP_ORDER` 今天 4 项，S4-C 加 `Op::Aec` 是 5 项，
+/// 留一格。**这是定长数组的长度**，不是上限策略：清单超过它直接建不出链
+/// （`Chain::build` 里有那道检查），不做"动态扩容"——计量要在热路径上零分配。
+pub const MAX_OPS: usize = 6;
+
+/// 一节算子的累计计量。**全是定长字段**（一个 `&'static str` + 四个整数），
+/// 没有 `Vec`、没有滚动窗口、没有浮点。
+///
+/// 计量在 `Chain::run` 的节边界上累加（每节两次时钟读 + 四个整数），重建快照
+/// 只在 [`Chain::timings`] 那个**读取口**上做，且只在调用方要的时候。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpTiming {
+    /// 清单里这一节叫什么。**建链时从 `Op::kind()` 抄下来**，不另写字符串表
+    /// （多一处真源就会漂）。
+    pub op: &'static str,
+    /// 跑过多少拍。
+    pub blocks: u64,
+    /// 累计墙钟（纳秒）。
+    pub total_ns: u64,
+    /// 单拍最慢（纳秒）。嵌入式排障最看这个。
+    pub max_ns: u64,
+    /// 累计**出口**音频时长（纳秒）。实时倍率的分母。
+    ///
+    /// 照实记：降噪攒帧时这一拍出 0 块（加 0），门冲 preroll 时出 2 块（都算）。
+    pub audio_ns: u64,
+    /// 本节的出口率（契约 C4）。实时倍率的分母按它换算。
+    pub out_rate: u32,
+}
+
+impl OpTiming {
+    /// 还没建链/没跑过时的那一份。名字空着——没装过的节不占行。
+    pub const fn empty() -> Self {
+        Self {
+            op: "",
+            blocks: 0,
+            total_ns: 0,
+            max_ns: 0,
+            audio_ns: 0,
+            out_rate: 0,
+        }
+    }
+
+    /// 实时倍率 = 处理墙钟 / 音频时长，**百分比**（0.3% 记作 `0.3`）。
+    /// 零音频时长（还没出货、静音拍）时给 `0.0`，不炸也不编。
+    pub fn realtime_percent(&self) -> f64 {
+        if self.audio_ns == 0 {
+            return 0.0;
+        }
+        (self.total_ns as f64) * 100.0 / (self.audio_ns as f64)
+    }
+}
 
 /// 一节的输出：**若干块**。边界由这一节自己定（门冲 preroll 时一次出两块）。
 ///
@@ -77,6 +130,14 @@ impl BlockOut {
         self.slots[..self.len].iter().map(|block| block.as_slice())
     }
 
+    /// 本拍一共出了多少样本（各块相加）。**只被计量用**，别的读法是数块数。
+    /// 循环，不分配。
+    pub(crate) fn samples(&self) -> usize {
+        self.slots[..self.len]
+            .iter()
+            .fold(0usize, |sum, block| sum + block.len())
+    }
+
     /// 块数。**只被 `mod tests` 读**：生产路径一律走 [`Self::blocks`]，块数就是
     /// 迭代次数，没有单独问一句的地方。
     #[cfg(test)]
@@ -110,7 +171,7 @@ pub(crate) enum DenoiseSkip {
 pub(crate) enum ChainStage {
     /// `Op::Mono`。交织 → 单声道。**混音在 [`ChainScratch::begin`] 里做**（今天的
     /// `chunk.to_mono()` 就在那儿），这一节在链上只负责"清单说有这一节"这件事：
-    /// 顺序、名字、出口率、以及 B3 的计时行。
+    /// 顺序、名字、出口率、以及计量那一行。
     Mono { rate: u32 },
     /// `Op::Denoise`。`port = None` = 装了但这一拍直通，原因见 `skip`。
     Denoise {
@@ -178,26 +239,6 @@ impl ChainStage {
             Self::Resample { out_rate, .. } => *out_rate,
         }
     }
-
-    /// 清单里叫什么（**自计时的行名用它**，S4-B B3 落地；今天只有 `mod tests` 读）。
-    /// **取自 [`Op::kind`]**，不另写一份字符串表——多一处真源就会漂（下面造的哑值
-    /// 只被 `kind()` 的 `match` 读一下变体名，字段一概不看）。
-    #[cfg(test)]
-    pub(crate) fn name(&self) -> &'static str {
-        match self {
-            Self::Mono { .. } => Op::Mono.kind(),
-            Self::Denoise { .. } => Op::Denoise.kind(),
-            Self::Gate { .. } => Op::Gate {
-                config: GateConfig::MANUAL,
-            }
-            .kind(),
-            Self::Resample { .. } => Op::Resample {
-                from: RateRef::Capture,
-                to: RateRef::Capture,
-            }
-            .kind(),
-        }
-    }
 }
 
 /// 乒乓缓冲。**两块**，跨块复用，建链/建 Worker 时一次性分配。
@@ -241,6 +282,19 @@ impl ChainScratch {
         self.ping[self.cur] = out;
     }
 
+    /// 乒乓的两半：`(本拍的输入, 本节的输出)`。恒不相同——一节的输入永远不是
+    /// 它的输出，将来"就地改"的节也写不了别名。
+    fn halves(&mut self) -> (&mut BlockOut, &mut BlockOut) {
+        let Self { ping, cur } = self;
+        // 恒从中间切开：前半是 0 号槽、后半是 1 号槽，谁进谁出看 `cur`。
+        let (first, second) = ping.split_at_mut(1);
+        if *cur == 0 {
+            (&mut first[0], &mut second[0])
+        } else {
+            (&mut second[0], &mut first[0])
+        }
+    }
+
     /// 把本拍的 `BlockOut` 按值换出来（`mem::replace` 成空壳），随后由调用方 `recycle` 放回。
     fn take_current(&mut self) -> BlockOut {
         mem::take(&mut self.ping[self.cur])
@@ -250,12 +304,19 @@ impl ChainScratch {
 /// 一条按清单建好的算子链。**装配期**在 [`Chain::build`]，运行期只有 [`Chain::run`]。
 pub(crate) struct Chain {
     stages: Vec<ChainStage>,
+    /// 逐节的累计计量，**行号 = 装配序号**。`build` 时一次性建好（`[OpTiming; MAX_OPS]`，
+    /// 建链期分配，运行期只写整数），只被工作线程碰，不加锁——与
+    /// `latency.rs::LatencyTracker` 同一条规矩。
+    timings: [OpTiming; MAX_OPS],
 }
 
 impl Chain {
     /// 空链（`Worker::teardown` 丢链时用）。
     pub(crate) fn empty() -> Self {
-        Self { stages: Vec::new() }
+        Self {
+            stages: Vec::new(),
+            timings: [OpTiming::empty(); MAX_OPS],
+        }
     }
 
     /// 按 `Composition::ops` 建链。**装配期**，不是热路径。
@@ -270,6 +331,9 @@ impl Chain {
         session_rate: u32,
     ) -> PortResult<Self> {
         let mut stages: Vec<ChainStage> = Vec::with_capacity(ops.len());
+        // 计量行与节一一对应，**行名取自 `Op::kind()`**（建链时抄下来），不另写
+        // 一份字符串表——多一处真源就会漂。
+        let mut timings = [OpTiming::empty(); MAX_OPS];
         // 链上当前这一块的率，只有 `Resample` 会改它（契约 C4）。
         let mut rate = capture.sample_rate;
         let mut has_mono = false;
@@ -284,6 +348,14 @@ impl Chain {
                     "清单第 {} 条算子 `{kind}` 不在规定顺序 {:?} 里。",
                     at + 1,
                     Composition::OP_ORDER
+                )));
+            }
+            // 计量是定长数组（`MAX_OPS` 格）。清单装不下就**建不出链**，不做
+            // "运行期扩容"——那条路必然在热路径上分配。
+            if at >= MAX_OPS {
+                return Err(PortError::new(format!(
+                    "清单有 {} 条算子，链上限是 {MAX_OPS} 条。",
+                    ops.len()
                 )));
             }
             match op {
@@ -331,6 +403,13 @@ impl Chain {
                     rate = to_rate;
                 }
             }
+            // 计量行与节同步长出来：名字取自本条 `Op` 的 `kind()`，出口率取自刚
+            // 建好的这一节（`Resample` 换过率，所以必须问节，不能问 `rate`）。
+            timings[at] = OpTiming {
+                op: kind,
+                out_rate: stages[at].out_rate(),
+                ..OpTiming::empty()
+            };
         }
 
         // 链上恒为单声道（契约 C1）。多声道采集却不装 `mono`，"不混音"是无定义的
@@ -342,7 +421,7 @@ impl Chain {
             )));
         }
 
-        Ok(Self { stages })
+        Ok(Self { stages, timings })
     }
 
     /// `RateRef` → 具体率。**唯一**的解析表，运行时不再算率。
@@ -358,21 +437,51 @@ impl Chain {
     ///
     /// **两块乒乓**：一节的输入永远不是它的输出，将来"就地改"的节也写不了别名。
     /// 返回 `BlockOut` 而不是借用，是为了调用方身上不挂着 `&mut self` 的借用。
+    ///
+    /// 循环体就是**一节的边界**，所以计量也在这里（每节两次时钟读）：
+    ///
+    /// ```text
+    /// t0 = Instant::now();  stage.process(..);  dt = t0.elapsed();
+    /// blocks += 1;  total_ns += dt;  max_ns = max(max_ns, dt);
+    /// audio_ns += 出口样本数 * 1e9 / 出口率;   // 整数乘除，无浮点
+    /// ```
+    ///
+    /// **这里没有 `Vec` / `String` / `format!` / `clone()`**：`timings` 是建链时
+    /// 建好的定长数组，热路径只写它的四个整数字段。`mod tests` 里的
+    /// `timings_are_monotonic_counters_with_no_allocation` 用一个计数分配器把这条
+    /// 钉住（"纯直通链"每块的分配增量必须是 0）。
     pub(crate) fn run(&mut self, scratch: &mut ChainScratch) -> (BlockOut, Option<GateStatus>) {
-        for stage in &mut self.stages {
-            let ChainScratch { ping, cur } = scratch;
-            // 恒从中间切开：前半是 0 号槽、后半是 1 号槽，谁进谁出看 `cur`。
-            let (first, second) = ping.split_at_mut(1);
-            let (input, out) = if *cur == 0 {
-                (&mut first[0], &mut second[0])
-            } else {
-                (&mut second[0], &mut first[0])
-            };
+        let Self { stages, timings } = self;
+        for (at, stage) in stages.iter_mut().enumerate() {
+            let (input, out) = scratch.halves();
             out.begin();
+            let started = Instant::now();
             stage.process(input, out);
+            let elapsed = started.elapsed().as_nanos() as u64;
+            // 出口音频时长：整数乘除。降噪攒帧时 `samples()` 是 0（照实记 0），
+            // 门冲 preroll 时是两块之和（照实记两块）——分母错了倍率就错了。
+            let samples = out.samples() as u64;
+            let slot = &mut timings[at];
+            slot.blocks += 1;
+            slot.total_ns += elapsed;
+            slot.max_ns = slot.max_ns.max(elapsed);
+            slot.audio_ns += samples * 1_000_000_000 / (slot.out_rate.max(1) as u64);
             scratch.cur ^= 1;
         }
         (scratch.take_current(), self.take_gate_status())
+    }
+
+    /// 计量快照：装配顺序上一行一节。**纯读取**，调用方要才建（`Vec` 在调用方
+    /// 那个节流点上，不在热路径上）。
+    pub(crate) fn timings(&self) -> Vec<OpTiming> {
+        self.timings[..self.stages.len()].to_vec()
+    }
+
+    /// 链上各节的清单名字，按装配顺序。见 [`OpTiming::op`]：**只被 `mod tests` 读**
+    /// （读取口那一行自带名字）。
+    #[cfg(test)]
+    pub(crate) fn stage_names(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.timings[..self.stages.len()].iter().map(|row| row.op)
     }
 
     /// 冲重采样缓冲里的零头（一段语音收尾时用）。链里没有 `Resample` 就给空。
@@ -419,12 +528,6 @@ impl Chain {
         self.stages.last().map_or(0, ChainStage::out_rate)
     }
 
-    /// 链上各节的清单名字，按装配顺序。见 [`ChainStage::name`]：**只被 `mod tests` 读**。
-    #[cfg(test)]
-    pub(crate) fn stage_names(&self) -> impl Iterator<Item = &'static str> + '_ {
-        self.stages.iter().map(ChainStage::name)
-    }
-
     /// 降噪降级的原因。`None` = 链里没有降噪节**或**降噪节真的装上了。
     pub(crate) fn denoise_skip(&self) -> Option<&DenoiseSkip> {
         self.stages.iter().find_map(|stage| match stage {
@@ -465,6 +568,8 @@ impl Chain {
 
 #[cfg(test)]
 mod tests {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
 
@@ -479,6 +584,50 @@ mod tests {
 
     const CAPTURE_RATE: u32 = 48_000;
     const SESSION_RATE: u32 = 16_000;
+
+    // --- 分配计数（只在本测试二进制里生效）---------------------------------
+    //
+    // S4-B 稿 §8.3 第 2 条：计量不许破坏"热路径零新增分配"。数分配次数只有一条
+    // 路——全局分配器。`const` 初始化 = 没有析构函数，于是分配器里读它永远安全
+    // （`try_with` 再兜住线程收尾那一刻）；**按线程计数**，于是同一二进制里并行跑的
+    // 别的用例不会污染本用例的读数。
+
+    thread_local! {
+        static ALLOCS: Cell<u64> = const { Cell::new(0) };
+    }
+
+    struct CountingAlloc;
+
+    fn count_alloc() {
+        let _ = ALLOCS.try_with(|counter| counter.set(counter.get() + 1));
+    }
+
+    fn alloc_count() -> u64 {
+        ALLOCS.try_with(Cell::get).unwrap_or(0)
+    }
+
+    // SAFETY：`CountingAlloc` 是 `System` 的透明包装，多出来的只有一个整数加法。
+    // `realloc` 也算一次分配（它可能真去要新内存），`dealloc` 不算。
+    unsafe impl GlobalAlloc for CountingAlloc {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            count_alloc();
+            unsafe { System.alloc(layout) }
+        }
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            count_alloc();
+            unsafe { System.alloc_zeroed(layout) }
+        }
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            count_alloc();
+            unsafe { System.realloc(ptr, layout, new_size) }
+        }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            unsafe { System.dealloc(ptr, layout) }
+        }
+    }
+
+    #[global_allocator]
+    static ALLOC_COUNTER: CountingAlloc = CountingAlloc;
 
     // --- 假件 --------------------------------------------------------------
 
@@ -503,6 +652,29 @@ mod tests {
             self.0.denoise_resets.fetch_add(1, Ordering::SeqCst);
         }
     }
+
+    /// 攒满 480 才出货的假降噪——真的 `Denoiser` 就是这个脾气（满一帧才给货），
+    /// 所以它会让某一拍链出 0 块。计量的分母必须照实记 0，不许拿"输入了多少"
+    /// 冒充"出口了多少"。
+    struct Framer {
+        held: Vec<f32>,
+    }
+
+    impl Denoise for Framer {
+        fn process(&mut self, samples: &[f32]) -> Vec<f32> {
+            self.held.extend_from_slice(samples);
+            if self.held.len() < FRAME {
+                return Vec::new();
+            }
+            let whole = self.held.len() / FRAME * FRAME;
+            self.held.drain(..whole).collect()
+        }
+        fn reset(&mut self) {
+            self.held.clear();
+        }
+    }
+
+    const FRAME: usize = 480;
 
     /// 按整数比抽点，长度确实会变，好验调用方没假设长度守恒。
     struct Decimate {
@@ -1095,5 +1267,199 @@ mod tests {
         // 清单里压根没有降噪节时，不许凭空造一个降级出来。
         let none = Chain::build(&[Op::Mono], &good, mono_capture(), SESSION_RATE).unwrap();
         assert!(none.denoise_skip().is_none());
+    }
+
+    // --- 计量 --------------------------------------------------------------
+
+    /// 计量是**四个整数累加**，不许带进任何分配。
+    ///
+    /// 怎么数：装一个计数分配器，比两条链跑同样块数的分配次数之差——
+    /// 空链（节循环一次都不进）与"只装 `Mono`"的链（进一次、且 `Mono` 是纯直通节，
+    /// 按值搬不分配）。**两者之差就是"节循环 + 计量"的全部成本，必须是 0。**
+    /// 两边剩下的那一次/块来自 `ChainScratch::begin` 的混音，两条链都一样
+    /// （所以差值才干净），这里也顺手把绝对值钉住。
+    #[test]
+    fn timings_are_monotonic_counters_with_no_allocation() {
+        let dsp = Arc::new(Dsp::default());
+        let deps = deps(&dsp, false);
+        let mut bare = Chain::build(&[], &deps, mono_capture(), SESSION_RATE).unwrap();
+        let mut timed = Chain::build(&[Op::Mono], &deps, mono_capture(), SESSION_RATE).unwrap();
+        let mut bare_scratch = ChainScratch::default();
+        let mut timed_scratch = ChainScratch::default();
+        let input = chunk(CAPTURE_RATE, loud(960));
+        let blocks = 32u64;
+
+        // 走 [`drive`] 的话读数会被它自己那两次 `to_vec`/`collect` 盖住，所以
+        // 这里手写一拍：只 `begin` → `run` → `recycle`，别的什么都不做。
+        fn one_block(chain: &mut Chain, scratch: &mut ChainScratch, input: &AudioChunk) {
+            scratch.begin(input, chain.has_mono());
+            let (out, _) = chain.run(scratch);
+            scratch.recycle(out);
+        }
+
+        // 热身：乒乓槽、计量行的第一次写入都不该算进稳态读数。
+        for _ in 0..4 {
+            one_block(&mut bare, &mut bare_scratch, &input);
+            one_block(&mut timed, &mut timed_scratch, &input);
+        }
+
+        let before_bare = alloc_count();
+        for _ in 0..blocks {
+            one_block(&mut bare, &mut bare_scratch, &input);
+        }
+        let bare_allocs = alloc_count() - before_bare;
+        let before_timed = alloc_count();
+        for _ in 0..blocks {
+            one_block(&mut timed, &mut timed_scratch, &input);
+        }
+        let timed_allocs = alloc_count() - before_timed;
+
+        assert_eq!(bare_allocs, blocks, "每块只该有 begin 那一次混音");
+        assert_eq!(
+            timed_allocs - bare_allocs,
+            0,
+            "节循环 + 计量不许新增一次分配：空链 {bare_allocs} 次、装一节 {timed_allocs} 次"
+        );
+
+        // 计量本身照实累加：一行一节，名字取自清单，出口率取自节。
+        let rows = timed.timings();
+        assert_eq!(rows.len(), 1, "装几节就有几行");
+        let mono = rows[0];
+        assert_eq!(mono.op, "mono");
+        assert_eq!(mono.out_rate, CAPTURE_RATE);
+        assert_eq!(mono.blocks, blocks + 4, "跑过的每一拍都要记一次");
+        // 出口音频时长 = 每块 960 样本 / 48 kHz = 20 ms。
+        assert_eq!(
+            mono.audio_ns,
+            (blocks + 4) * 960 * 1_000_000_000 / CAPTURE_RATE as u64
+        );
+        assert!(mono.max_ns <= mono.total_ns, "最慢的一拍不超过累计");
+        assert!(
+            mono.realtime_percent() > 0.0,
+            "跑了这么多拍，纯搬运不至于 0%：{}",
+            mono.realtime_percent()
+        );
+
+        // 空链没有行可读。
+        assert!(bare.timings().is_empty());
+    }
+
+    /// 实时倍率的分母是**出口**音频时长。没出货的那一拍分母不许涨。
+    #[test]
+    fn realtime_percent_is_zero_when_there_was_no_audio() {
+        // 纯函数那一半：一秒音频里花了 0.25 ms = 0.025%。
+        let mut row = OpTiming::empty();
+        assert_eq!(row.realtime_percent(), 0.0, "没跑过的节给 0，不炸");
+        row.audio_ns = 1_000_000_000;
+        row.total_ns = 250_000;
+        assert!(
+            (row.realtime_percent() - 0.025).abs() < 1e-9,
+            "倍率算错：{}",
+            row.realtime_percent()
+        );
+
+        // 真链那一半：降噪攒帧时这一拍出 0 块，分母不许被"输入了多少"顶上去。
+        let dsp = Arc::new(Dsp::default());
+        let deps = Deps {
+            denoise: Box::new(|| Ok(Box::new(Framer { held: Vec::new() }) as Box<dyn Denoise>)),
+            ..deps(&dsp, false)
+        };
+        let mut chain = Chain::build(
+            &[Op::Mono, Op::Denoise],
+            &deps,
+            mono_capture(),
+            SESSION_RATE,
+        )
+        .unwrap();
+        let mut scratch = ChainScratch::default();
+        // 240 样本 < 一帧 480：链上零块。
+        let (blocks, _) = drive(&mut chain, &mut scratch, &chunk(CAPTURE_RATE, loud(240)));
+        assert_eq!(
+            blocks.iter().map(|block| block.len()).sum::<usize>(),
+            0,
+            "没攒满一帧就不该出样本：{:?}",
+            blocks.iter().map(|block| block.len()).collect::<Vec<_>>()
+        );
+        let rows = chain.timings();
+        let denoise = rows.iter().find(|row| row.op == "denoise").unwrap();
+        assert_eq!(denoise.blocks, 1, "跑过就是跑过");
+        assert_eq!(denoise.audio_ns, 0, "这一拍没出货，分母不许涨");
+        assert_eq!(denoise.realtime_percent(), 0.0);
+
+        // 再喂一帧：这一拍出了整整 480 样本 = 10 ms。
+        drive(&mut chain, &mut scratch, &chunk(CAPTURE_RATE, loud(240)));
+        let rows = chain.timings();
+        let denoise = rows.iter().find(|row| row.op == "denoise").unwrap();
+        assert_eq!(denoise.blocks, 2);
+        assert_eq!(
+            denoise.audio_ns,
+            FRAME as u64 * 1_000_000_000 / CAPTURE_RATE as u64
+        );
+    }
+
+    /// 断线重来**不许**把计量清零：累计是"这一条链跑了多久"，重连的是同一条链。
+    /// （清零会让嵌入式排障看到"重连之后 0%"，而那段时间的负载是真的。）
+    #[test]
+    fn a_disconnected_chain_keeps_counting_from_its_previous_totals() {
+        let dsp = Arc::new(Dsp::default());
+        let deps = deps(&dsp, false);
+        let mut chain = Chain::build(
+            &[
+                Op::Mono,
+                Op::Denoise,
+                Op::Gate {
+                    config: GateConfig::level(0.0),
+                },
+                Op::Resample {
+                    from: RateRef::Capture,
+                    to: RateRef::Session,
+                },
+            ],
+            &deps,
+            mono_capture(),
+            SESSION_RATE,
+        )
+        .unwrap();
+        let mut scratch = ChainScratch::default();
+        let input = chunk(CAPTURE_RATE, loud(960));
+
+        for _ in 0..3 {
+            drive(&mut chain, &mut scratch, &input);
+        }
+        let before = chain.timings();
+        assert!(
+            before.iter().all(|row| row.blocks == 3),
+            "每节都该记了 3 拍：{before:?}"
+        );
+        assert_eq!(
+            before.iter().map(|row| row.op).collect::<Vec<_>>(),
+            vec!["mono", "denoise", "gate", "resample"],
+            "行名与顺序照抄清单"
+        );
+        // 出口率逐节对：换率只发生在 Resample。
+        assert_eq!(before[0].out_rate, CAPTURE_RATE);
+        assert_eq!(before[1].out_rate, CAPTURE_RATE);
+        assert_eq!(before[2].out_rate, CAPTURE_RATE);
+        assert_eq!(before[3].out_rate, SESSION_RATE);
+
+        chain.on_disconnect();
+
+        let kept = chain.timings();
+        assert_eq!(kept, before, "断线不许动累计");
+
+        for _ in 0..2 {
+            drive(&mut chain, &mut scratch, &input);
+        }
+        let after = chain.timings();
+        assert!(
+            after
+                .iter()
+                .all(|row| row.blocks == 5 && row.total_ns >= row.max_ns),
+            "重连之后接着往上记：{after:?}"
+        );
+        assert!(
+            after.iter().all(|row| row.audio_ns > before[0].audio_ns),
+            "音频时长也得接着涨：{after:?}"
+        );
     }
 }

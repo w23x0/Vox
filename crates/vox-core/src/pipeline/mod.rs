@@ -51,6 +51,10 @@ use crate::runtime::{PipelineCommand, PipelineControl, Runtime, SessionConfig};
 
 use chain::{Chain, ChainScratch, DenoiseSkip};
 
+// 计量那一行是**公共 API 的一部分**（`Runtime::op_timings` 把它交给控制面），
+// 所以要从这里再往上抬一层，别逼调用方去摸私有的 `chain` 模块。
+pub use chain::OpTiming;
+
 /// 采集块长（ms）。20 ms 在 RNNoise / 重采样的 10 ms 粒度上对齐，
 /// 同时把原来 40 ms 分块造成的平均等待减半。
 pub const INPUT_BLOCK_MS: u32 = 20;
@@ -899,6 +903,10 @@ impl Worker {
     /// `force` = 里程碑（连上了、一轮收尾）立即推；否则走 500 ms 节流，
     /// 别拿 25 Hz 的主循环把 UI 事件通道刷爆。账本那边对内容重复的快照
     /// 本来就不转发，这里的节流只是少做无谓的快照计算。
+    ///
+    /// 算子计量也挂在这个节流点上（`on_op_timings`）：`Chain::run` 的热路径只往
+    /// 定长数组里写整数，**快照这一份 `Vec` 每 500 ms 才建一次**，与这个函数里
+    /// 早就在做的 `RollingMetric::summary`（`collect()+sort`）同点同频。
     fn emit_latency(&mut self, force: bool) {
         let now = self.now();
         if !should_emit(&mut self.last_latency_emit, now, force, LATENCY_THROTTLE_MS) {
@@ -915,6 +923,9 @@ impl Worker {
         );
         self.runtime
             .on_latency(self.pipeline(), self.session_id(), snapshot);
+        let timings = self.chain.timings();
+        self.runtime
+            .on_op_timings(self.pipeline(), self.session_id(), timings);
     }
 
     /// 播放汇里还压着多少毫秒没放出去。没开播放汇（纯文字会话）给 0。
@@ -1880,6 +1891,207 @@ pub(crate) mod tests {
             Vec::new()
         }
         fn reset(&mut self) {}
+    }
+
+    // --- 链重建探针（INV-1 用；差分台共用的假件一个都不动）----------------
+
+    /// 数"算子链被建了几次"：降噪/重采样两个工厂各被叫到几次、造出来的第几号
+    /// 实例真的被 `process` 叫到过。
+    ///
+    /// **不复用上面的 `Dsp`**：那份是 15 份金样的输入，动了就毁掉"金样一字不改"
+    /// 这条纪律。这里的探针只服务 INV-1 那一条用例。
+    #[derive(Default)]
+    struct ChainBuilds {
+        denoise: AtomicU64,
+        resample: AtomicU64,
+        /// 真的 `process` 过音频的实例号（造出来但一块都没过的，不记）。
+        denoise_seen: Mutex<Vec<u64>>,
+        resample_seen: Mutex<Vec<u64>>,
+    }
+
+    impl ChainBuilds {
+        fn seen(&self, list: &Mutex<Vec<u64>>, which: u64) {
+            let mut seen = list.lock();
+            if !seen.contains(&which) {
+                seen.push(which);
+            }
+        }
+    }
+
+    struct ProbeDenoise(Arc<ChainBuilds>, u64);
+
+    impl Denoise for ProbeDenoise {
+        fn process(&mut self, samples: &[f32]) -> Vec<f32> {
+            self.0.seen(&self.0.denoise_seen, self.1);
+            samples.to_vec()
+        }
+        fn reset(&mut self) {}
+    }
+
+    struct ProbeResample {
+        step: usize,
+        builds: Arc<ChainBuilds>,
+        which: u64,
+    }
+
+    impl Resample for ProbeResample {
+        fn process(&mut self, samples: &[f32]) -> Vec<f32> {
+            self.builds.seen(&self.builds.resample_seen, self.which);
+            samples.iter().step_by(self.step).copied().collect()
+        }
+        fn flush(&mut self) -> Vec<f32> {
+            Vec::new()
+        }
+        fn reset(&mut self) {}
+    }
+
+    /// 一套装好的引擎 + **数得清链建了几次**的假件。别的都与 [`Rig`] 一样。
+    struct ProbeRig {
+        engine: Arc<PipelineEngine>,
+        runtime: Runtime,
+        wire: Arc<Wire>,
+        mic: Arc<Mic>,
+        speaker: Arc<Speaker>,
+        builds: Arc<ChainBuilds>,
+        events: Arc<Mutex<Vec<Event>>>,
+    }
+
+    impl ProbeRig {
+        fn new() -> Self {
+            let clock = Arc::new(TestClock::new());
+            let runtime = Runtime::new(Settings::default(), Arc::clone(&clock) as Arc<dyn Clock>);
+            runtime.set_host_facts(HostFacts::all_wired(HostKind::Windows));
+            runtime.set_secret_store(Arc::new(MemoryStore::default()));
+            runtime.set_api_key("sk-test");
+            // 手动闸门 + 初始关着：这样"开闸"这条 `Note` 的效果（开始上传）
+            // 才是可观察的，用例才不是靠"通知全被丢掉"变绿。有音色与出口设备，
+            // 于是开关译文语音 / 回听这两条 `Note` 也有可观察的效果。
+            runtime.update_settings(|settings| {
+                settings.speak.activation_mode = crate::catalog::ActivationMode::Hold;
+                settings.speak.voice = "Tina".to_string();
+                settings.speak.output_device = Some("CABLE Input".to_string());
+            });
+
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let sink = Arc::clone(&events);
+            runtime.add_listener(Arc::new(move |event: &Event| {
+                sink.lock().push(event.clone());
+            }));
+
+            let wire = Arc::new(Wire::default());
+            let mic = Arc::new(Mic::new(48_000));
+            let speaker = Arc::new(Speaker::default());
+            let builds = Arc::new(ChainBuilds::default());
+
+            let deps = Deps {
+                transport: {
+                    let wire = Arc::clone(&wire);
+                    Box::new(move || {
+                        let inbox = wire.open_inbox();
+                        Box::new(WireHandle(Arc::clone(&wire), inbox)) as Box<dyn Transport>
+                    })
+                },
+                capture: {
+                    let mic = Arc::clone(&mic);
+                    Box::new(move || {
+                        Box::new(MicHandle(Arc::clone(&mic))) as Box<dyn CaptureSource>
+                    })
+                },
+                playback: {
+                    let speaker = Arc::clone(&speaker);
+                    Box::new(move || {
+                        Box::new(SpeakerHandle(Arc::clone(&speaker))) as Box<dyn PlaybackSink>
+                    })
+                },
+                denoise: {
+                    let builds = Arc::clone(&builds);
+                    Box::new(move || {
+                        let which = builds.denoise.fetch_add(1, Ordering::SeqCst);
+                        Ok(Box::new(ProbeDenoise(Arc::clone(&builds), which)) as Box<dyn Denoise>)
+                    })
+                },
+                resample: {
+                    let builds = Arc::clone(&builds);
+                    Box::new(move |input, output| {
+                        let which = builds.resample.fetch_add(1, Ordering::SeqCst);
+                        Box::new(ProbeResample {
+                            step: (input / output).max(1) as usize,
+                            builds: Arc::clone(&builds),
+                            which,
+                        }) as Box<dyn Resample>
+                    })
+                },
+            };
+
+            let engine = PipelineEngine::new(runtime.clone(), deps);
+            runtime.set_control(Arc::clone(&engine) as Arc<dyn PipelineControl>);
+            Self {
+                engine,
+                runtime,
+                wire,
+                mic,
+                speaker,
+                builds,
+                events,
+            }
+        }
+
+        /// 从**账本**这头起会话（`Rig::start` 那种绕法会让账本里的会话号停在 0，
+        /// 于是 `on_gate_status` 这类回调全被丢掉；这条用例要看门开合，必须走
+        /// 账本）。
+        fn start(&self) -> u64 {
+            self.runtime.start(Pipeline::Speak);
+            self.wait_until(|| self.mic.target().is_some());
+            self.engine
+                .workers
+                .lock()
+                .get(&Pipeline::Speak)
+                .map(|handle| handle.session_id)
+                .expect("起完该有把手")
+        }
+
+        fn wait_until(&self, mut cond: impl FnMut() -> bool) {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while std::time::Instant::now() < deadline {
+                if cond() {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            panic!("等超时了");
+        }
+
+        /// 灌一块音频并等它**走完全程**（与 `Rig::feed` 同一条围栏：先等命令被
+        /// 消化掉，再等处理计数涨）。
+        fn feed(&self, samples: Vec<f32>) {
+            let inbox = self
+                .engine
+                .workers
+                .lock()
+                .values()
+                .next()
+                .map(|handle| Arc::clone(&handle.inbox))
+                .expect("得先起会话");
+            self.wait_until(|| inbox.state.lock().notes.is_empty());
+            let before = inbox.counters();
+            self.mic.emit(samples);
+            self.wait_until(|| {
+                let (processed, dropped) = inbox.counters();
+                processed + dropped > before.0 + before.1
+            });
+        }
+
+        /// 门状态事件里最近一次报的"开没开"。
+        fn gate_open(&self) -> Option<bool> {
+            self.events
+                .lock()
+                .iter()
+                .rev()
+                .find_map(|event| match event {
+                    Event::GateStatus { status, .. } => Some(status.active),
+                    _ => None,
+                })
+        }
     }
 
     // --- 会话配置构造器（两个子模块的测试也用） ----------------------------
@@ -2926,6 +3138,206 @@ pub(crate) mod tests {
             .unwrap();
         rig.feed(quiet_block());
         assert_eq!(rig.wire.sent().len(), 1, "什么都没改就别发帧");
+        rig.engine.shutdown();
+    }
+
+    /// **INV-1：任何 `Note` 都不许重建算子链。**
+    ///
+    /// 重建 = 丢降噪的 480 帧缓冲与 RNNoise 内部状态、丢重采样的输入缓冲，
+    /// 上行时间线上凭空少一段/多一段，而且**降噪的首帧丢弃会再来一次**
+    /// （`denoise.rs` 满帧才出货、首帧扔掉）。改语言 / 换音色 / 换门 / 换播放
+    /// 设备全是下行与控制面的事，碰不到上行链。
+    ///
+    /// 怎么验：降噪与重采样两个工厂**各只被叫一次**，而且真正吃过音频的实例
+    /// 始终只有第 0 号。每派一条 `Note` 都得顺带验它**真的生效了**（发帧 / 开
+    /// 关播放汇 / 门开合），否则"通知全被丢掉"也会让这条用例绿。
+    #[test]
+    fn no_note_rebuilds_the_chain() {
+        let rig = ProbeRig::new();
+        let session = rig.start();
+        assert_eq!(
+            rig.builds.denoise.load(Ordering::SeqCst),
+            1,
+            "建链时造一个降噪器"
+        );
+        assert_eq!(
+            rig.builds.resample.load(Ordering::SeqCst),
+            1,
+            "建链时造一个重采样器"
+        );
+
+        // 门关着：链照跑（降噪吃到这一块），但一块也不上传，所以重采样还没东西吃。
+        rig.feed(loud_block());
+        assert_eq!(rig.builds.denoise_seen.lock().len(), 1, "降噪吃到过音频");
+        assert!(
+            rig.builds.resample_seen.lock().is_empty(),
+            "门关着，门后头的重采样还没东西吃"
+        );
+        assert_eq!(rig.wire.audio_frames(), 0, "门关着不该上传");
+
+        // ① 热更新换语言：下行发帧，链一动不动。
+        rig.engine
+            .apply(PipelineCommand::HotUpdate {
+                session_id: session,
+                target_language: Some("en".to_string()),
+                voice: None,
+            })
+            .unwrap();
+        rig.wait_until(|| rig.wire.sent().len() >= 2);
+        assert!(
+            rig.wire.sent().last().unwrap().contains("\"en\""),
+            "热更新得真的生效：{:?}",
+            rig.wire.sent()
+        );
+
+        // ② 打开本地回听：第二个播放汇开起来，链一动不动。
+        rig.engine
+            .apply(PipelineCommand::SetMonitorTranslation {
+                session_id: session,
+                enabled: true,
+            })
+            .unwrap();
+        rig.wait_until(|| rig.speaker.opens.load(Ordering::SeqCst) == 2);
+
+        // ③ 关掉译文语音：主输出与回听都关，链一动不动。
+        rig.engine
+            .apply(PipelineCommand::SetTranslationAudio {
+                session_id: session,
+                voice: None,
+                output_device: None,
+            })
+            .unwrap();
+        rig.wait_until(|| rig.speaker.closes.load(Ordering::SeqCst) >= 1);
+        rig.wait_until(|| {
+            rig.wire
+                .sent()
+                .iter()
+                .any(|f| f.contains("\"modalities\":[\"text\"]"))
+        });
+
+        // ④ 开闸：门开着才上传，链一动不动。
+        rig.engine
+            .apply(PipelineCommand::SetGateActive {
+                session_id: session,
+                seq: 1,
+                active: true,
+            })
+            .unwrap();
+        rig.feed(loud_block());
+        rig.wait_until(|| rig.gate_open() == Some(true));
+        rig.wait_until(|| rig.wire.audio_frames() > 0);
+        assert!(
+            rig.wire.audio_frames() > 0,
+            "门开了就该上传：{:?}",
+            rig.wire.sent()
+        );
+        assert_eq!(
+            *rig.builds.resample_seen.lock(),
+            vec![0],
+            "门开后重采样就该吃到音频，且始终是第 0 号实例"
+        );
+
+        // ⑤ 换门参数：换成恒开门、同时松手。恒开门不受 external_active 影响，
+        // 所以音频要继续上传——这同时钉住 `set_config` 保留 `external_active`。
+        rig.engine
+            .apply(PipelineCommand::SetGateConfig {
+                session_id: session,
+                seq: 2,
+                config: GateConfig::level(0.0),
+            })
+            .unwrap();
+        rig.engine
+            .apply(PipelineCommand::SetGateActive {
+                session_id: session,
+                seq: 3,
+                active: false,
+            })
+            .unwrap();
+        let uploaded = rig.wire.audio_frames();
+        rig.feed(loud_block());
+        rig.wait_until(|| rig.wire.audio_frames() > uploaded);
+        assert!(
+            rig.wire.audio_frames() > uploaded,
+            "换门参数 + 松手之后恒开门仍要放行"
+        );
+
+        // 一句话收口：五个 `Note` 全发过了，链**从头到尾只建过一次**，
+        // 真正干活的降噪器 / 重采样器也一直是第 0 号那一个。
+        assert_eq!(
+            rig.builds.denoise.load(Ordering::SeqCst),
+            1,
+            "不许重建：降噪"
+        );
+        assert_eq!(
+            rig.builds.resample.load(Ordering::SeqCst),
+            1,
+            "不许重建：重采样"
+        );
+        assert_eq!(*rig.builds.denoise_seen.lock(), vec![0]);
+        assert_eq!(*rig.builds.resample_seen.lock(), vec![0]);
+        assert_eq!(rig.wire.connects.load(Ordering::SeqCst), 1, "全程不许重连");
+        rig.engine.shutdown();
+    }
+
+    /// 读取口 `Runtime::op_timings` 必须**真出数**：一行一节、顺序照抄清单、
+    /// 真跑过音频的行 `blocks > 0`、倍率非负可读。
+    ///
+    /// 它是**拉取式**的（不发事件），所以只能主动去账本取；取值那一刻的快照就是
+    /// 500 ms 节流点上重建的那一份。
+    #[test]
+    fn op_timings_reports_one_row_per_installed_stage() {
+        let rig = Rig::new();
+        // 从账本这头起（`Rig::start` 绕过了账本，`on_*` 会被会话号挡住）。
+        rig.boot(Pipeline::Speak);
+        rig.wait_until(|| rig.runtime.pipeline_state(Pipeline::Speak) == PipelineState::Ready);
+
+        // 起会话时那条 `emit_latency(true)` 已经报过一份：装几节就有几行，
+        // 但还没跑过音频，所以每行 `blocks == 0`。
+        let fresh = rig
+            .runtime
+            .op_timings(Pipeline::Speak)
+            .expect("起会话就会报第一份计量");
+        assert!(
+            fresh.iter().all(|row| row.blocks == 0),
+            "还没跑音频就不该有拍数：{fresh:?}"
+        );
+
+        // 清单说什么就是几行、什么顺序——计量行不是另写的一份。
+        let config = rig.runtime.session_config(Pipeline::Speak);
+        let manifest = Composition::of(&config, &HostFacts::all_wired(HostKind::Windows)).unwrap();
+        let want: Vec<&'static str> = manifest.ops.iter().map(Op::kind).collect();
+        assert_eq!(fresh.len(), want.len(), "一行一节");
+        assert_eq!(fresh.iter().map(|row| row.op).collect::<Vec<_>>(), want);
+
+        // 跑一块音频，再把 500 ms 节流推过去，读回来就该有真数据。
+        rig.feed(loud_block());
+        rig.clock.advance(600);
+        rig.wait_until(|| {
+            rig.runtime
+                .op_timings(Pipeline::Speak)
+                .is_some_and(|rows| rows.iter().all(|row| row.blocks > 0))
+        });
+        let rows = rig.runtime.op_timings(Pipeline::Speak).unwrap();
+
+        let mono = rows
+            .iter()
+            .find(|row| row.op == "mono")
+            .expect("有 mono 行");
+        assert!(mono.blocks > 0, "真跑过音频就得有拍数");
+        assert!(mono.realtime_percent() >= 0.0);
+        // 每块 1920 样本 @ 48 kHz = 40 ms，出口音频时长对得上。
+        assert_eq!(
+            mono.audio_ns,
+            mono.blocks * 1920 * 1_000_000_000 / mono.out_rate as u64,
+            "出口音频时长 = 拍数 × 每块样本数 / 出口率"
+        );
+        assert_eq!(mono.out_rate, 48_000, "mono 的出口率就是采集率");
+        let resample = rows
+            .iter()
+            .find(|row| row.op == "resample")
+            .expect("有 resample 行");
+        assert_eq!(resample.out_rate, 16_000, "重采样出口就是会话上行率");
+        // 停掉之后这一格不跟着别的会话跑：会话号作废，迟到的快照会被丢掉。
         rig.engine.shutdown();
     }
 

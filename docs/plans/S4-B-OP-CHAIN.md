@@ -996,3 +996,4 @@ cargo test -p vox-core pipeline::golden                            # 期望：15
 - **M2 · 排期：B0 ∥ B1。** B1 是纯新增（`chain.rs`），对 `pipeline/mod.rs` 只加 `mod chain;` 一行；B0 对 `pipeline/mod.rs` 只做可见性放宽 + `mod golden;` 一行。两者由 Main 合并。B2 必须等 B0 **和** B1 都合入 main 才开工。
 - **M3 · 基线更新。** 本稿写作时 main 为 598/0/5；W1 与 ALSA-T1 合入后 main 为 641 passed / 0 failed / 6 ignored（S4-A 新旧实现并存期），`cargo test -p vox-core` 仍 258。S4-B 各工单以"`-p vox-core` 的测试名一个不少 + 金样逐字相等"为准，workspace 总数只作旁证。
 - **M4 · O-1/O-2/O-3/O-5/O-6** 都在 S4-C 或更后，本轮不拍。
+- **M5 · 直通会话不产出 `op_timings`**（`pump_passthrough` 无 `emit_latency` 节流点——今天它就没有 `on_latency`），留给外露工单 X1 一并决定。理由：直通是本机回听、本就不上报延迟；不为它新开节流点，免得给直通多一个上报口、撞上"S4-B 行为不变"。B3 落地时记。
