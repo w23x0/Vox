@@ -182,7 +182,10 @@ pub enum Op {
 
 impl Op {
     /// 规定顺序里的名字（[`Composition::OP_ORDER`] 用的就是这套名字）。
-    fn kind(&self) -> &'static str {
+    ///
+    /// `pub(crate)` 是给 `pipeline::chain::ChainStage::name()` 用的：算子链要报出
+    /// 「清单里这一节叫什么」，直接取这里，不另写一份字符串表（多一处真源就会漂）。
+    pub(crate) fn kind(&self) -> &'static str {
         match self {
             Self::Mono => "mono",
             Self::Denoise => "denoise",

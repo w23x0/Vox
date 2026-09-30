@@ -17,6 +17,7 @@
 //!   不许冒出假"错误"。
 //! - 没连上时来的音频**立刻丢**，绝不排队。
 
+mod chain;
 pub(crate) mod listen;
 pub(crate) mod speak;
 
