@@ -153,7 +153,10 @@ mod tests {
         let config = speak_config();
         let plan = plan(&config);
         assert!(matches!(plan.target, CaptureTarget::Microphone(None)));
-        assert!(plan.denoise, "麦克风收的是空气声，必须降噪");
+        assert!(
+            plan.chain_ops.iter().any(|op| matches!(op, Op::Denoise)),
+            "麦克风收的是空气声，清单里必须有降噪这一节"
+        );
         assert!(plan.hot_update, "只有对外说话认热更新");
     }
 

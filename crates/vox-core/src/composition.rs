@@ -868,7 +868,10 @@ mod tests {
         let speak = speak_config();
         let (_, plan) = derived(&speak, &facts);
         assert_eq!(plan.target, CaptureTarget::Microphone(None));
-        assert!(plan.denoise, "麦克风收的是空气声，必须降噪");
+        assert!(
+            plan.chain_ops.iter().any(|op| matches!(op, Op::Denoise)),
+            "麦克风收的是空气声，清单里必须有降噪这一节"
+        );
         assert!(!plan.passthrough);
         assert_eq!(plan.playback_device, Some(Some("CABLE Input".to_string())));
         assert!(!plan.monitor_translation);
@@ -888,7 +891,10 @@ mod tests {
                 include_tree: true,
             }
         );
-        assert!(!plan.denoise, "数字源本来就干净，不降噪");
+        assert!(
+            !plan.chain_ops.iter().any(|op| matches!(op, Op::Denoise)),
+            "数字源本来就干净，清单里不该有降噪这一节"
+        );
         assert!(!plan.passthrough);
         assert_eq!(plan.playback_device, Some(None));
         assert!(!plan.monitor_translation);
@@ -920,7 +926,11 @@ mod tests {
                         "{label}"
                     );
                     assert_eq!(
-                        plan.denoise,
+                        plan.chain_ops, composition.ops,
+                        "{label}：作业单逐条照搬清单的 ops"
+                    );
+                    assert_eq!(
+                        plan.chain_ops.iter().any(|op| matches!(op, Op::Denoise)),
                         composition.ops.iter().any(|op| matches!(op, Op::Denoise)),
                         "{label}"
                     );

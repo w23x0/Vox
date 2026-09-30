@@ -1,8 +1,7 @@
 //! 算子链执行器：**按 `Composition.ops` 的顺序**把一块采集音频跑过每一节。
 //!
 //! 装不装某一节、装在哪、装几节，全部由清单说了算——代码里不再有第二个答案。
-//! 重构前那份顺序写死在 `Worker::gated_blocks` + `Worker::feed` 里（`mod.rs::feed`、
-//! `mod.rs::gated_blocks`），现在它只在这里。
+//! 接线之前那份顺序写死在 `Worker::gated_blocks` + `Worker::feed` 里，现在它只在这里。
 //!
 //! 统一的是**调用约定**（`ChainStage::process`），不是一个 trait：
 //!
@@ -17,8 +16,6 @@
 //! 零分配：热路径上只有两块乒乓缓冲的 `len` 归零与一次异或，各节的块从
 //! `ports` / `gate` 的现成返回值**按值搬**进 [`BlockOut`]，不拷贝、不 `clone()`、
 //! 不格式化。缓冲的容量建链时一次性给，跨块复用。
-#![cfg_attr(not(test), allow(dead_code))] // B2 接线后删
-
 use std::mem;
 
 use crate::cloud::protocol::OUTPUT_SAMPLE_RATE;
@@ -80,10 +77,15 @@ impl BlockOut {
         self.slots[..self.len].iter().map(|block| block.as_slice())
     }
 
+    /// 块数。**只被 `mod tests` 读**：生产路径一律走 [`Self::blocks`]，块数就是
+    /// 迭代次数，没有单独问一句的地方。
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.len
     }
 
+    /// 见 [`Self::len`]。
+    #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -177,9 +179,10 @@ impl ChainStage {
         }
     }
 
-    /// 清单里叫什么（自计时的行名、差分台的指纹用它）。**取自 [`Op::kind`]**，
-    /// 不另写一份字符串表——多一处真源就会漂（下面造的哑值只被 `kind()` 的
-    /// `match` 读一下变体名，字段一概不看）。
+    /// 清单里叫什么（**自计时的行名用它**，S4-B B3 落地；今天只有 `mod tests` 读）。
+    /// **取自 [`Op::kind`]**，不另写一份字符串表——多一处真源就会漂（下面造的哑值
+    /// 只被 `kind()` 的 `match` 读一下变体名，字段一概不看）。
+    #[cfg(test)]
     pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::Mono { .. } => Op::Mono.kind(),
@@ -386,10 +389,10 @@ impl Chain {
     ///
     /// | 节 | 动作 | 为什么 |
     /// | --- | --- | --- |
-    /// | `Denoise` | `port.reset()` | 半句作废，内部分帧缓冲与 RNNoise 状态都丢掉 |
+    /// | `Denoise` | `port.reset()` | 半句作废：480 帧的分帧缓冲与 RNNoise 内部状态都丢掉 |
     /// | `Resample` | `port.reset()` | 缓冲里的零头别带到下一条连接 |
     /// | `Mono` | 无状态可清 | — |
-    /// | `Gate` | **不动** | `ActivationGate::reset` 会把 `external_active` 清成 `false`——门会被**关掉**。今天 `Worker::reconnect` 也不碰门，行为是"重连后按键仍按着"，所以这里不许调 |
+    /// | `Gate` | **不动** | `ActivationGate::reset` 会把 `external_active` 清成 `false`——门会被**关掉**。接线前 `Worker::reconnect` 也不碰门，行为是"重连后按键仍按着"，所以这里不许调 |
     pub(crate) fn on_disconnect(&mut self) {
         for stage in &mut self.stages {
             match stage {
@@ -416,7 +419,8 @@ impl Chain {
         self.stages.last().map_or(0, ChainStage::out_rate)
     }
 
-    /// 链上各节的清单名字，按装配顺序（自计时的行名、差分台的指纹用它）。
+    /// 链上各节的清单名字，按装配顺序。见 [`ChainStage::name`]：**只被 `mod tests` 读**。
+    #[cfg(test)]
     pub(crate) fn stage_names(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.stages.iter().map(ChainStage::name)
     }
@@ -482,7 +486,6 @@ mod tests {
     struct Dsp {
         denoise_calls: AtomicU32,
         denoise_resets: AtomicU32,
-        resample_calls: AtomicU32,
         resample_resets: AtomicU32,
         resample_flushes: AtomicU32,
         /// 重采样工厂被叫到过的 (进率, 出率)——验 `Op::Resample` 的两个字段真被读了。
@@ -509,7 +512,6 @@ mod tests {
 
     impl Resample for Decimate {
         fn process(&mut self, samples: &[f32]) -> Vec<f32> {
-            self.dsp.resample_calls.fetch_add(1, Ordering::SeqCst);
             samples.iter().step_by(self.step).copied().collect()
         }
         fn flush(&mut self) -> Vec<f32> {

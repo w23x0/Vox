@@ -41,13 +41,15 @@ use crate::composition::{
     Composition, Input, Op, Output, PlaybackRole, COMPOSITION_SCHEMA_VERSION,
 };
 use crate::event::{Notice, Pipeline, PipelineState};
-use crate::gate::{ActivationGate, GateConfig, GateState};
+use crate::gate::{GateConfig, GateState};
 use crate::latency::LatencyTracker;
 use crate::ports::{
     AudioChunk, CaptureSource, CaptureTarget, Denoise, PlaybackSink, PortError, PortResult,
     Resample,
 };
 use crate::runtime::{PipelineCommand, PipelineControl, Runtime, SessionConfig};
+
+use chain::{Chain, ChainScratch, DenoiseSkip};
 
 /// 采集块长（ms）。20 ms 在 RNNoise / 重采样的 10 ms 粒度上对齐，
 /// 同时把原来 40 ms 分块造成的平均等待减半。
@@ -59,6 +61,7 @@ const POLL_MS: u32 = 5;
 /// 阀门状态最多多久报一次（ms）。照抄旧版的 0.2 秒。
 const GATE_THROTTLE_MS: u64 = 200;
 /// 降噪只在这个采样率下有效（RNNoise 的原生率）。对不上就不降噪。
+/// 判据在 `chain.rs::Chain::build` 里，报什么在 `Worker::report_denoise_degrade`。
 const DENOISE_RATE: u32 = 48_000;
 /// 一拍最多吃几条服务端消息，别让消息把音频处理饿死。
 const MAX_MESSAGES_PER_TICK: usize = 32;
@@ -97,8 +100,12 @@ pub struct Deps {
 pub(crate) struct Plan {
     /// 抓谁的声音。
     pub target: CaptureTarget,
-    /// 上传前要不要降噪。数字源（环回）本来就干净，白降一遍还费 CPU。
-    pub denoise: bool,
+    /// 算子链装哪几节、按什么顺序——**清单的 `ops` 一比一照搬**。
+    ///
+    /// 这里**刻意没有**"装不装某一节"的布尔：那一格由清单说了算，链由
+    /// [`Chain::build`]（`Worker::boot`）按这份顺序装。压成布尔等于在清单之外
+    /// 再写一份答案，那正是要消灭的东西。
+    pub chain_ops: Vec<Op>,
     /// 直通模式：不起云端会话、不开 WS，把闸门放行的原声直接推给播放汇。
     /// 对外说话关掉「翻译」时用；带云端的会话恒为 `false`。
     pub passthrough: bool,
@@ -154,7 +161,9 @@ impl Plan {
         let session = composition.session.as_ref();
         Ok(Self {
             target,
-            denoise: composition.ops.iter().any(|op| matches!(op, Op::Denoise)),
+            // 逐条照搬：建链的输入从这一刻起就是清单本身（顺序、`Resample` 的两个率、
+            // `Gate` 的参数，全都不再被压成几个布尔）。
+            chain_ops: composition.ops.clone(),
             // 直通 = 没有云端会话。
             passthrough: session.is_none(),
             // 主播放出口 = 非回听的那条 `playback`；清单里没有它 = 这条会话不出声（纯文字）。
@@ -644,9 +653,11 @@ struct Worker {
     capture: Option<Box<dyn CaptureSource>>,
     sink: Option<Box<dyn PlaybackSink>>,
     monitor_sink: Option<Box<dyn PlaybackSink>>,
-    denoiser: Option<Box<dyn Denoise>>,
-    resampler: Option<Box<dyn Resample>>,
-    gate: Option<ActivationGate>,
+    /// 上行算子链：单声道 → 降噪 → 阀门 → 重采样，**装哪几节由清单说了算**
+    /// （`Worker::boot` 里 `Chain::build`）。`Worker` 自己不再有第二份顺序。
+    chain: Chain,
+    /// 链的乒乓缓冲。建链时一次性给容量，热路径只写 `len`。
+    scratch: ChainScratch,
 
     /// 阀门命令的序号闸。旧版初值 -1，这里用 `None` 表示"还没收过"。
     last_gate_seq: Option<u64>,
@@ -690,9 +701,8 @@ impl Worker {
             capture: None,
             sink: None,
             monitor_sink: None,
-            denoiser: None,
-            resampler: None,
-            gate: None,
+            chain: Chain::empty(),
+            scratch: ChainScratch::default(),
             last_gate_seq: None,
             last_gate_state: None,
             last_gate_emit: 0,
@@ -795,30 +805,27 @@ impl Worker {
         )?;
         self.capture = Some(capture);
 
-        // 阀门建在**采集率**上，不是 16 kHz——尾巴和 preroll 的时长是按率算的。
-        let mut gate = ActivationGate::new(self.config.gate, format.sample_rate);
+        // 算子链按**清单**建：装哪几节、什么顺序、阀门建在哪个率上、降噪降级到
+        // 哪一步，全由 `plan.chain_ops` 说。代码里不再有第二份"装不装"的答案。
+        self.chain = Chain::build(
+            &self.plan.chain_ops,
+            &self.deps,
+            format,
+            self.session.input_sample_rate(),
+        )?;
         // 初始开闸状态在线程里同步生效，不靠后续命令补（旧版的坑）。
-        gate.set_external_active(self.config.gate_active);
-        self.gate = Some(gate);
+        self.chain.set_gate_active(self.config.gate_active);
+        // 降噪降级的那两句日志与那条通知由变体决定（两支路的可观察行为不一样）。
+        self.report_denoise_degrade();
 
-        if self.plan.denoise {
-            if format.sample_rate == DENOISE_RATE {
-                match (self.deps.denoise)() {
-                    Ok(denoiser) => self.denoiser = Some(denoiser),
-                    // 降噪造不出来只是少一层处理，别把整条流水线拖死。
-                    Err(err) => {
-                        tracing::warn!(error = %err, "降噪器起不来，这次先不降噪");
-                        self.runtime.notify(
-                            Notice::warning("降噪启动失败，本次已关闭").on(self.pipeline()),
-                        );
-                    }
-                }
-            } else {
-                tracing::warn!(rate = format.sample_rate, "采集率不是 48 kHz，跳过降噪");
-            }
-        }
         // 直通模式：把原声推给播放汇，源率就是采集率（外壳自己再换到设备率）。
         if self.plan.passthrough {
+            // 直通清单里没有 `Resample`，链尾率就该是采集率。
+            debug_assert_eq!(
+                self.chain.out_rate(),
+                format.sample_rate,
+                "直通不做重采样，链尾率必须是采集率"
+            );
             if let Some(device) = self.plan.playback_device.clone() {
                 let mut sink = (self.deps.playback)();
                 match sink.open(device.as_deref(), format.sample_rate) {
@@ -833,10 +840,12 @@ impl Worker {
                 }
             }
         } else {
-            self.resampler = Some((self.deps.resample)(
-                format.sample_rate,
+            // 有云端会话时，链尾就是喂给协议的那个率。
+            debug_assert_eq!(
+                self.chain.out_rate(),
                 self.session.input_sample_rate(),
-            ));
+                "带翻译时链尾率必须是会话上行率"
+            );
         }
 
         if self.stopping() {
@@ -849,6 +858,30 @@ impl Worker {
             self.emit_latency(true);
         }
         Ok(true)
+    }
+
+    /// 降噪没装上时把原因报出去。**两支路的可观察行为不一样，别合并**：
+    /// 采集率对不上只记一笔日志；降噪器造不出来要额外通知用户一句。
+    ///
+    /// 两句 `tracing::warn!` 与那条 [`Notice`] 的文本**逐字**照抄接线前的写法。
+    /// 差分台抓的是 `Event` 流、抓不到 `tracing`（S4-B 稿 §9.3 的 O-4），
+    /// 所以这两句由本函数 + 一条覆盖两支路的单测
+    /// （`mod tests::the_two_denoise_degrades_report_differently`）兜住。
+    fn report_denoise_degrade(&mut self) {
+        let pipeline = self.pipeline();
+        match self.chain.denoise_skip() {
+            // 清单里压根没有降噪节，或者降噪节真的装上了：什么都不用说。
+            None => {}
+            Some(DenoiseSkip::Rate(rate)) => {
+                tracing::warn!(rate = *rate, "采集率不是 48 kHz，跳过降噪");
+            }
+            // 降噪造不出来只是少一层处理，别把整条流水线拖死。
+            Some(DenoiseSkip::Factory(err)) => {
+                tracing::warn!(error = %err, "降噪器起不来，这次先不降噪");
+                self.runtime
+                    .notify(Notice::warning("降噪启动失败，本次已关闭").on(pipeline));
+            }
+        }
     }
 
     /// 汇报运行状态。同一个状态不重复报；被让位期间账本自己管状态，别乱报。
@@ -951,7 +984,7 @@ impl Worker {
                     queued.chunk.samples.len() as u64 / queued.chunk.channels.max(1) as u64;
                 let block_ms = frames.saturating_mul(1000) / queued.chunk.sample_rate.max(1) as u64;
                 let capture_start_ms = capture_end_ms.saturating_sub(block_ms);
-                self.feed(&queued.chunk, capture_start_ms, capture_end_ms);
+                self.feed_chain(&queued.chunk, capture_start_ms, capture_end_ms);
                 self.inbox.mark_processed();
                 if self.stopping() {
                     return;
@@ -983,7 +1016,9 @@ impl Worker {
                 let Some(queued) = self.inbox.take_audio() else {
                     break;
                 };
-                self.feed_passthrough(&queued.chunk);
+                // 直通没有云端，也就没有上传时间线可言：起止时刻给 0，链尾那步
+                // 不看它们（`feed_chain` 只在上传时用）。
+                self.feed_chain(&queued.chunk, 0, 0);
                 self.inbox.mark_processed();
                 if self.stopping() {
                     return;
@@ -1035,13 +1070,9 @@ impl Worker {
         }
         self.session.on_disconnected();
         self.sent_text.clear();
-        // 半句作废，重采样缓冲里的零头也别带到下一条连接去。
-        if let Some(resampler) = self.resampler.as_mut() {
-            resampler.reset();
-        }
-        if let Some(denoiser) = self.denoiser.as_mut() {
-            denoiser.reset();
-        }
+        // 半句作废：降噪的分帧缓冲与重采样缓冲里的零头都别带到下一条连接去。
+        // **门不动**（INV-2）——`Chain::on_disconnect` 逐节决定清不清，理由见那里。
+        self.chain.on_disconnect();
         self.report(PipelineState::Reconnecting);
 
         loop {
@@ -1082,73 +1113,63 @@ impl Worker {
 
     /// 一块采集音频走完全程。
     ///
-    /// 单声道 → 降噪 → **阀门** → 重采样 → 上传。降噪在阀门**前面**：
-    /// 干净的信号判起来准，不然空调声能把阀门顶开。
+    /// 链按 `plan.chain_ops` 的顺序跑（单声道 → 降噪 → **阀门** → 重采样；
+    /// 降噪在阀门**前面**：干净的信号判起来准，不然空调声能把阀门顶开），
+    /// 链尾**逐块**往下游送。块边界不许合并——合并会改上行帧的切分。
+    ///
+    /// 下游是谁由 `plan.passthrough` 决定：直通时是播放汇，否则是上传。
     ///
     /// `capture_start_ms` / `capture_end_ms` 是这块音频被采集的墙钟窗口，
     /// 传到底下好让 `UploadTimeline` 能把服务端的 `audio_start_ms` 映回采集时刻。
-    fn feed(&mut self, chunk: &AudioChunk, capture_start_ms: u64, capture_end_ms: u64) {
-        let Some((accepted, status)) = self.gated_blocks(chunk) else {
+    fn feed_chain(&mut self, chunk: &AudioChunk, capture_start_ms: u64, capture_end_ms: u64) {
+        // 入口块。清单说有 `Mono` 就混音（今天的 `chunk.to_mono()` 就在这儿，
+        // 分配次数与接线前一样）；没装就原样搬（此时采集必是单声道，`Chain::build`
+        // 校验过）。
+        self.scratch.begin(chunk, self.chain.has_mono());
+        // 按值拿回结果：调用方身上不挂着 `&mut self` 的借用，后面照常调 `&mut self`。
+        let (out, status) = self.chain.run(&mut self.scratch);
+
+        // 门这一拍没跑 = 降噪还在攒 480 帧的一帧（链上零块），或者链里压根没有门。
+        // 两种都"这一拍什么也不用做"——与接线前那个"降噪没出货就整拍跳过"的
+        // 早退是同一条判据。
+        let Some(status) = status else {
+            self.scratch.recycle(out);
             return;
         };
-        for block in &accepted {
-            let resampled = match self.resampler.as_mut() {
-                Some(resampler) => resampler.process(block),
-                None => block.clone(),
-            };
-            self.upload(&resampled, capture_start_ms, capture_end_ms);
-        }
-        // 一段收尾了，把重采样缓冲里的零头挤出去，别让尾音卡在缓冲里。
-        if status.ended {
-            let tail = match self.resampler.as_mut() {
-                Some(resampler) => resampler.flush(),
-                None => Vec::new(),
-            };
-            self.upload(&tail, capture_start_ms, capture_end_ms);
-        }
-    }
-
-    /// 直通（关翻译）：闸门放行的原声直接推给播放汇，不重采样、不上传。
-    /// 降噪照旧（麦克风收的是空气声）；无译文，所以没有尾巴、没有云端。
-    fn feed_passthrough(&mut self, chunk: &AudioChunk) {
-        let Some((accepted, _)) = self.gated_blocks(chunk) else {
-            return;
-        };
-        if let Some(sink) = self.sink.as_mut() {
-            for block in &accepted {
-                sink.push(block);
-            }
-        }
-    }
-
-    /// 单声道 → 降噪 → 阀门，顺带把状态报出去、记下本地上升沿。
-    /// 返回 `None` = 这一拍没有可用的块（降噪还在攒帧、或者阀门还没建好）。
-    fn gated_blocks(
-        &mut self,
-        chunk: &AudioChunk,
-    ) -> Option<(Vec<Vec<f32>>, crate::gate::GateStatus)> {
-        let mono = chunk.to_mono();
-        let cleaned = match self.denoiser.as_mut() {
-            Some(denoiser) => denoiser.process(&mono),
-            None => mono,
-        };
-        // 降噪按 480 样本一帧攒，攒不够就没输出，这一拍正常跳过。
-        if cleaned.is_empty() {
-            return None;
-        }
-        let gate = self.gate.as_mut()?;
-        let (accepted, status) = gate.process(&cleaned);
         self.emit_gate_status(status);
         self.track_local_gate(status);
-        Some((accepted, status))
+
+        let passthrough = self.plan.passthrough;
+        for block in out.blocks() {
+            if passthrough {
+                if let Some(sink) = self.sink.as_mut() {
+                    sink.push(block);
+                }
+            } else {
+                self.upload(block, capture_start_ms, capture_end_ms);
+            }
+        }
+        // 一段收尾了，把重采样缓冲里的零头挤出去，别让尾音卡在缓冲里。
+        // 直通不冲尾巴：接线前的 `feed_passthrough` 里也没有这一段。
+        if status.ended && !passthrough {
+            let tail = self.chain.flush_resample();
+            self.upload(&tail, capture_start_ms, capture_end_ms);
+        }
+        // 缓冲还回乒乓池（容量复用，本拍零分配）。
+        self.scratch.recycle(out);
     }
 
     /// 记录本地阀门状态，并在上升沿打开流水线时兜底记一个"开始说话"起点。
     ///
     /// 只有 Speak 的本地门控需要这个兜底（它有一个会开合的真阀门）；Listen 的
     /// 常开门（`GateConfig::level(0.0)`）时刻都是 active，靠服务端 VAD 报
-    /// SpeechStarted/Stopped 来定轮次。用 `plan.hot_update` 区分两者：那正是
-    /// Speak 为真、Listen 为假的既有标志。
+    /// SpeechStarted/Stopped 来定轮次。
+    ///
+    /// 判据取 `plan.hot_update`，**这一格是借来的**：清单里没有"这条腿要不要靠
+    /// 本地门驱动轮次"这一项，`Op` 的四种里也没有。它今天成立，是因为那正好是
+    /// Speak 为真、Listen 为假的既有标志——而 Listen 的门恒开，拿掉这个判断，
+    /// Listen 会在第一块就 `begin_turn`，行为会变。归属见 S4-B 稿 §1.3 的 D 段与
+    /// §9.1 的 RK-5：S4-C 若让 Listen 也用真门，必须回来重审这一格。
     fn track_local_gate(&mut self, status: crate::gate::GateStatus) {
         let rose = status.active && !self.last_gate_active;
         self.last_gate_active = status.active;
@@ -1395,17 +1416,14 @@ impl Worker {
                 if !self.accept_seq(seq) {
                     return;
                 }
-                if let Some(gate) = self.gate.as_mut() {
-                    gate.set_external_active(active);
-                }
+                // 链里没有门就是静默忽略。
+                self.chain.set_gate_active(active);
             }
             Note::GateConfig { seq, config } => {
                 if !self.accept_seq(seq) {
                     return;
                 }
-                if let Some(gate) = self.gate.as_mut() {
-                    gate.set_config(config);
-                }
+                self.chain.set_gate_config(config);
                 self.config.gate = config;
                 // 换了门就得重新报一次状态，不然节流会把新门的第一拍吞掉。
                 self.last_gate_state = None;
@@ -1565,9 +1583,8 @@ impl Worker {
         self.transport = None;
         close_sink(&mut self.sink);
         close_sink(&mut self.monitor_sink);
-        self.gate = None;
-        self.denoiser = None;
-        self.resampler = None;
+        // 链连同它的阀、降噪器、重采样器一起丢。
+        self.chain = Chain::empty();
     }
 }
 
@@ -2302,6 +2319,46 @@ pub(crate) mod tests {
 
         rig.feed(vec![0.5; 1764]);
         assert_eq!(rig.dsp.denoise_calls.load(Ordering::SeqCst), 0);
+        rig.engine.shutdown();
+    }
+
+    /// 降噪降级有**两支**，报得不一样：采集率对不上只记一句日志，工厂起不来
+    /// 还要通知用户一句。差分台只抓 `Event` 流、抓不到 `tracing`
+    /// （S4-B 稿 §9.3 的 O-4 / §11 M1），所以这条单测是那句通知在
+    /// [`Worker::report_denoise_degrade`] 里的落点证明：两支都走到、且不串味。
+    #[test]
+    fn the_two_denoise_degrades_report_differently() {
+        const DENOISE_DOWN: &str = "降噪启动失败，本次已关闭";
+        let noticed = |rig: &Rig| {
+            rig.events().iter().any(
+                |event| matches!(event, Event::Notice { notice } if notice.text == DENOISE_DOWN),
+            )
+        };
+
+        // 支路一：采集率 44.1 kHz ≠ `DENOISE_RATE`（`DenoiseSkip::Rate`）。
+        let rig = Rig::with_rate(44_100);
+        let mut config = speak_config();
+        config.gate_active = true;
+        rig.start(config);
+        rig.feed(vec![0.5; 1764]);
+        rig.wait_until(|| rig.wire.audio_frames() >= 1);
+        assert_eq!(rig.dsp.denoise_calls.load(Ordering::SeqCst), 0);
+        assert!(
+            !noticed(&rig),
+            "采集率对不上只是这台机器的常态，不该拿它去打扰用户"
+        );
+        rig.engine.shutdown();
+
+        // 支路二：48 kHz 但降噪器造不出来（`DenoiseSkip::Factory`）。
+        let rig = Rig::new();
+        rig.dsp.fail.store(true, Ordering::SeqCst);
+        let mut config = speak_config();
+        config.gate_active = true;
+        rig.start(config);
+        rig.feed(loud_block());
+        rig.wait_until(|| rig.wire.audio_frames() >= 1);
+        assert_eq!(rig.dsp.denoise_calls.load(Ordering::SeqCst), 0);
+        assert!(noticed(&rig), "降噪器起不来要告诉用户这一轮没开降噪");
         rig.engine.shutdown();
     }
 

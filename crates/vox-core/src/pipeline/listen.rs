@@ -139,7 +139,10 @@ mod tests {
             }
             other => panic!("听人说话该抓环回，结果是 {other:?}"),
         }
-        assert!(!plan.denoise, "数字源本来就干净，不降噪");
+        assert!(
+            !plan.chain_ops.iter().any(|op| matches!(op, Op::Denoise)),
+            "数字源本来就干净，清单里不该有降噪这一节"
+        );
         assert!(!plan.hot_update, "听的方向永远译成中文，不许热改");
     }
 
