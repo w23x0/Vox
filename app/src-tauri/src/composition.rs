@@ -3,8 +3,8 @@
 //! 打**两份清单 + 当前有效能力位**的 JSON 到 stdout 就退：不建窗口、不注册命令、不起线程、
 //! 不改任何状态、**不建配置目录**（只读：读设置走 [`vox_host::Persist::new`]，那条路
 //! 不碰盘）。无人值守时它是"这台机器现在会怎么装"的唯一可读出口（无屏档是同一条命令，
-//! 见 `crates/vox-headless/src/status.rs::composition_json`——两边同形、同一份组装
-//! `vox_mcp::endpoints::document`：形状逐字相同；取值随档位与宿主事实本就不同）。
+//! 见 `crates/vox-headless/src/status.rs::composition_json`——两边**转发的是同一个**
+//! `vox_host::report::composition_json`，形状逐字相同是构造上的；取值随档位与宿主事实本就不同）。
 //!
 //! **为什么排在 Tauri 之前**（跟 `platform::pre_main()` 的 `--vox-restore-defaults` 同一条理由）：
 //! `.setup()` 已经太晚——单实例插件是第一个注册的，第二份进程会被它当成"重复启动"、
@@ -24,7 +24,6 @@
 
 use tauri::Manager;
 use vox_core::runtime::Runtime;
-use vox_mcp::Ledger;
 
 use crate::platform;
 
@@ -75,7 +74,8 @@ fn print() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// 这份文档的**形状**（键名 / 嵌套 / 键顺序）与无屏档的 `status::composition_json` 逐字相同；
+/// 这份文档的**形状**（键名 / 嵌套 / 键顺序）与无屏档的 `status::composition_json` 逐字相同
+/// （S4-A 之后两边转发的是同一个 `vox_host::report::composition_json`，是同一份代码）；
 /// **取值随档位与宿主事实本就不同**（位上限、`host`、设备名都该不一样——同形说的是骨架，不是内容）：
 ///
 /// ```text
@@ -87,15 +87,14 @@ fn print() -> Result<(), Box<dyn std::error::Error>> {
 /// }
 /// ```
 ///
-/// 组装**只有一条路**：`vox_mcp::endpoints::document`——它内部走 `manifest`（**与 S1 的
-/// `describe_endpoint` 同一个函数**，所以这份打印与 Agent 面看到的是同一份清单）与 `wire`
-/// （文本往返一趟，与报给客户端的线上形态逐字同形；`to_value` 会把 `f32` 摊成 `f64`）。
-/// 两个外壳共用它，各自只留一句日志（vox-mcp 的依赖表里没有 tracing，所以"往哪记"留在入口）。
+/// 组装**只有一条路**：`vox_host::report::composition_json` —— 它内部走
+/// `vox_mcp::endpoints::document`（`manifest`（**与 S1 的 `describe_endpoint` 同一个函数**，
+/// 所以这份打印与 Agent 面看到的是同一份清单）与 `wire`（文本往返一趟，与报给客户端的线上
+/// 形态逐字同形；`to_value` 会把 `f32` 摊成 `f64`））。
+///
+/// 两个外壳打的是**同一个函数**（S4-A §9 M3：`report.rs` 进共享层），各自只留一句转发。
 fn document(runtime: &Runtime) -> Result<String, serde_json::Error> {
-    let ledger: &dyn Ledger = runtime;
-    vox_mcp::endpoints::document(ledger, &mut |endpoint, error| {
-        tracing::warn!(endpoint = %endpoint.as_str(), reason = %error.message, "这条腿现在派不出清单");
-    })
+    vox_host::report::composition_json(runtime)
 }
 
 #[cfg(test)]

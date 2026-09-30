@@ -101,9 +101,9 @@ pub struct SnapshotDto {
     /// **控制面现在的样子**：设置里要的那一档（`enabled` / `port`）与"真起了没有"。
     ///
     /// 界面**按这一格渲染**（起没起、起不来是为什么），不许拿 `settings.control` 自己推
-    /// "应该"在跑——要什么是用户的事，起没起是事实（`mcp::Status` 的注释里有同一条）。
-    /// 形状就是 `mcp::Status`，与 `capabilities` 一样原样透传：**没有第二份状态**。
-    pub control: crate::mcp::Status,
+    /// "应该"在跑——要什么是用户的事，起没起是事实（`vox_host::Status` 的注释里有同一条）。
+    /// 形状就是 `vox_host::Status`，与 `capabilities` 一样原样透传：**没有第二份状态**。
+    pub control: vox_host::Status,
 }
 
 pub type ProviderKeyStatusDto = BTreeMap<String, bool>;
@@ -264,7 +264,7 @@ mod tests {
                 vox_core::settings::ModelProvider::Aliyun,
             ),
             // 控制面的观察值：默认档 = 开关关着、没监听、没失败过。
-            control: crate::mcp::Status {
+            control: vox_host::Status {
                 enabled: false,
                 port: 0,
                 running: false,
@@ -492,7 +492,7 @@ mod tests {
         let mut dto = make_dto(false, None);
         dto.settings.control.enabled = true;
         dto.settings.control.port = 47123;
-        dto.control = crate::mcp::Status {
+        dto.control = vox_host::Status {
             enabled: true,
             port: 47123,
             running: true,

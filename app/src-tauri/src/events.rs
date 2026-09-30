@@ -15,11 +15,28 @@ use vox_core::capability::{CapabilityStatus, UnavailableReason};
 use vox_core::event::Event;
 use vox_core::runtime::Listener;
 use vox_core::settings::SubtitleSettings;
+use vox_host::EventSink;
 
 use crate::state::AppState;
 
 /// 前端订阅的唯一事件通道，和 `app/ui/src/api.ts` 里的 `EVENT_CHANNEL` 一致。
 pub(crate) const EVENT_CHANNEL: &str = "vox://event";
+
+/// 事件往**前端通道**出的那一个出口：`vox_host::events::EventSink` 的桌面实现。
+///
+/// 共享层只出 trait，不碰 Tauri——所以这一条通道的落地写在这里，**编译期就保证
+/// `vox-host` 里没有一个 Tauri 类型**。同一个监听器里的其余分派（落盘、托盘、OSC…）
+/// 仍留在 [`wire`]，这里只负责"把这一条事件送出去"那一句。
+struct FrontendSink(tauri::AppHandle);
+
+impl vox_host::EventSink for FrontendSink {
+    fn emit(&self, event: &Event) {
+        // v2 起前后端设置字段名一致，所有事件都能直接走克隆快路径。
+        if let Err(e) = self.0.emit(EVENT_CHANNEL, event.clone()) {
+            tracing::warn!("转发事件到前端失败：{e}");
+        }
+    }
+}
 
 /// 装配入口。由 `lib.rs` 的 `assemble` 调一次。
 ///
@@ -49,6 +66,9 @@ pub fn wire(state: &Arc<AppState>, app: tauri::AppHandle) {
     // `AppState` 已经没了（进程在退出），直接 return。
     let weak = Arc::downgrade(state);
     let handle = app.clone();
+    // 转发给前端那一半抽成了 `EventSink` 的实现（`FrontendSink`）；它跟下面那个复合监听器
+    // 仍是**同一个闭包里的第一句**——"先发前端、再落盘/托盘/OSC"这个顺序一个字都没动。
+    let sink = FrontendSink(app.clone());
 
     // 记住上一次的字幕样式设置，只在真的变了时才调 restyle。
     // 用 Mutex 包一份 SubtitleSettings 的克隆。
@@ -61,10 +81,7 @@ pub fn wire(state: &Arc<AppState>, app: tauri::AppHandle) {
 
     let listener: Listener = Arc::new(move |event: &Event| {
         // ── 转发给前端 ──────────────────────────────────────────────────
-        // v2 起前后端设置字段名一致，所有事件都能直接走克隆快路径。
-        if let Err(e) = handle.emit(EVENT_CHANNEL, event.clone()) {
-            tracing::warn!("转发事件到前端失败：{e}");
-        }
+        sink.emit(event);
 
         // ── 拿住 AppState ───────────────────────────────────────────────
         // upgrade 失败 = AppState 已析构（进程退出中），后面的活都没意义了。

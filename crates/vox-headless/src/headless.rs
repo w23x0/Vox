@@ -36,7 +36,7 @@ use vox_mcp::transport::http::ServerHandle;
 
 use crate::cli::{self, Mode, Start};
 use crate::config;
-use crate::{mcp, platform, status};
+use crate::{platform, status};
 use vox_host::core::PersistMode;
 use vox_host::paths::{self, Paths};
 use vox_host::secrets::SecretBackend;
@@ -178,7 +178,7 @@ impl Assembly {
         //    排在 `load_usage` 之后（否则刚读出来的那份会被当成"变了"再写一遍）。
         persist.attach_to(&runtime);
 
-        let switch = mcp::Switch::from_settings(&runtime.settings());
+        let switch = vox_host::Switch::from_settings(&runtime.settings());
         tracing::info!(
             enabled = switch.enabled,
             port = switch.port,
@@ -267,8 +267,8 @@ impl Daemon {
     /// 按开关起控制面。**只在这里起**：事实已经注入完了（[`Assembly::assemble`] 的第 5 步），
     /// 早开门会让先连上来的客户端拿到一份建立在默认事实上的清单——那是"广告了做不到的事"。
     pub fn control_plane(&self) -> std::io::Result<Option<ServerHandle>> {
-        let switch = mcp::Switch::from_settings(&self.runtime.settings());
-        mcp::start(&self.runtime, &self.paths.dir, switch)
+        let switch = vox_host::Switch::from_settings(&self.runtime.settings());
+        vox_host::control::start(&self.runtime, &self.paths.dir, switch)
     }
 
     /// 按 `--start` 开腿。无屏设备没有界面可按，开腿这件事只能由启动参数（= unit）或

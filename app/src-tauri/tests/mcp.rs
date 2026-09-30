@@ -35,7 +35,11 @@ use vox_core::usage::Stamp;
 use vox_mcp::mcp::meta;
 use vox_mcp::transport::http::PATH;
 
-use vox_lib::mcp::{self, Switch};
+// S4-A：控制面胶水搬进共享宿主层（`docs/plans/S4-A-HOST-LAYER.md` §W4）。**下面 7 条用例的
+// 函数体一个字节都没动**——`mcp::start` / `mcp::STATE_FILE` / `mcp::ControlPlane` 都还对得上，
+// 靠的就是这个别名。`vox_lib` 里**不留** `pub use vox_host::control` 之类的转发（不留 shim）。
+use vox_host::control as mcp;
+use vox_host::control::Switch;
 
 /// 单调毫秒钟：控制面拿它算 compose token 的 TTL，用例不睡觉所以恒 0 也无所谓。
 #[derive(Default)]

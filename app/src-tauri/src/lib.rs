@@ -29,7 +29,6 @@ mod composition;
 mod devices;
 mod dto;
 mod events;
-pub mod mcp;
 mod net;
 mod overlay;
 mod platform;
@@ -212,8 +211,11 @@ fn assemble(app: &tauri::AppHandle) -> Result<Arc<AppState>, Box<dyn std::error:
 
     let registry = platform::registry();
     // 控制面（Agent 面）的 reconciler。**这里只是构造**：不监听、不起服务、也不挂监听器——
-    // 开门在第 14 步（事实齐了才开，见 `mcp.rs` 的头注释）。
-    let control = Arc::new(mcp::ControlPlane::new(runtime.clone(), config_dir.clone()));
+    // 开门在第 14 步（事实齐了才开，见 `vox_host::control` 的头注释）。
+    let control = Arc::new(vox_host::ControlPlane::new(
+        runtime.clone(),
+        config_dir.clone(),
+    ));
     let state = Arc::new(AppState::new(
         runtime.clone(),
         Arc::clone(&engine),
@@ -294,13 +296,13 @@ fn assemble(app: &tauri::AppHandle) -> Result<Arc<AppState>, Box<dyn std::error:
     //     建立在默认事实上的清单（"广告了做不到的事"）。开关关着就什么都不做：不监听、
     //     不写握手文件。
     //
-    //     两步都要：`install()` 挂上监听器（此后设置页拨开关就是热切换，见 `mcp.rs`），
+    //     两步都要：`install()` 挂上监听器（此后设置页拨开关就是热切换，见 `vox_host::control`），
     //     `reconcile()` 按**现在**这一档把服务起起来。`install()` 排在 `set_host_facts()`
     //     之后不是巧合——监听器一挂上，任何一次设置变更都会走到起停。
     state.control.install();
     state
         .control
-        .reconcile(mcp::Switch::from_settings(&runtime.settings()));
+        .reconcile(vox_host::Switch::from_settings(&runtime.settings()));
 
     Ok(state)
 }

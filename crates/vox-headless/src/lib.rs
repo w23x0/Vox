@@ -9,14 +9,14 @@
 //! headless      装配（Assembly）与跑起来的那一份（Daemon）——装配层本体
 //! config        这一档的密钥文件名（目录回落与读设置在 `vox_host::paths`）
 //! status        状态出口：能力位报告 JSON + 清单 JSON（S0 §4.3-A）+ 芯事件 → 结构化日志
-//! mcp           控制面胶水：`Settings.control` 开关 + 握手文件 + `LedgerBackend`
 //! platform      `cfg(target_os)` 分流：LinuxHeadless 的档位、事实、音频三件套
 //! sys           日志（跟 OS 打交道的小件）
 //! ```
 //!
-//! 落盘（`Persist`）、配置目录三级回落、读 `settings.json` / `usage.json`、三个密钥后端与
-//! `LocalClock` 全都在共享宿主层 `vox_host`（S4-A），与桌面档同一份——本 crate 只留
-//! "这一档挑哪个"与"这一档的文件名"。
+//! 落盘（`Persist`）、配置目录三级回落、读 `settings.json` / `usage.json`、三个密钥后端、
+//! `LocalClock`、控制面胶水（`vox_host::control`）、事件出口（`vox_host::events::LogSink`）
+//! 与两个报告出口（`vox_host::report`）全都在共享宿主层 `vox_host`（S4-A），与桌面档同一份
+//! ——本 crate 只留"这一档挑哪个"与"这一档的文件名"。
 //!
 //! **跟桌面档的三处刻意差别**（都是有理由的，不是"还没写"）：
 //!
@@ -33,7 +33,6 @@
 pub mod cli;
 pub mod config;
 pub mod headless;
-pub mod mcp;
 pub mod platform;
 pub mod status;
 pub mod sys;

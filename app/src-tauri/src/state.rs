@@ -40,7 +40,7 @@ pub struct AppState {
     ///
     /// 它是**唯一**能被外部进程用来改账本的东西，所以 `lib.rs::shutdown` 必须**在
     /// `persist.flush()` 之前**把它停掉（`ServerHandle::shutdown` 会等当前那次调用跑完）。
-    pub control: Arc<crate::mcp::ControlPlane>,
+    pub control: Arc<vox_host::ControlPlane>,
 }
 
 impl AppState {
@@ -49,7 +49,7 @@ impl AppState {
         engine: Arc<PipelineEngine>,
         registry: Arc<dyn DeviceRegistry>,
         persist: Arc<vox_host::Persist>,
-        control: Arc<crate::mcp::ControlPlane>,
+        control: Arc<vox_host::ControlPlane>,
     ) -> Self {
         Self {
             runtime,

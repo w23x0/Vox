@@ -9,25 +9,26 @@
 //! 2. **结构化日志**：[`wire`] —— 把芯的事件翻成 tracing（字段是结构化的，systemd 收进
 //!    journal）。这是**人读**的那一面：流水线阶段、连不上云端、还差个密钥，都在这里。
 //!
-//! 两条纪律：
+//! S4-A 之后这三个出口的**实现**都在共享宿主层 `vox_host`（`report::{capabilities_json,
+//! composition_json}` 与 `events::LogSink`），桌面档走的是**同一份**——本文件只剩"这一档
+//! 在哪儿调用它"。留下的是**入口的调用点**（`--print-capabilities` / `--dry-run` /
+//! `--print-composition` 打的就是这三个），不是第二份实现。
+//!
+//! 两条纪律跟着实现搬进了 `vox_host::events`（那里是它们的家，头注释里逐条写着）：
 //!
 //! - **字幕文本不进日志**。`SubtitleDelta` / `SourceDetected` 这一类的正文是**用户说的话**，
 //!   不该在磁盘上再留一份（桌面档 `sys/log.rs` 头注释同一条理由；journal 是磁盘）。
-//!   字幕的正经出口是 S1 的资源面（`resources` + 订阅），不是日志——所以这里只记
-//!   "来了一段字幕"这件事本身。
 //! - **高频事件不记**：`GateStatus`（音频块级）与 `LatencyChanged` 每 500 ms 一次，
 //!   进日志只会把有用的那些冲掉。
 
-use std::sync::Arc;
-
-use vox_core::event::{Event, Notice, Severity};
-use vox_core::runtime::{Listener, Runtime};
-use vox_core::subtitle::Track;
-use vox_mcp::Ledger;
+use vox_core::runtime::Runtime;
 
 /// 能力位报告的 JSON（缩进过，方便人直接看；`jq -c` 一行照样能用）。
+///
+/// 形状（键名与嵌套）见 `vox_host::report::capabilities_json` 的定义；桌面档打的是同一份
+/// （`vox_host` 共享层），所以"这台机器能做什么"只有一处组装。
 pub fn capabilities_json(runtime: &Runtime) -> Result<String, serde_json::Error> {
-    serde_json::to_string_pretty(&runtime.capabilities())
+    vox_host::report::capabilities_json(runtime)
 }
 
 /// 清单的 JSON：**两条腿 + 当前有效的能力位**（S0 §4.3-A，`--print-composition` 打的就是它）。
@@ -43,96 +44,33 @@ pub fn capabilities_json(runtime: &Runtime) -> Result<String, serde_json::Error>
 /// }
 /// ```
 ///
-/// **两条腿都打**：位为假的格子在这一步就已经被芯关掉了（`Composition::of` 的开门/关门），
-/// 所以无屏档打出来的"听人说话"里 `in` 是空的（`program_tap` 在这一档的上限之外）——
-/// 那正是"位是事实"的证据，不是打错了。清单**派不出来**（比如还没选要抓的程序）时那个键是
-/// `null`、理由进 `errors`：打一份看起来像清单的假清单比打 `null` 糟得多。
+/// 实现（组装、拼 `errors`、缩进 JSON）全在 `vox_host::report::composition_json`——**桌面档
+/// （`app/src-tauri/src/composition.rs`）转发的是同一个函数**。两个外壳各留一份组装的坏处
+/// 正在于同一个形状要有两处人守着；`vox-host` 收掉它之后只剩两处一行转发。
 ///
-/// 派生走 `vox_mcp::endpoints::manifest`——**与 S1 的 `describe_endpoint` 同一个函数**，
-/// 所以这份打印与 Agent 面看到的是同一份清单（S0 §4.3-A：它同时是 describe 出口的原型）。
-/// 组装（遍历两条腿、拼 `errors`、缩进 JSON）走 `vox_mcp::endpoints::document`——桌面档
-/// （`app/src-tauri/src/composition.rs`）用的是**同一个函数**：两边打出来的**形状**（键名、嵌套、
-/// 键顺序）逐字相同，**取值随档位与宿主事实本就不同**（位上限、`host`、设备名都该不一样——
-/// 同形说的是骨架，不是内容；把取值也读成"逐字相同"就会把两档该有的差别当成 bug）。两个外壳
-/// 各留一份组装的坏处正在于同一个形状要有两处人守着。清单的线上形态也由它走
-/// `vox_mcp::endpoints::wire`（文本往返一趟），与 S1 报给客户端的那一份逐字同形。
-///
-/// 失败只有一种出口：`serde_json::Error`（清单本身派不出来是**领域失败**，由 `document`
+/// 失败只有一种出口：`serde_json::Error`（清单本身派不出来是**领域失败**，由共享层
 /// 写进 `errors`，不是这里的错误）。
 pub fn composition_json(runtime: &Runtime) -> Result<String, serde_json::Error> {
-    let ledger: &dyn Ledger = runtime;
-    vox_mcp::endpoints::document(ledger, &mut |endpoint, error| {
-        tracing::warn!(endpoint = %endpoint.as_str(), reason = %error.message, "这条腿现在派不出清单");
-    })
+    vox_host::report::composition_json(runtime)
 }
 
 /// 把芯的事件接到日志上。装在流水线起来**之前**（不然错过启动那几步）。
+///
+/// 实现是 `vox_host::events::LogSink`——共享层里那一个结构化日志出口（桌面档那一半是
+/// 前端通道 `FrontendSink`，不是它）。两条纪律（字幕正文不进日志、高频事件不记）在
+/// `vox_host::events` 的头注释里。
 pub fn wire(runtime: &Runtime) {
-    let listener: Listener = Arc::new(log_event);
-    runtime.add_listener(listener);
-}
-
-/// 一个事件 → 一行日志（或不记）。
-fn log_event(event: &Event) {
-    match event {
-        Event::PipelineState { pipeline, state } => {
-            tracing::info!(
-                pipeline = pipeline.label(),
-                state = state.label(),
-                "流水线阶段变了"
-            );
-        }
-        Event::Notice { notice } => log_notice(notice),
-        Event::MicActive { active } => {
-            tracing::info!(active, "麦克风开关变了（无屏档没有热键，只有控制面能改它）");
-        }
-        Event::DevicesChanged => tracing::debug!("设备列表变了"),
-        Event::SettingsChanged { .. } => tracing::debug!("设置变了"),
-        Event::UsageChanged { .. } => tracing::debug!("用量涨了"),
-        // 下面三个带**说话内容**：只记"来了一段字幕"这个事实，正文一行都不进日志。
-        Event::SubtitleDelta { track, done, .. } => {
-            tracing::debug!(
-                track = track_name(*track),
-                done,
-                "来了一段字幕（正文不进日志）"
-            );
-        }
-        Event::SourceDetected { .. } => {
-            tracing::debug!("识别到源语言（内容不进日志）");
-        }
-        Event::SubtitleCleared { track } => {
-            tracing::debug!(track = track_name(*track), "字幕轨清了");
-        }
-        // 高频：闸门状态每个音频块、延迟每 500 ms 一次，进日志只会把有用的冲掉。
-        Event::GateStatus { .. } | Event::LatencyChanged { .. } => {}
-    }
-}
-
-fn log_notice(notice: &Notice) {
-    // 提示是给人看的中文句子（芯里不存文案，这些是外壳/芯自己拼的行动指引）。
-    let pipeline = notice
-        .pipeline
-        .map(|pipeline| pipeline.label())
-        .unwrap_or("-");
-    match notice.severity {
-        Severity::Error => tracing::error!(pipeline, "{}", notice.text),
-        Severity::Warning => tracing::warn!(pipeline, "{}", notice.text),
-        Severity::Info => tracing::info!(pipeline, "{}", notice.text),
-    }
-}
-
-fn track_name(track: Track) -> &'static str {
-    match track {
-        Track::Speak => "speak",
-        Track::Listen => "listen",
-    }
+    vox_host::LogSink::attach(runtime);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc as StdArc, Mutex as StdMutex};
-    use vox_core::event::Pipeline as PipelineEvent;
+    // S4-A：字幕正文不进日志那条用例（`subtitle_text_never_reaches_the_log`）连同它那个
+    // 给 tracing 用的 `Sink` 落点一起搬进了 `vox_host::events`（实现搬了，实现的契约就得
+    // 跟着搬）。余下 4 条断言的是**无屏档的事实**（档位、两条腿的形状、`wire` 挂得上），
+    // 留在这里，函数体一个字没动。
+    use vox_core::event::Notice;
     use vox_core::usage::UsageLedger;
     use vox_core::Settings;
 
@@ -221,48 +159,6 @@ mod tests {
             .collect()
     }
 
-    /// 日志里**不许出现说话内容**——这是本文件最要紧的一条契约，用真的 subscriber 抓一遍。
-    #[test]
-    fn subtitle_text_never_reaches_the_log() {
-        const SECRET: &str = "这句话不该出现在日志里";
-        let log = std::sync::Arc::new(StdMutex::new(Vec::<u8>::new()));
-
-        // 抓一遍两条事件：一条带正文（字幕）、一条带提示（给用户看的中文句子）。
-        let captured = {
-            let sink = StdArc::clone(&log);
-            let subscriber = tracing_subscriber::fmt()
-                .with_writer(move || Sink(StdArc::clone(&sink)))
-                .with_ansi(false)
-                // 缺省的 `fmt()` 只到 INFO，而"来了一段字幕"是 debug 级
-                // （出厂缺省过滤器也不打它，理由见模块头：高频/含文本的那一类）。
-                .with_max_level(tracing::Level::DEBUG)
-                .finish();
-            tracing::subscriber::with_default(subscriber, || {
-                log_event(&Event::SubtitleDelta {
-                    track: Track::Speak,
-                    text: SECRET.to_string(),
-                    done: true,
-                    replace: false,
-                    confirmed: Some(SECRET.to_string()),
-                });
-                log_event(&Event::Notice {
-                    notice: Notice::error("请先配置 API 密钥").on(PipelineEvent::Speak),
-                });
-            });
-            String::from_utf8(log.lock().expect("日志锁").clone()).expect("UTF-8")
-        };
-
-        assert!(
-            captured.contains("来了一段字幕"),
-            "该记的事实要记：{captured}"
-        );
-        assert!(
-            captured.contains("请先配置 API 密钥"),
-            "提示要进日志：{captured}"
-        );
-        assert!(!captured.contains(SECRET), "说话内容进了日志：{captured}");
-    }
-
     /// `wire` 把监听器挂上了：事件会走到日志（不发事件时它什么都不做）。
     #[test]
     fn wiring_is_idempotent() {
@@ -281,19 +177,5 @@ mod tests {
         );
         let _ = runtime.snapshot();
         let _: UsageLedger = runtime.usage();
-    }
-
-    /// 给 tracing 用的落点：往一个共享 `Vec<u8>` 写。
-    struct Sink(StdArc<StdMutex<Vec<u8>>>);
-
-    impl std::io::Write for Sink {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().expect("日志锁").extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
     }
 }
