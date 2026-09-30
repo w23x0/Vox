@@ -1,0 +1,31 @@
+# meta
+meta scenario speak_48k_text_only
+meta pipeline speak
+meta boot direct
+meta capture_rate 48000
+meta block_samples 1920
+meta denoise on
+meta gate manual
+meta gate_active_at_boot true
+meta translate true
+meta voice none
+meta output_device CABLE_Input
+# wire
+wire 0 {"event_id":"event_0_1","session":{"input_audio_format":"pcm","modalities":["text"],"output_audio_format":"pcm","translation":{"language":"ja"}},"type":"session.update"}
+wire 1 audio_append 0 640 48003018d9209725
+# play
+play open 0 none
+play pushed 0 cbf29ce484222325
+play flush 0
+play close 0
+play after_shutdown open 0 flush 0 close 0
+# dsp
+dsp denoise_calls 1
+dsp denoise_resets 0
+# capture
+capture open microphone default
+capture stop 1
+# event
+# wire_life
+wire_life connect 1
+wire_life close_transport 1

@@ -1,0 +1,42 @@
+# meta
+meta scenario listen_48k_always_open
+meta pipeline listen
+meta boot ledger
+meta capture_rate 48000
+meta block_samples 1920
+meta denoise off
+meta gate level_0.0
+meta gate_active_at_boot true
+meta translate true
+meta output_device default
+# wire
+wire 0 {"event_id":"event_0_1","session":{"input_audio_format":"pcm","modalities":["text","audio"],"output_audio_format":"pcm","translation":{"language":"zh"},"voice":"Tina"},"type":"session.update"}
+wire 1 audio_append 0 640 936b78f74a8f9f25
+wire 2 audio_append 1 640 6f8eeea9d7eddb25
+# play
+play open 1 default
+play pushed 2 54acf2652686daf5
+play flush 0
+play close 0
+play after_shutdown open 1 flush 1 close 1
+# dsp
+dsp denoise_calls 0
+dsp denoise_resets 0
+# capture
+capture open loopback Discord.exe tree=true
+capture stop 1
+# event
+event {"kind":"pipeline_state","pipeline":"listen","state":"starting"}
+event {"kind":"pipeline_state","pipeline":"listen","state":"ready"}
+event {"kind":"gate_status","pipeline":"listen","status":{"kind":"level","state":"always","rms":0.0009354103,"active":true,"ended":false}}
+event {"kind":"pipeline_state","pipeline":"listen","state":"active"}
+event {"kind":"subtitle_delta","track":"listen","text":"こんに","done":false,"replace":false,"confirmed":"こんに"}
+event {"kind":"subtitle_delta","track":"listen","text":"ちは","done":false,"replace":false,"confirmed":"こんにちは"}
+event {"kind":"subtitle_delta","track":"listen","text":"、","done":false,"replace":false,"confirmed":"こんにちは、"}
+event {"kind":"subtitle_delta","track":"listen","text":"こんにちは。","done":true,"replace":true,"confirmed":"こんにちは。"}
+event {"kind":"subtitle_delta","track":"listen","text":"你好","done":false,"replace":false,"confirmed":"你好"}
+event {"kind":"usage_changed","usage":{"qwen3.5-livetranslate-flash-realtime":{"input_tokens":30,"output_tokens":12,"total_tokens":42,"turns":1,"daily":{"input_tokens":30,"output_tokens":12,"total_tokens":42,"turns":1},"daily_date":"2026-08-05","monthly":{"input_tokens":30,"output_tokens":12,"total_tokens":42,"turns":1},"monthly_month":"2026-08","updated_at":0}}}
+event latency_changed 5
+# wire_life
+wire_life connect 1
+wire_life close_transport 1

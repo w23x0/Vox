@@ -1,0 +1,39 @@
+# meta
+meta scenario speak_48k_translation_audio_toggle
+meta pipeline speak
+meta boot ledger
+meta capture_rate 48000
+meta block_samples 1920
+meta denoise on
+meta gate manual
+meta gate_active_at_boot true
+meta translate true
+meta output_device CABLE_Input
+# wire
+wire 0 {"event_id":"event_0_1","session":{"input_audio_format":"pcm","modalities":["text","audio"],"output_audio_format":"pcm","translation":{"language":"ja"},"voice":"Tina"},"type":"session.update"}
+wire 1 {"event_id":"event_0_2","session":{"input_audio_format":"pcm","modalities":["text"],"output_audio_format":"pcm","translation":{"language":"ja"}},"type":"session.update"}
+wire 2 audio_append 0 640 936b78f74a8f9f25
+wire 3 audio_append 1 640 6f8eeea9d7eddb25
+wire 4 {"event_id":"event_0_5","session":{"input_audio_format":"pcm","modalities":["text","audio"],"output_audio_format":"pcm","translation":{"language":"ja"},"voice":"Tina"},"type":"session.update"}
+# play
+play open 3 default
+play pushed 6 9fe77f10cf0b5ea5
+play flush 1
+play close 1
+play after_shutdown open 3 flush 3 close 3
+# dsp
+dsp denoise_calls 2
+dsp denoise_resets 0
+# capture
+capture open microphone default
+capture stop 1
+# event
+event {"kind":"mic_active","active":true}
+event {"kind":"pipeline_state","pipeline":"speak","state":"starting"}
+event {"kind":"pipeline_state","pipeline":"speak","state":"ready"}
+event {"kind":"gate_status","pipeline":"speak","status":{"kind":"manual","state":"manual","rms":0.0009354103,"active":true,"ended":false}}
+event {"kind":"pipeline_state","pipeline":"speak","state":"active"}
+event latency_changed 2
+# wire_life
+wire_life connect 1
+wire_life close_transport 1

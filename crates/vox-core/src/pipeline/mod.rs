@@ -18,6 +18,12 @@
 //! - 没连上时来的音频**立刻丢**，绝不排队。
 
 mod chain;
+// 差分台（S4-B B0）：15 组配置的事件轨迹金样。跑在**重构前**的代码上，
+// B2 之后必须一个字都不用改。它复用下面 `mod tests` 里的那批假件，所以那一批
+// 的可见性一律放宽到 `pub(crate)`（只放宽可见性，不改任何一行函数体或断言）。
+#[cfg(test)]
+pub(crate) mod golden;
+
 pub(crate) mod listen;
 pub(crate) mod speak;
 
@@ -476,7 +482,7 @@ impl Inbox {
 
     /// 处理了多少块、丢了多少块。测试拿它当"这一拍走完了"的信号。
     #[cfg(test)]
-    fn counters(&self) -> (u64, u64) {
+    pub(crate) fn counters(&self) -> (u64, u64) {
         let state = self.state.lock();
         (state.processed, state.dropped)
     }
@@ -1586,12 +1592,12 @@ pub(crate) mod tests {
     }
 
     impl TestClock {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             Self {
                 ms: AtomicU64::new(0),
             }
         }
-        fn advance(&self, ms: u64) {
+        pub(crate) fn advance(&self, ms: u64) {
             self.ms.fetch_add(ms, Ordering::SeqCst);
         }
     }
@@ -1612,7 +1618,7 @@ pub(crate) mod tests {
 
     /// 内存密钥库，免得测试去碰真的凭据存储。
     #[derive(Default)]
-    struct MemoryStore {
+    pub(crate) struct MemoryStore {
         key: Mutex<Option<String>>,
     }
 
@@ -1637,14 +1643,14 @@ pub(crate) mod tests {
 
     /// 假 socket。收发都记账，收的消息由测试提前排好。
     #[derive(Default)]
-    struct Wire {
+    pub(crate) struct Wire {
         /// 发出去的帧。
-        sent: Mutex<Vec<String>>,
+        pub(crate) sent: Mutex<Vec<String>>,
         /// 每条连接一个收件箱。**不能共用**：同时跑两条流水线时，共用的队列
         /// 会被先轮到的那条抢走消息，测试就成了掷骰子。
         inboxes: Mutex<Vec<WireInbox>>,
-        connects: AtomicU64,
-        closes: AtomicU64,
+        pub(crate) connects: AtomicU64,
+        pub(crate) closes: AtomicU64,
         /// 前几次 connect 要失败（重连测试用）。
         fail_connects: AtomicU64,
         fatal_connect: AtomicBool,
@@ -1655,11 +1661,11 @@ pub(crate) mod tests {
     }
 
     impl Wire {
-        fn sent(&self) -> Vec<String> {
+        pub(crate) fn sent(&self) -> Vec<String> {
             self.sent.lock().clone()
         }
         /// 发出去的帧里有几条是音频。
-        fn audio_frames(&self) -> usize {
+        pub(crate) fn audio_frames(&self) -> usize {
             self.sent
                 .lock()
                 .iter()
@@ -1667,7 +1673,7 @@ pub(crate) mod tests {
                 .count()
         }
         /// 领一个新收件箱，顺手登记进账里。
-        fn open_inbox(&self) -> WireInbox {
+        pub(crate) fn open_inbox(&self) -> WireInbox {
             let inbox = Arc::new(Mutex::new(VecDeque::new()));
             self.inboxes.lock().push(Arc::clone(&inbox));
             inbox
@@ -1679,16 +1685,16 @@ pub(crate) mod tests {
             drop(inboxes);
             inbox.lock().push_back(Some(message));
         }
-        fn push_message(&self, json: impl Into<String>) {
+        pub(crate) fn push_message(&self, json: impl Into<String>) {
             self.deliver(Incoming::Text(json.into()));
         }
-        fn push_closed(&self) {
+        pub(crate) fn push_closed(&self) {
             self.deliver(Incoming::Closed("对端跑了".into()));
         }
     }
 
     /// `Wire` 的一个把手。工厂每次给一个新的把手：账是共享的，收件箱是自己的。
-    struct WireHandle(Arc<Wire>, WireInbox);
+    pub(crate) struct WireHandle(Arc<Wire>, WireInbox);
 
     impl Transport for WireHandle {
         fn connect(&mut self, _request: &crate::cloud::ConnectRequest) -> PortResult<()> {
@@ -1725,9 +1731,9 @@ pub(crate) mod tests {
 
     /// 假采集源。测试自己拿着回调往里灌音频。
     #[derive(Default)]
-    struct Mic {
+    pub(crate) struct Mic {
         started: Mutex<Option<CaptureTarget>>,
-        stops: AtomicU64,
+        pub(crate) stops: AtomicU64,
         rate: AtomicU64,
         feed: Mutex<Option<FeedFn>>,
         /// 开采集就失败（设备被占、没权限）。
@@ -1741,7 +1747,7 @@ pub(crate) mod tests {
             mic
         }
         /// 灌一块音频进流水线，模拟音频驱动线程的回调。
-        fn emit(&self, samples: Vec<f32>) {
+        pub(crate) fn emit(&self, samples: Vec<f32>) {
             let rate = self.rate.load(Ordering::SeqCst) as u32;
             if let Some(feed) = self.feed.lock().as_mut() {
                 feed(AudioChunk {
@@ -1751,12 +1757,12 @@ pub(crate) mod tests {
                 });
             }
         }
-        fn target(&self) -> Option<CaptureTarget> {
+        pub(crate) fn target(&self) -> Option<CaptureTarget> {
             self.started.lock().clone()
         }
     }
 
-    struct MicHandle(Arc<Mic>);
+    pub(crate) struct MicHandle(Arc<Mic>);
 
     impl CaptureSource for MicHandle {
         fn start(
@@ -1783,17 +1789,17 @@ pub(crate) mod tests {
 
     /// 假播放汇。记下放了多少样本、被 flush 过几次。
     #[derive(Default)]
-    struct Speaker {
-        opened: Mutex<Option<Option<String>>>,
-        opens: AtomicU64,
-        played: Mutex<Vec<f32>>,
-        flushes: AtomicU64,
-        closes: AtomicU64,
+    pub(crate) struct Speaker {
+        pub(crate) opened: Mutex<Option<Option<String>>>,
+        pub(crate) opens: AtomicU64,
+        pub(crate) played: Mutex<Vec<f32>>,
+        pub(crate) flushes: AtomicU64,
+        pub(crate) closes: AtomicU64,
         /// 渲染线程累计「真正取走」的交错样本数。测试拨它模拟渲染前进。
         rendered: AtomicU64,
     }
 
-    struct SpeakerHandle(Arc<Speaker>);
+    pub(crate) struct SpeakerHandle(Arc<Speaker>);
 
     impl PlaybackSink for SpeakerHandle {
         fn open(&mut self, device: Option<&str>, _source_rate: u32) -> PortResult<u32> {
@@ -1825,14 +1831,14 @@ pub(crate) mod tests {
 
     /// 假降噪：原样返回，只记调用次数。用来验"降噪在阀门前面"这个顺序。
     #[derive(Default)]
-    struct Dsp {
-        denoise_calls: AtomicU64,
-        resets: AtomicU64,
+    pub(crate) struct Dsp {
+        pub(crate) denoise_calls: AtomicU64,
+        pub(crate) resets: AtomicU64,
         /// 造降噪器就失败（模型文件没打包进去之类）。
-        fail: AtomicBool,
+        pub(crate) fail: AtomicBool,
     }
 
-    struct DenoiseHandle(Arc<Dsp>);
+    pub(crate) struct DenoiseHandle(Arc<Dsp>);
 
     impl Denoise for DenoiseHandle {
         fn process(&mut self, samples: &[f32]) -> Vec<f32> {
@@ -1845,7 +1851,7 @@ pub(crate) mod tests {
     }
 
     /// 假重采样：按整数比抽点，长度确实会变，好验调用方没假设长度守恒。
-    struct Decimate {
+    pub(crate) struct Decimate {
         step: usize,
     }
 
@@ -1913,15 +1919,15 @@ pub(crate) mod tests {
     // --- 测试台 ------------------------------------------------------------
 
     /// 一整套装好的引擎 + 能观察的假件。
-    struct Rig {
-        engine: Arc<PipelineEngine>,
-        runtime: Runtime,
-        clock: Arc<TestClock>,
-        wire: Arc<Wire>,
-        mic: Arc<Mic>,
-        speaker: Arc<Speaker>,
-        dsp: Arc<Dsp>,
-        events: Arc<Mutex<Vec<Event>>>,
+    pub(crate) struct Rig {
+        pub(crate) engine: Arc<PipelineEngine>,
+        pub(crate) runtime: Runtime,
+        pub(crate) clock: Arc<TestClock>,
+        pub(crate) wire: Arc<Wire>,
+        pub(crate) mic: Arc<Mic>,
+        pub(crate) speaker: Arc<Speaker>,
+        pub(crate) dsp: Arc<Dsp>,
+        pub(crate) events: Arc<Mutex<Vec<Event>>>,
     }
 
     impl Rig {
@@ -1929,11 +1935,11 @@ pub(crate) mod tests {
             Self::with_rate(48_000)
         }
 
-        fn with_rate(rate: u32) -> Self {
+        pub(crate) fn with_rate(rate: u32) -> Self {
             Self::build(rate)
         }
 
-        fn build(rate: u32) -> Self {
+        pub(crate) fn build(rate: u32) -> Self {
             let clock = Arc::new(TestClock::new());
             let runtime = Runtime::new(Settings::default(), Arc::clone(&clock) as Arc<dyn Clock>);
             // 外壳装配时会注入事实（`lib.rs` 第 13 步）；缺省那份是 fail-closed 的，
@@ -2008,7 +2014,7 @@ pub(crate) mod tests {
         ///
         /// 绕过账本，所以账本里的 `session_id` 还是 0，那边的 `on_*` 会挡住回调；
         /// 要观察账本状态的测试用 [`Rig::boot`]。
-        fn start(&self, config: SessionConfig) -> u64 {
+        pub(crate) fn start(&self, config: SessionConfig) -> u64 {
             let session_id = config.session_id;
             let connects = self.wire.connects.load(Ordering::SeqCst);
             self.engine
@@ -2021,7 +2027,7 @@ pub(crate) mod tests {
         }
 
         /// 直通（关翻译）模式起会话：不连 WS，等采集 + 播放汇都开起来。
-        fn start_passthrough(&self, config: SessionConfig) -> u64 {
+        pub(crate) fn start_passthrough(&self, config: SessionConfig) -> u64 {
             let session_id = config.session_id;
             self.engine
                 .apply(PipelineCommand::Start(Box::new(config)))
@@ -2034,7 +2040,7 @@ pub(crate) mod tests {
 
         /// 从账本这头开一条流水线（`Runtime::start` → 派命令 → 引擎起线程）。
         /// 账本会记住会话号，所以 `on_*` 回调都能落地。
-        fn boot(&self, pipeline: Pipeline) -> u64 {
+        pub(crate) fn boot(&self, pipeline: Pipeline) -> u64 {
             self.runtime.start(pipeline);
             self.wait_until(|| self.mic.target().is_some());
             self.engine
@@ -2046,7 +2052,7 @@ pub(crate) mod tests {
         }
 
         /// 自旋等条件成立。工作线程是真线程，得等它跑到。
-        fn wait_until(&self, mut cond: impl FnMut() -> bool) {
+        pub(crate) fn wait_until(&self, mut cond: impl FnMut() -> bool) {
             let deadline = std::time::Instant::now() + Duration::from_secs(5);
             while std::time::Instant::now() < deadline {
                 if cond() {
@@ -2061,7 +2067,7 @@ pub(crate) mod tests {
         ///
         /// 等的是"处理计数涨了"，不是"队列空了"——队列空只说明块被取走了，
         /// 处理可能还没跑完，那样断言会抢在结果前面。
-        fn feed(&self, samples: Vec<f32>) {
+        pub(crate) fn feed(&self, samples: Vec<f32>) {
             let inbox = self.inbox().expect("得先起会话");
             // 先等命令被消化掉再灌音频。
             //
@@ -2090,12 +2096,12 @@ pub(crate) mod tests {
         ///
         /// 先等连接真的建起来：把手是 spawn 的那一刻就登记进表的，socket 是线程
         /// 自己跑到 `boot()` 才连的，中间这段窗口收件箱还不存在。
-        fn push_message(&self, json: impl Into<String>) {
+        pub(crate) fn push_message(&self, json: impl Into<String>) {
             self.await_connect();
             self.wire.push_message(json);
         }
 
-        fn push_closed(&self) {
+        pub(crate) fn push_closed(&self) {
             self.await_connect();
             self.wire.push_closed();
         }
@@ -2106,11 +2112,11 @@ pub(crate) mod tests {
             self.wait_until(|| self.wire.inboxes.lock().len() >= want);
         }
 
-        fn events(&self) -> Vec<Event> {
+        pub(crate) fn events(&self) -> Vec<Event> {
             self.events.lock().clone()
         }
 
-        fn drain_events(&self) -> Vec<Event> {
+        pub(crate) fn drain_events(&self) -> Vec<Event> {
             std::mem::take(&mut *self.events.lock())
         }
 

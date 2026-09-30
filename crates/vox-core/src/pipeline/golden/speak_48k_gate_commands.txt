@@ -1,0 +1,49 @@
+# meta
+meta scenario speak_48k_gate_commands
+meta pipeline speak
+meta boot ledger
+meta capture_rate 48000
+meta block_samples 1920
+meta denoise on
+meta gate manual_then_level_then_manual
+meta gate_active_at_boot false
+meta translate true
+meta output_device CABLE_Input
+# wire
+wire 0 {"event_id":"event_0_1","session":{"input_audio_format":"pcm","modalities":["text","audio"],"output_audio_format":"pcm","translation":{"language":"ja"},"voice":"Tina"},"type":"session.update"}
+wire 1 audio_append 0 640 936b78f74a8f9f25
+wire 2 audio_append 1 640 9369af4976f06b25
+wire 3 audio_append 2 640 62bef9005454df25
+wire 4 audio_append 3 640 2f2c5351c2fccb25
+wire 5 audio_append 4 640 9786c29f2e9e9f25
+wire 6 audio_append 5 640 48003018d9209725
+wire 7 audio_append 6 2400 d0549f149dd63a25
+# play
+play open 1 CABLE Input
+play pushed 0 cbf29ce484222325
+play flush 0
+play close 0
+play after_shutdown open 1 flush 1 close 1
+# dsp
+dsp denoise_calls 8
+dsp denoise_resets 0
+# capture
+capture open microphone default
+capture stop 1
+# event
+event {"kind":"pipeline_state","pipeline":"speak","state":"starting"}
+event {"kind":"pipeline_state","pipeline":"speak","state":"ready"}
+event {"kind":"gate_status","pipeline":"speak","status":{"kind":"manual","state":"waiting","rms":0.0009354103,"active":false,"ended":false}}
+event {"kind":"gate_status","pipeline":"speak","status":{"kind":"manual","state":"manual","rms":0.22045478,"active":true,"ended":false}}
+event {"kind":"pipeline_state","pipeline":"speak","state":"active"}
+event {"kind":"gate_status","pipeline":"speak","status":{"kind":"manual","state":"manual","rms":0.0009354103,"active":true,"ended":false}}
+event {"kind":"gate_status","pipeline":"speak","status":{"kind":"level","state":"speech","rms":0.22045478,"active":true,"ended":false}}
+event {"kind":"gate_status","pipeline":"speak","status":{"kind":"level","state":"speech","rms":0.22045478,"active":true,"ended":false}}
+event {"kind":"gate_status","pipeline":"speak","status":{"kind":"manual","state":"manual","rms":0.22045477,"active":true,"ended":false}}
+event {"kind":"gate_status","pipeline":"speak","status":{"kind":"manual","state":"released","rms":0.0009354103,"active":false,"ended":true}}
+event {"kind":"pipeline_state","pipeline":"speak","state":"ready"}
+event {"kind":"gate_status","pipeline":"speak","status":{"kind":"manual","state":"waiting","rms":0.0009354103,"active":false,"ended":false}}
+event latency_changed 2
+# wire_life
+wire_life connect 1
+wire_life close_transport 1

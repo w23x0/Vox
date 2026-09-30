@@ -1,0 +1,41 @@
+# meta
+meta scenario speak_44k_denoise_skipped
+meta pipeline speak
+meta boot ledger
+meta capture_rate 44100
+meta block_samples 1764
+meta denoise on_but_rate_mismatch
+meta gate manual
+meta gate_active_at_boot true
+meta translate true
+meta output_device CABLE_Input
+# wire
+wire 0 {"event_id":"event_0_1","session":{"input_audio_format":"pcm","modalities":["text","audio"],"output_audio_format":"pcm","translation":{"language":"ja"},"voice":"Tina"},"type":"session.update"}
+wire 1 audio_append 0 882 c99a7a6a23423252
+wire 2 audio_append 1 882 1711dab4c9ad50c8
+wire 3 audio_append 2 3308 18983fea1e326605
+# play
+play open 1 CABLE Input
+play pushed 0 cbf29ce484222325
+play flush 0
+play close 0
+play after_shutdown open 1 flush 1 close 1
+# dsp
+dsp denoise_calls 0
+dsp denoise_resets 0
+# capture
+capture open microphone default
+capture stop 1
+# event
+event {"kind":"mic_active","active":true}
+event {"kind":"pipeline_state","pipeline":"speak","state":"starting"}
+event {"kind":"pipeline_state","pipeline":"speak","state":"ready"}
+event {"kind":"gate_status","pipeline":"speak","status":{"kind":"manual","state":"manual","rms":0.22046046,"active":true,"ended":false}}
+event {"kind":"pipeline_state","pipeline":"speak","state":"active"}
+event {"kind":"gate_status","pipeline":"speak","status":{"kind":"manual","state":"released","rms":0.000935411,"active":false,"ended":true}}
+event {"kind":"pipeline_state","pipeline":"speak","state":"ready"}
+event {"kind":"gate_status","pipeline":"speak","status":{"kind":"manual","state":"waiting","rms":0.000935411,"active":false,"ended":false}}
+event latency_changed 1
+# wire_life
+wire_life connect 1
+wire_life close_transport 1

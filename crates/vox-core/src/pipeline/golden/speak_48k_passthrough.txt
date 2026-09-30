@@ -1,0 +1,36 @@
+# meta
+meta scenario speak_48k_passthrough
+meta pipeline speak
+meta boot ledger
+meta capture_rate 48000
+meta block_samples 1920
+meta denoise on
+meta gate manual
+meta gate_active_at_boot true
+meta translate false
+meta output_device CABLE_Input
+# wire
+# play
+play open 1 CABLE Input
+play pushed 14880 0d089cb69f0b4ea5
+play flush 0
+play close 0
+play after_shutdown open 1 flush 1 close 1
+# dsp
+dsp denoise_calls 7
+dsp denoise_resets 0
+# capture
+capture open microphone default
+capture stop 1
+# event
+event {"kind":"mic_active","active":true}
+event {"kind":"pipeline_state","pipeline":"speak","state":"starting"}
+event {"kind":"pipeline_state","pipeline":"speak","state":"ready"}
+event {"kind":"gate_status","pipeline":"speak","status":{"kind":"manual","state":"manual","rms":0.0009354103,"active":true,"ended":false}}
+event {"kind":"pipeline_state","pipeline":"speak","state":"active"}
+event {"kind":"gate_status","pipeline":"speak","status":{"kind":"manual","state":"released","rms":0.0009354103,"active":false,"ended":true}}
+event {"kind":"pipeline_state","pipeline":"speak","state":"ready"}
+event {"kind":"gate_status","pipeline":"speak","status":{"kind":"manual","state":"waiting","rms":0.22045477,"active":false,"ended":false}}
+# wire_life
+wire_life connect 0
+wire_life close_transport 0
