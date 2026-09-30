@@ -5799,8 +5799,6 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vox"
 version = "0.2.1"
 dependencies = [
- "chrono",
- "keyring",
  "openvr",
  "parking_lot",
  "reqwest 0.12.28",
@@ -5889,7 +5887,6 @@ dependencies = [
 name = "vox-headless"
 version = "0.2.1"
 dependencies = [
- "chrono",
  "parking_lot",
  "serde",
  "serde_json",
