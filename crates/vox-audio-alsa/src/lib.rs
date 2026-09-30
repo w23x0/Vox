@@ -16,6 +16,9 @@
 #![cfg(target_os = "linux")]
 
 mod probe;
+mod registry;
+
+pub use registry::AlsaDeviceRegistry;
 
 /// ALSA 在不在 = **能不能打开一条 PCM**。装配层用它决定"能不能装音频后端"。
 ///
