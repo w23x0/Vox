@@ -1060,4 +1060,10 @@ cargo run -p vox-headless --bin vox-headless -- --config "$D/settings.json" --ru
   4. W3 收尾时：`SecretFile::new(config_dir)` 若已无调用方就删（只留 `at_path`）；`SECRET_FILE` 只保留 `vox_host::secrets::file::SECRET_FILE` 一份定义，`vox-headless` 引用它，不留重复常量。
   5. `HostPorts` 不 derive `Clone`（字段是 `Box<dyn Fn>`）；时钟构造函数名是 `vox_host::clock::local_clock()`。
   6. W1 期间旧实现与 `vox-host` 并存，测试名是"翻倍"的：W1 合入后 main 为 641 passed / 0 failed / 6 ignored（多出的 ignored 是 `secret-service` feature 统一后 `vox` 测试二进制里编进了 `secret_service_round_trip`）。§6.3-D 的总数期望作废，**以测试名对账为准**：W3–W5 每一步都要求"main 上已有的测试名一个不少"。
-  7. §6.3-E 桌面 `speak.ops` 的期望值应为 `["mono","denoise","level","gate","resample"]`（5 节，含既有的 `level`），原稿写漏。
+  7. ~~§6.3-E 桌面 `speak.ops` 应为 5 节含 `level`~~ **（W3 实测更正）**：`speak.ops` 就是 `["mono","denoise","gate","resample"]` 4 节；`level` 是门的模式（`ops[2].config.kind == "level"`），不是独立一节。原稿 §6.3-E 的期望值是对的。
+- **M6 · W3 审查裁决（2026-09-30，W3 已合入）。**
+  1. `SecretFile::new(config_dir)` 保留：W1 逐字搬进 `vox-host` 的 5 条用例在用它，生产侧走 `at_path`。
+  2. W3 在 `crates/vox-headless/src/headless.rs::Assembly::assemble` 临时加的 `persist_mode` 参数、第 7 步改成的 `persist.attach_to(&runtime)`，由 **W5** 在接 `Core::assemble` 时一并收掉。
+  3. W3 已改过 W4 名下的 `crates/vox-headless/src/{mcp,status}.rs`（只动 clock / `STATE_FILE` 引用，删 `sys::clock` 逼的），W4 在其基础上继续。
+  4. §6.3-E"报告模式不留空目录"的冒烟命令原稿是坏的（`mktemp -d` 已建出目录，判据恒假），应改为拿一个**尚不存在的子目录**：`D=$(mktemp -d)/cfg; … --config "$D/settings.json" --print-capabilities; [ ! -d "$D" ]`。
+  5. 入口 crate 里失去用处的直接依赖已删：`app/src-tauri` 的 `keyring`、`chrono`，`vox-headless` 的 `chrono`（`zbus` 仍被 `platform::tray_host_available` 直接用，保留）。

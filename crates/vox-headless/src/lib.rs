@@ -7,15 +7,16 @@
 //! ```text
 //! main          解析命令行 + 装日志 + 分派（薄，没有业务）
 //! headless      装配（Assembly）与跑起来的那一份（Daemon）——装配层本体
-//! config        三级回落取配置目录 + 读 settings.json / usage.json
-//! persist       设置与用量落盘（去抖 + 原子写）
-//! secrets       `SecretStore` 的文件实现（0600）+ 环境变量覆盖
+//! config        这一档的密钥文件名（目录回落与读设置在 `vox_host::paths`）
 //! status        状态出口：能力位报告 JSON + 清单 JSON（S0 §4.3-A）+ 芯事件 → 结构化日志
 //! mcp           控制面胶水：`Settings.control` 开关 + 握手文件 + `LedgerBackend`
 //! platform      `cfg(target_os)` 分流：LinuxHeadless 的档位、事实、音频三件套
-//! dsp           `Denoise` / `Resample` 两个端口的适配器（跟桌面侧同形）
-//! sys           时钟与日志（跟 OS 打交道的小件）
+//! sys           日志（跟 OS 打交道的小件）
 //! ```
+//!
+//! 落盘（`Persist`）、配置目录三级回落、读 `settings.json` / `usage.json`、三个密钥后端与
+//! `LocalClock` 全都在共享宿主层 `vox_host`（S4-A），与桌面档同一份——本 crate 只留
+//! "这一档挑哪个"与"这一档的文件名"。
 //!
 //! **跟桌面档的三处刻意差别**（都是有理由的，不是"还没写"）：
 //!
@@ -33,11 +34,8 @@ pub mod cli;
 pub mod config;
 pub mod headless;
 pub mod mcp;
-pub mod persist;
 pub mod platform;
-pub mod secrets;
 pub mod status;
 pub mod sys;
 
 pub use headless::{run, Assembly, Daemon, Error, Result};
-pub use persist::Persist;

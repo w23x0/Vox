@@ -12,7 +12,7 @@ license.workspace = true
 # - **没有平台外壳的其余三件**（`vox-input-linux` 热键 / `vox-overlay-*` 字幕窗 /
 #   `vox-audio-win` 等）：无屏档不启动热键、不画字幕（`docs/platform/EMBEDDED.md` §3.7）。
 #
-# 一个包都不新增：`tracing-subscriber` / `chrono` / `tokio` / `serde` 全在 `Cargo.lock` 里
+# 一个包都不新增：`tracing-subscriber` / `tokio` / `serde` 全在 `Cargo.lock` 里
 # 且已被桌面装配层用过（`git diff Cargo.lock` 只多出本 crate 自己那一格）。
 [dependencies]
 vox-core.workspace = true
@@ -30,9 +30,6 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 parking_lot.workspace = true
 tokio.workspace = true
-# 本地日期（用量按天/按月分桶）走挂钟时间 + 本地时区，跟桌面侧的 `platform/linux/clock.rs`
-# 同一套口径。只要 clock + std，不要默认那一堆。
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # 无屏档复用桌面 Linux 那一份音频后端（PipeWire），不新写一行采集/播放。

@@ -24,7 +24,7 @@ pub struct AppState {
     pub runtime: Runtime,
     pub engine: Arc<PipelineEngine>,
     pub registry: Arc<dyn DeviceRegistry>,
-    pub persist: Arc<crate::persist::Persist>,
+    pub persist: Arc<vox_host::Persist>,
     /// 每条流水线最近一次的完整 `GateStatus`。
     ///
     /// 内核的 `PipelineSnapshot` 只留了 `gate_rms` / `gate_open`，前端要的是整个
@@ -48,7 +48,7 @@ impl AppState {
         runtime: Runtime,
         engine: Arc<PipelineEngine>,
         registry: Arc<dyn DeviceRegistry>,
-        persist: Arc<crate::persist::Persist>,
+        persist: Arc<vox_host::Persist>,
         control: Arc<crate::mcp::ControlPlane>,
     ) -> Self {
         Self {

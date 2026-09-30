@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::thread;
 
 use vox_core::composition::Composition;
-use vox_core::event::{Event, Notice};
+use vox_core::event::Notice;
 use vox_core::pipeline::{Deps, PipelineEngine};
 use vox_core::ports::DeviceRegistry;
 use vox_core::runtime::{DeviceSnapshot, PipelineControl, Runtime};
@@ -35,10 +35,12 @@ use vox_core::{Pipeline, Settings};
 use vox_mcp::transport::http::ServerHandle;
 
 use crate::cli::{self, Mode, Start};
-use crate::config::{self, Paths};
-use crate::persist::Persist;
-use crate::secrets::SecretFile;
-use crate::{mcp, platform, status, sys};
+use crate::config;
+use crate::{mcp, platform, status};
+use vox_host::core::PersistMode;
+use vox_host::paths::{self, Paths};
+use vox_host::secrets::SecretBackend;
+use vox_host::Persist;
 
 /// 装配层的错误：一律"是什么就是什么"，没有自定义错误类型——这一层只把别处的失败串起来。
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -94,11 +96,21 @@ impl Assembly {
     ///
     /// `probe` 决定要不要碰 PipeWire（见 [`Probe`]）：报告三模式传
     /// [`Probe::Nothing`]，那时设备目录是空的、也没有启动提示。
-    pub fn assemble(paths: Paths, probe: Probe) -> Result<Self> {
+    ///
+    /// `persist_mode` 决定落盘层建不建配置目录（见 [`PersistMode`]）：报告三模式传
+    /// [`PersistMode::ReadOnly`]——"打一份 JSON 就在别人机器上留一个空目录"是副作用，
+    /// `tests/headless_entry.rs` 里有两条黑盒用例钉着它。
+    pub fn assemble(paths: Paths, probe: Probe, persist_mode: PersistMode) -> Result<Self> {
         // 1. 落盘层 + 设置。读不出来就用默认值（配置坏了也不该让服务起不来——
         //    起不来连控制面都没有，用户就没法远程修它）。
-        let persist = Persist::start(paths.dir.clone());
-        let settings: Settings = config::load_settings(&paths.settings);
+        //    `PersistMode::ReadOnly` 走 `Persist::new`：**不建配置目录**——报告三模式不许留
+        //    副作用（`tests/headless_entry.rs` 的两条黑盒用例钉着）。常驻模式走
+        //    `Persist::start`（建目录 + 起去抖线程）；两种的 `dir` 同一个。
+        let persist = match persist_mode {
+            PersistMode::Writing => Persist::start(paths.dir.clone()),
+            PersistMode::ReadOnly => Arc::new(Persist::new(paths.dir.clone())),
+        };
+        let settings: Settings = paths::load_settings(&paths.settings);
         tracing::info!(
             settings = %paths.settings.display(),
             config_dir = %paths.dir.display(),
@@ -106,16 +118,18 @@ impl Assembly {
         );
 
         // 2. 时钟 + 账本。改配置的写入口只有 `Runtime::update_settings` 一个。
-        let runtime = Runtime::new(settings, sys::clock::local());
+        let runtime = Runtime::new(settings, vox_host::clock::local_clock());
 
         // 3. 密钥：文件 0600 + 环境变量覆盖（无屏盒子上常常没有 Secret Service）。
         //    顺手把存着的密钥读进来。
-        let secrets = SecretFile::new(&paths.dir);
-        let has_stored_keys = secrets.stored_keys();
-        runtime.set_secret_store(Arc::new(secrets));
+        //    文件名是这一档的口味（`config::secret_path` → `secret.json`），机制在
+        //    `vox_host::secrets::file`。
+        let path = config::secret_path(&paths);
+        let secret = SecretBackend::File { path: path.clone() };
+        let has_stored_keys = secret.has_plaintext_keys();
+        runtime.set_secret_store(secret.build());
         if has_stored_keys {
-            // 明文这件事必须让人知道（`secrets.rs` 头注释里有代价说明）。
-            let path = paths.secret();
+            // 明文这件事必须让人知道（`vox_host::secrets::file` 头注释里有代价说明）。
             tracing::warn!(path = %path.display(), "API 密钥以明文（0600）存在这个文件里");
             runtime.notify(Notice::warning(format!(
                 "API 密钥以明文（0600）存在 {}：无屏档没有 Secret Service，这一份就是兜底",
@@ -124,7 +138,7 @@ impl Assembly {
         }
 
         // 4. 用量账本。**要在挂落盘监听之前**灌进去，免得刚读出来就又标脏写一遍。
-        runtime.load_usage(config::load_usage(&paths.usage()));
+        runtime.load_usage(paths::load_usage(&paths.usage()));
 
         // 5. 音频三件套 + 设备快照 + 宿主事实。无屏档**只扫一次**：没有界面要秒级反映
         //    插拔，插拔后重启进程即可（周期性枚举留给下一轮，见 EMBEDDED §3.2）。
@@ -162,12 +176,7 @@ impl Assembly {
 
         // 7. 落盘监听：设置/用量一变就标脏（真正的写盘在去抖线程里）。
         //    排在 `load_usage` 之后（否则刚读出来的那份会被当成"变了"再写一遍）。
-        let sink = Arc::clone(&persist);
-        runtime.add_listener(Arc::new(move |event| match event {
-            Event::SettingsChanged { settings } => sink.save_settings(settings),
-            Event::UsageChanged { usage } => sink.save_usage(usage),
-            _ => {}
-        }));
+        persist.attach_to(&runtime);
 
         let switch = mcp::Switch::from_settings(&runtime.settings());
         tracing::info!(
@@ -315,13 +324,26 @@ fn pipelines_of(start: Start) -> Vec<Pipeline> {
 
 /// 入口：解析好的参数 + 装配 + 分派。`main.rs` 只调这一个函数。
 pub fn run(args: cli::Args) -> Result<()> {
-    let paths = Paths::resolve(args.config.as_deref())?;
+    let paths = match args.config.as_deref() {
+        Some(path) => Paths::from_settings_file(path)?,
+        None => Paths::from_env()?,
+    };
     // 只有常驻模式会写盘（设置 / 用量 / 密钥 / 握手文件都落在配置目录里），所以只有它建目录。
     // 报告三模式**只读**：`--print-composition` 打一份 JSON 就在别人机器上留一个空目录，那是副作用。
+    // 这句同时管着 `control.json` / `secret.json` 的父目录，落盘层自己那份
+    // （`Persist::new` 不建目录）只是额外保证，不是替代。
     if !args.mode.is_read_only() {
         paths.ensure_dir();
     }
-    let assembly = Assembly::assemble(paths, Probe::of(args.mode))?;
+    let assembly = Assembly::assemble(
+        paths,
+        Probe::of(args.mode),
+        if args.mode.is_read_only() {
+            PersistMode::ReadOnly
+        } else {
+            PersistMode::Writing
+        },
+    )?;
 
     match args.mode {
         Mode::PrintCapabilities => {
@@ -348,7 +370,7 @@ pub fn run(args: cli::Args) -> Result<()> {
 /// （`session_config_for` 是纯派生），所以这一步能在 systemd 起来之前当自检用。
 ///
 /// 整个进程是**只读**的：不扫设备目录、不探 PipeWire（[`Probe::Nothing`]）、不建配置目录、
-/// 不写文件、不监听端口、不起流水线（见 [`run`] 与 [`crate::config::Paths::ensure_dir`]）。
+/// 不写文件、不监听端口、不起流水线（见 [`run`] 与 [`Paths::ensure_dir`]）。
 fn dry_run(assembly: &Assembly) {
     let facts = assembly.runtime.host_facts();
     tracing::info!(
@@ -467,7 +489,7 @@ fn run_daemon(args: cli::Args, assembly: Assembly) -> Result<()> {
 }
 
 /// 一直跑（systemd `Type=exec` 的常驻形态）。**刻意不写信号处理**：那要额外依赖，
-/// 而 SIGTERM / SIGINT 的默认处置本来就是终止进程（代价见 `persist.rs` 头注释）。
+/// 而 SIGTERM / SIGINT 的默认处置本来就是终止进程（代价见 `vox_host::persist` 头注释）。
 /// `park` 会被虚假唤醒打断，所以套一层循环。
 fn park_forever() -> ! {
     loop {
@@ -485,7 +507,7 @@ mod tests {
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&dir);
-        Paths::resolve(Some(&dir.join(config::SETTINGS_FILE))).expect("解析路径")
+        Paths::from_settings_file(&dir.join(vox_host::SETTINGS_FILE)).expect("解析路径")
     }
 
     /// 装配出来的账本必须是这一档的事实：档位 `linux_headless`、位由芯算。
@@ -494,8 +516,8 @@ mod tests {
     fn assembly_injects_the_headless_facts() {
         let paths = temp_paths("facts");
         let dir = paths.dir.clone();
-        let assembly =
-            Assembly::assemble(paths, Probe::PipeWire).expect("装配（Linux 上音频三件套装得起来）");
+        let assembly = Assembly::assemble(paths, Probe::PipeWire, PersistMode::Writing)
+            .expect("装配（Linux 上音频三件套装得起来）");
         let facts = assembly.runtime.host_facts();
         assert_eq!(facts.host, vox_core::HostKind::LinuxHeadless);
         assert!(facts.excess_off_bits().is_empty());
@@ -515,7 +537,8 @@ mod tests {
         let scanned = {
             let paths = temp_paths("probe-pipewire");
             let dir = paths.dir.clone();
-            let assembly = Assembly::assemble(paths, Probe::PipeWire).expect("装配");
+            let assembly =
+                Assembly::assemble(paths, Probe::PipeWire, PersistMode::Writing).expect("装配");
             let json = assembly.composition_json().expect("清单");
             let _ = std::fs::remove_dir_all(&dir);
             json
@@ -523,7 +546,8 @@ mod tests {
         let unscanned = {
             let paths = temp_paths("probe-nothing");
             let dir = paths.dir.clone();
-            let assembly = Assembly::assemble(paths, Probe::Nothing).expect("装配");
+            let assembly =
+                Assembly::assemble(paths, Probe::Nothing, PersistMode::Writing).expect("装配");
             assert!(
                 assembly.runtime().snapshot().devices.inputs.is_empty(),
                 "报告模式不该扫设备目录"
@@ -552,14 +576,15 @@ mod tests {
         let paths = temp_paths("no-key");
         #[cfg(target_os = "linux")]
         let daemon = {
-            let assembly = Assembly::assemble(paths, Probe::PipeWire).expect("装配");
+            let assembly =
+                Assembly::assemble(paths, Probe::PipeWire, PersistMode::Writing).expect("装配");
             Daemon::start(assembly).expect("起引擎")
         };
         #[cfg(not(target_os = "linux"))]
         let daemon = {
             // 非 Linux：装配本来就该失败（`platform::platform()` 明确报错），
             // 这条用例在那边的意义到此为止。
-            assert!(Assembly::assemble(paths, Probe::PipeWire).is_err());
+            assert!(Assembly::assemble(paths, Probe::PipeWire, PersistMode::Writing).is_err());
             return;
         };
 
@@ -589,7 +614,8 @@ mod tests {
     fn manifest_check_is_clean_on_defaults() {
         let paths = temp_paths("manifests");
         let dir = paths.dir.clone();
-        let assembly = Assembly::assemble(paths, Probe::Nothing).expect("装配");
+        let assembly =
+            Assembly::assemble(paths, Probe::Nothing, PersistMode::Writing).expect("装配");
         let legs = legs_to_check(&assembly.runtime.settings());
         assert_eq!(legs, vec![Pipeline::Speak]);
         let problems = check_manifests(assembly.runtime(), &legs);
@@ -617,7 +643,8 @@ mod tests {
         )
         .expect("写设置");
 
-        let assembly = Assembly::assemble(paths, Probe::Nothing).expect("装配");
+        let assembly =
+            Assembly::assemble(paths, Probe::Nothing, PersistMode::Writing).expect("装配");
         let legs = legs_to_check(&assembly.runtime.settings());
         assert_eq!(legs, vec![Pipeline::Speak, Pipeline::Listen]);
         let problems = check_manifests(assembly.runtime(), &legs);

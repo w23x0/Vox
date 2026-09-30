@@ -1,7 +1,7 @@
 //! 隐藏 CLI：`--print-composition`（S0 §4.3-A 的验收出口）。
 //!
 //! 打**两份清单 + 当前有效能力位**的 JSON 到 stdout 就退：不建窗口、不注册命令、不起线程、
-//! 不改任何状态、**不建配置目录**（只读：读设置走 [`crate::persist::Persist::new`]，那条路
+//! 不改任何状态、**不建配置目录**（只读：读设置走 [`vox_host::Persist::new`]，那条路
 //! 不碰盘）。无人值守时它是"这台机器现在会怎么装"的唯一可读出口（无屏档是同一条命令，
 //! 见 `crates/vox-headless/src/status.rs::composition_json`——两边同形、同一份组装
 //! `vox_mcp::endpoints::document`：形状逐字相同；取值随档位与宿主事实本就不同）。
@@ -59,7 +59,7 @@ fn print() -> Result<(), Box<dyn std::error::Error>> {
         config_dir = %config_dir.display(),
         "打印清单（不建窗口、不注册命令、不改任何状态）"
     );
-    let persist = crate::persist::Persist::new(config_dir);
+    let persist = vox_host::Persist::new(config_dir);
     let settings = persist.load_settings();
 
     // 事实先注入再派生：位由芯算（档位上限 − 关掉的），外壳只报事实（S0 §2.5.0）。

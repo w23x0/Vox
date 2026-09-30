@@ -5,8 +5,6 @@
 //! 用户按下"对外说话"就该看到"这个平台还没做好"，绝不能让他以为自己已经开麦了。
 
 mod audio;
-mod clock;
-mod secrets;
 mod virtual_mic;
 
 use std::collections::BTreeMap;
@@ -19,6 +17,7 @@ use vox_core::pipeline::{CaptureFactory, PlaybackFactory};
 use vox_core::ports::{Clock, DeviceRegistry, HotkeyHost, PortResult, SecretStore};
 use vox_core::runtime::Runtime;
 use vox_core::settings::SubtitleSettings;
+use vox_host::secrets::SecretBackend;
 
 use super::{GeometryCallback, OverlayFailure, VirtualDeviceStatus};
 use crate::state::OverlayHandle;
@@ -50,13 +49,17 @@ pub fn pre_main() -> bool {
 }
 
 pub fn clock() -> Arc<dyn Clock> {
-    Arc::new(clock::LocalClock::new())
+    // `LocalClock` 与无屏档共用同一份（`vox_host::clock`，S4-A W3）：`Instant` 单调 +
+    // `chrono::Local` 日期，两件事分开取。
+    vox_host::clock::local_clock()
 }
 
 pub fn secret_store(_path: PathBuf) -> Arc<dyn SecretStore> {
     // Linux 不用文件存密钥：走 Secret Service（gnome-keyring / KWallet）。
     // 参数保留是为了跟 Windows 那边签名一致。
-    Arc::new(secrets::SecretServiceStore::new())
+    // 机制在 `vox_host::secrets::service`（feature `secret-service`，桌面档才开）；
+    // 这里留的是"这一档选哪个"这一句决策。
+    SecretBackend::SecretService.build()
 }
 
 pub fn alert(title: &str, body: &str) {

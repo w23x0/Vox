@@ -62,6 +62,8 @@ impl Persist {
     /// **不建目录**是有意的：只读出口（`--print-composition`）也用它读设置，而"打一份
     /// JSON"不该在别人机器上留下一个空目录。要写盘的走 [`Persist::start`]（那里建目录），
     /// 真落盘时 [`atomic_write`] 还会再建一次兜底。
+    ///
+    /// 装配层用 [`crate::core::PersistMode`] 选哪一个。
     pub fn new(dir: PathBuf) -> Self {
         Self {
             dir,
@@ -86,6 +88,10 @@ impl Persist {
     ///
     /// 目录可能还不存在（首次启动），要写盘的这条路先建好——[`Persist::new`] 只读、不建。
     /// 失败了也不 panic：读会走默认值，写会在 [`atomic_write`] 里再报一次。
+    ///
+    /// 装配层用 [`crate::core::PersistMode`] 选哪一个——**"建不建目录"是入口的决定**：
+    /// 桌面档没有别的路建目录（`assemble()` 不调 `ensure_dir`），而无屏档的报告三模式
+    /// 特意不许建（`crates/vox-headless/tests/headless_entry.rs` 有两条黑盒用例钉着）。
     pub fn start(dir: PathBuf) -> Arc<Self> {
         let _ = fs::create_dir_all(&dir);
         let me = Arc::new(Self::new(dir));

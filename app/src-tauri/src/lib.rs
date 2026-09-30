@@ -32,7 +32,6 @@ mod events;
 pub mod mcp;
 mod net;
 mod overlay;
-mod persist;
 mod platform;
 mod state;
 mod sys;
@@ -47,6 +46,12 @@ mod vr_overlay;
 mod winminmax;
 
 use state::AppState;
+
+/// 桌面档的密钥文件名，落在配置目录下。**不进 `vox_host::Paths`**：Windows 侧是 DPAPI
+/// 密文、无屏档是 0600 明文 `secret.json`，两者内容格式不一样，同名会互相读不懂。
+/// 所以共享层只给 `SecretBackend` 一个"完整路径"，文件名由各档自己写死
+/// （S4-A §9 M5.1 / M5.4）。
+const DESKTOP_SECRET_FILE: &str = "secret.bin";
 
 /// 应用入口。`main.rs` 只调这一个函数。
 pub fn run() {
@@ -153,10 +158,14 @@ pub fn run() {
 /// 这里的每一步都尽量"失败不致命"：设备枚举、悬浮窗、热键任何一样起不来，都只是
 /// 记一条 `Notice` 让界面告诉用户，不把整个应用拖死——用户至少得能进设置窗改配置。
 fn assemble(app: &tauri::AppHandle) -> Result<Arc<AppState>, Box<dyn std::error::Error>> {
-    let config_dir = app.path().app_config_dir()?;
-    // start() 而不是 new()：去抖线程要持一份 Arc 才能保证对象活着（详见 persist.rs）。
+    // 配置目录只有这一处真源（Tauri 给的 `app_config_dir`）；目录里的文件名由
+    // `vox_host::paths` 定。密钥文件名是这一档自己的口味（下面第 2 步），不进 `Paths`。
+    let paths = vox_host::Paths::from_dir(app.path().app_config_dir()?);
+    // start() 而不是 new()：去抖线程要持一份 Arc 才能保证对象活着
+    // （详见 `vox_host::persist::Persist::start` 的注释）。
     // 目录自己留一份：控制面的握手文件（`control.json`）也落在同一个目录里（第 14 步）。
-    let persist = persist::Persist::start(config_dir.clone());
+    let persist = vox_host::Persist::start(paths.dir.clone());
+    let config_dir = paths.dir.clone();
 
     // 1. 设置 + 时钟 + Runtime。
     let settings = persist.load_settings();
@@ -165,7 +174,10 @@ fn assemble(app: &tauri::AppHandle) -> Result<Arc<AppState>, Box<dyn std::error:
 
     // 2. 密钥库（Windows：DPAPI 落盘；Linux：Secret Service）。
     //    set_secret_store 会顺手把存着的密钥读进来。
-    runtime.set_secret_store(platform::secret_store(persist.secret_path()));
+    //    `secret.bin` 是**桌面档自己的**文件名：DPAPI 密文，与无屏档那个 0600 明文的
+    //    `secret.json` 同目录、不同名——内容格式不一样，混在一起会互相读不懂
+    //    （`vox_host::secrets::SecretBackend` 各带各的路径，见 `platform::secret_store`）。
+    runtime.set_secret_store(platform::secret_store(paths.dir.join(DESKTOP_SECRET_FILE)));
 
     // 3. 用量账本。要在挂落盘监听之前灌进去，免得刚读出来就又写一遍。
     runtime.load_usage(persist.load_usage());

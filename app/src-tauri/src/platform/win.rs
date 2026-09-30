@@ -12,6 +12,7 @@ use vox_core::composition::HostKind;
 use vox_core::pipeline::{CaptureFactory, PlaybackFactory};
 use vox_core::ports::{Clock, DeviceRegistry, HotkeyHost, PortResult, SecretStore};
 use vox_core::runtime::Runtime;
+use vox_host::secrets::SecretBackend;
 
 use super::{GeometryCallback, OverlayFailure, VirtualDeviceStatus};
 use crate::state::OverlayHandle;
@@ -31,7 +32,9 @@ pub fn clock() -> Arc<dyn Clock> {
 }
 
 pub fn secret_store(path: PathBuf) -> Arc<dyn SecretStore> {
-    Arc::new(crate::sys::secrets::DpapiSecretStore::new(path))
+    // DPAPI 密文的落盘位置由调用方给（`secret.bin`，与无屏档的 `secret.json` 同目录不同名，
+    // 内容格式不一样，混在一起会互相读不懂）。加解密本身在 `vox_host::secrets::dpapi`。
+    SecretBackend::Dpapi { path }.build()
 }
 
 pub fn alert(title: &str, body: &str) {

@@ -33,7 +33,7 @@ use vox_mcp::{serve, BoxedBackend};
 /// `{"port":…,"token":"<43 字符 base64url>","pid":…,"protocolVersion":"2026-07-28"}`，
 /// Unix 下 `0600`（写入那一步在 `vox_mcp::transport::http`，本文件不重复实现）。
 /// 与桌面档同名，好让 CLI 不必知道它在跟哪个外壳说话。
-pub const STATE_FILE: &str = crate::config::CONTROL_FILE;
+pub const STATE_FILE: &str = vox_host::control::CONTROL_FILE;
 
 /// 控制面开关的一份快照：**起不起**、**绑哪个端口**。
 ///
@@ -161,7 +161,6 @@ pub fn start(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sys::clock;
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir =
@@ -172,7 +171,7 @@ mod tests {
     }
 
     fn runtime(settings: Settings) -> Runtime {
-        Runtime::new(settings, clock::local())
+        Runtime::new(settings, vox_host::clock::local_clock())
     }
 
     #[test]

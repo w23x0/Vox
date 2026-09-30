@@ -88,10 +88,6 @@ vox-overlay-win = { path = "../../crates/vox-overlay-win" }
 vox-audio-linux = { path = "../../crates/vox-audio-linux" }
 vox-input-linux = { path = "../../crates/vox-input-linux" }
 vox-overlay-linux = { path = "../../crates/vox-overlay-linux" }
-# Secret Service（gnome-keyring / KWallet）。默认 feature 走 zbus，纯 Rust，不链 libsecret。
-keyring = "4"
 # 问 D-Bus "有没有东西在显示托盘图标"（`platform::tray_host_available`）。
-# zbus 本来就在依赖树里（keyring 拉的），这里只是直接用一次，不多编一个 crate。
+# zbus 本来就在依赖树里（vox-host 的 secret-service → keyring 拉的），这里只是直接用一次，不多编一个 crate。
 zbus = "5"
-# 本地日期（用量按天/按月分桶）。只要 clock + std，不要默认那一堆。
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

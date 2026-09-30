@@ -137,7 +137,7 @@ mod tests {
     use vox_core::Settings;
 
     fn runtime() -> Runtime {
-        let runtime = Runtime::new(Settings::default(), crate::sys::clock::local());
+        let runtime = Runtime::new(Settings::default(), vox_host::clock::local_clock());
         runtime.set_host_facts(crate::platform::host_facts());
         runtime
     }
@@ -197,7 +197,7 @@ mod tests {
         let settings = Settings::from_json(
             r#"{"listen":{"target":{"executable":"Discord","display_name":"Discord"}}}"#,
         );
-        let runtime = Runtime::new(settings, crate::sys::clock::local());
+        let runtime = Runtime::new(settings, vox_host::clock::local_clock());
         runtime.set_host_facts(crate::platform::host_facts());
 
         let json = composition_json(&runtime).expect("清单该能序列化");
@@ -266,7 +266,7 @@ mod tests {
     /// `wire` 把监听器挂上了：事件会走到日志（不发事件时它什么都不做）。
     #[test]
     fn wiring_is_idempotent() {
-        let runtime = Runtime::new(Settings::default(), crate::sys::clock::local());
+        let runtime = Runtime::new(Settings::default(), vox_host::clock::local_clock());
         wire(&runtime);
         wire(&runtime);
         runtime.notify(Notice::info("装配好了"));
