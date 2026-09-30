@@ -1,0 +1,71 @@
+# S4-C · CI 交叉编译：aarch64-unknown-linux-gnu 构建 + qemu-user 跑测试
+#
+# 对应 docs/plans/S4-EMBEDDED-REFACTOR.md §3 S4-C 表格「CI 交叉编译」一行、
+# 验收标准 §4「S4-C · CI」。
+#
+# 这个 job **证明什么**：
+#   1. 芯（vox-core）与 DSP（vox-dsp）——也就是无屏档将来要跑在 ARM64 小主板上的
+#      那部分——在 aarch64 目标上**编得过**（没有只在 x86 上才成立的代码/依赖）。
+#   2. 它们的测试在 **ARM64 语义下跑得对**：结果与 x86 一致。
+#      典型能抓住的是"浮点差异/对齐/未定义行为只在弱内存序的 ARM 上暴露"这类问题。
+#
+# 这个 job **不证明什么**（重要，别拿它当性能结论用）：
+#   - **不证明性能**。qemu-user 是用户态指令翻译，不是性能模拟：它的耗时和真机
+#     没有可比性。按 §2.5-2，性能结论只能来自板上自计时（§2.5-1 的实时倍率），
+#     "有板子之前不写任何够用的结论"（同文件 §5）。
+#   - 不证明真机上有没有 ALSA/设备/打包能跑——那些在 S4-C 的其它行（vox-audio-alsa 等）验。
+#   - 不覆盖 Windows 端。x86 门禁与 release 构建见 .github/workflows/release.yml。
+name: CI (aarch64 cross)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-aarch64:
+    runs-on: ubuntu-24.04
+    env:
+      # 交叉链接器：apt 的 gcc-aarch64-linux-gnu 提供 aarch64-linux-gnu-gcc 这个驱动。
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+      # 跑测试：cargo 见到 *_RUNNER 就用它执行该 target 编出来的测试二进制。
+      # -L 指向 sysroot（aarch64 的 libc/ld.so 在那儿），否则动态加载器找不到。
+      CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER: qemu-aarch64 -L /usr/aarch64-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+
+      # 只装三样：
+      #   gcc-aarch64-linux-gnu      → 交叉编译器
+      #   libc6-dev-arm64-cross      → aarch64 的 libc 头文件/库（sysroot 就靠它落在
+      #                                 /usr/aarch64-linux-gnu）；显式列出，不靠 gcc 包的
+      #                                 Recommends，免得 apt 行为一变就断
+      #   qemu-user                  → 用户态模拟器，提供 qemu-aarch64 可执行文件
+      - name: Install cross toolchain and qemu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu \
+            libc6-dev-arm64-cross \
+            qemu-user
+
+      # 前置自检：三样东西缺哪样就在这里炸，而不是让后面的 cargo 报一句看不懂的错。
+      - name: Preflight check cross toolchain
+        run: |
+          set -eux
+          aarch64-linux-gnu-gcc --version
+          qemu-aarch64 --version
+          # sysroot 必须有 aarch64 的动态加载器与 libc，否则 qemu 起不来测试二进制
+          ls -d /usr/aarch64-linux-gnu
+          ls /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: .
+
+      - name: Test vox-core and vox-dsp on aarch64
+        run: cargo test --target aarch64-unknown-linux-gnu -p vox-core -p vox-dsp --locked
