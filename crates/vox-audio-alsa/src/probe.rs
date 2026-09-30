@@ -6,19 +6,12 @@
 //! 怎么判读"抽成纯函数，是这一稿唯一能在无声卡的 CI 上验收的东西
 //! （`docs/plans/S4-C-ALSA.md` §3.2 / §9.1）。
 
-// 本工单（ALSA-T1）只落纯函数，调用方 `capture.rs` / `playback.rs` / `registry.rs`
-// 在 T2/T3/T4 才接上。这条 allow 只覆盖这段窗口期：T2/T3 合进来以后删掉它，
-// 让"真的没人用"重新变成告警。
-#![allow(dead_code)]
-
 use alsa::pcm::{Format, PCM};
 use alsa::Direction;
 use vox_core::ports::PortError;
 
 /// 我们向采集侧要的率：降噪的原生率（`docs/platform/EMBEDDED.md` §4-8 的三处写死之一）。
 pub(crate) const CAPTURE_WANT_RATE: u32 = 48_000;
-/// 我们向播放侧要的率：回放协议的率（`vox_core::cloud::protocol::OUTPUT_SAMPLE_RATE`）。
-pub(crate) const PLAYBACK_WANT_RATE: u32 = 24_000;
 /// 采集侧要的声道数：麦克风基本都给单声道或双声道，多声道麦克风阵列不在这一稿。
 pub(crate) const CAPTURE_WANT_CHANNELS: u32 = 1;
 /// 播放侧要的声道数：单声道铺成双声道给声卡（与 `vox-audio-linux` 侧同思路）。
@@ -246,12 +239,12 @@ mod tests {
     #[test]
     fn rate_ladder_is_exact_then_plugin_then_vox_resample() {
         assert_eq!(
-            rate_ladder(PLAYBACK_WANT_RATE),
+            rate_ladder(vox_core::cloud::protocol::OUTPUT_SAMPLE_RATE),
             vec![
                 Attempt::Exact,
                 Attempt::PlugConvert,
                 Attempt::VoxResample {
-                    probe_rate: PLAYBACK_WANT_RATE
+                    probe_rate: vox_core::cloud::protocol::OUTPUT_SAMPLE_RATE
                 },
             ]
         );

@@ -565,6 +565,9 @@ mod tests {
     #[test]
     #[ignore = "要真声卡：本机的 snd-aloop Loopback 卡（无卡机器上跑不了）"]
     fn published_names_really_open_and_pair_with_their_card() {
+        let _card = crate::LOOPBACK_CARD
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let registry = AlsaDeviceRegistry::new();
 
         for (side, devices) in [

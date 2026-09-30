@@ -757,6 +757,9 @@ mod tests {
     #[test]
     #[ignore = "要真的 snd-aloop 卡（本机第 3 张卡 Loopback 的采集侧）"]
     fn capture_opens_the_real_loopback_device() {
+        let _card = crate::LOOPBACK_CARD
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         const LOOPBACK_CAPTURE: &str = "hw:Loopback,1";
         let (tx, rx) = mpsc::channel::<AudioChunk>();
         let mut capture = AlsaCapture::new();

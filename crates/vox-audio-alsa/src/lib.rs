@@ -16,11 +16,21 @@
 #![cfg(target_os = "linux")]
 
 mod capture;
+mod playback;
 mod probe;
 mod registry;
 
 pub use capture::AlsaCapture;
+pub use playback::AlsaPlayback;
 pub use registry::AlsaDeviceRegistry;
+
+/// 碰本机 `Loopback` 卡的 `#[ignore]` 用例共用这一把锁。
+///
+/// snd-aloop 的 `,0` 与 `,1` 两个子设备是一对，**两端必须同率**：播放用例在 `,0` 上开着
+/// 24 kHz 时，采集用例去 `,1` 要 48 kHz，`snd_pcm_start` 会报 EIO。cargo 默认并行跑测试，
+/// 所以这些用例先拿锁再开设备。
+#[cfg(test)]
+pub(crate) static LOOPBACK_CARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// ALSA 在不在 = **能不能打开一条 PCM**。装配层用它决定"能不能装音频后端"。
 ///
