@@ -55,7 +55,8 @@ impl SwashFont {
         let font = FontRef::from_index(&data, index as usize)
             .ok_or_else(|| PortError::new(format!("字体「{family}」解析失败")))?;
         let metrics = font.metrics(&[]).scale(size_px);
-        let line_height = (metrics.ascent - metrics.descent + metrics.leading).round() as i32;
+        // swash 的 descent 是正数（基线以下的距离），行高必须是 ascent + descent + leading。
+        let line_height = (metrics.ascent + metrics.descent + metrics.leading).round() as i32;
         let ascent = metrics.ascent.round() as i32;
 
         Ok(Self {
