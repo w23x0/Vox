@@ -20,6 +20,7 @@ import { recentFirst, useRecentValues } from "../lib/recent";
 import { useStore } from "../store";
 import type { ModelProvider } from "../types";
 import { Dropdown, Toggle, type Option } from "../ui/controls";
+import { useToast } from "../ui/toast";
 import {
   IconChevron,
   IconHeadphones,
@@ -74,6 +75,7 @@ export function PipelineCard({ pipeline }: { pipeline: HomePipeline }) {
   const pipeLabel = (id: HomePipeline) =>
     id === "speak" ? t("pipeline.speak") : t("pipeline.listen");
   const { api, snapshot, settings, patch } = useStore();
+  const toast = useToast();
   const speak = settings.speak;
   const listen = settings.listen;
   const target = settings.listen.target;
@@ -109,8 +111,13 @@ export function PipelineCard({ pipeline }: { pipeline: HomePipeline }) {
   const activeModel = pipeline === "speak" ? speak.model_name : listen.model_name;
   const { list: modelList } = useModelList(activeProvider);
 
-  const languageChoices = catalog.languageOptions(uiLang);
-  const sourceChoices = catalog.sourceLanguageOptions(uiLang, t("catalog.autoDetect"));
+  const languageChoices = catalog.targetLanguageOptions(activeProvider, activeModel, uiLang);
+  const sourceChoices = catalog.sourceLanguageOptions(
+    listen.provider,
+    listen.model_name,
+    uiLang,
+    t("catalog.autoDetect"),
+  );
   const speakLanguageOptions = recentFirst(languageChoices, recentSpeakLanguages);
   const listenLanguageOptions = [
     sourceChoices[0],
@@ -168,32 +175,66 @@ export function PipelineCard({ pipeline }: { pipeline: HomePipeline }) {
 
   const onPickApp = (exe: string) => pickListenApp(apps, target, exe, patch);
 
+  /** 换模型后当前语言若不被新方言支持：回该方言缺省，并发一条通知说明换成了什么。 */
   const onPickModel = (provider: ModelProvider, model: string) => {
     setPickerOpen(false);
+    const notify = (kind: "target" | "source", from: string | null, to: string | null) =>
+      toast(
+        "warning",
+        t(kind === "target" ? "pipeline.targetFellBack" : "pipeline.sourceFellBack", {
+          from: from ? catalog.languageName(from, uiLang) : "",
+          to: to ? catalog.languageName(to, uiLang) : t("catalog.autoDetect"),
+        }),
+      );
     if (pipeline === "speak") {
-      patch({ speak: { provider, model_name: model } });
+      const target = catalog.resolveTarget(provider, model, speak.target_language, "speak");
+      if (!target.changed) {
+        patch({ speak: { provider, model_name: model } });
+        return;
+      }
+      const nextVoice = speak.voice_by_language[target.code] ?? defaultVoiceForLanguage(target.code);
+      patch({
+        speak: {
+          provider,
+          model_name: model,
+          target_language: target.code,
+          voice: nextVoice,
+          voice_by_language: { ...speak.voice_by_language, [target.code]: nextVoice },
+        },
+      });
+      notify("target", speak.target_language, target.code);
     } else {
+      const target = catalog.resolveTarget(provider, model, listen.target_language, "listen");
+      const wanted = catalog.supportsSourceLanguage(provider) ? listen.source_language : null;
+      const source = catalog.resolveSource(provider, model, wanted);
       patch({
         listen: {
           provider,
           model_name: model,
-          source_language: catalog.supportsSourceLanguage(provider) ? listen.source_language : null,
+          target_language: target.code,
+          source_language: source.code,
         },
       });
+      if (target.changed) notify("target", listen.target_language, target.code);
+      if (source.changed) notify("source", listen.source_language, source.code);
     }
   };
 
   const voiceSelectable = catalog.supportsVoiceSelection(activeProvider);
   const sourceSelectable = pipeline === "listen" && catalog.supportsSourceLanguage(listen.provider);
-  /** 译音（合成语音）是否开着：关了就没有音色 / 输出设备可言。 */
-  const speaksTranslation = pipeline === "speak" ? speak.translate : listen.speak_translation;
+  /** 当前目标语言在这个模型的方言里是不是"仅文字"：是就没有译音可播。 */
+  const currentTarget = pipeline === "speak" ? speak.target_language : listen.target_language;
+  const targetTextOnly = catalog.targetMode(activeProvider, activeModel, currentTarget) === "text_only";
+  /** 译音（合成语音）是否开着：关了（或目标语言仅文字）就没有音色 / 输出设备可言。 */
+  const speaksTranslation =
+    (pipeline === "speak" ? speak.translate : listen.speak_translation) && !targetTextOnly;
   const voiceId = pipeline === "speak" ? "dd-home-speak-voice" : "dd-home-listen-voice";
 
   /** 「更多」里实际渲染的字段名，折叠时当摘要显示。 */
   const moreLabels: string[] = [];
   if (pipeline === "listen") moreLabels.push(t("pipeline.playTranslation"));
   if (voiceSelectable && speaksTranslation) moreLabels.push(t("pipeline.voice"));
-  if (pipeline === "speak" || listen.speak_translation) moreLabels.push(t("pipeline.outputDevice"));
+  if (pipeline === "speak" || speaksTranslation) moreLabels.push(t("pipeline.outputDevice"));
   if (pipeline === "speak" && speak.translate) {
     moreLabels.push(t("pipeline.showTranslation"), t("pipeline.monitorTranslation"));
   }
@@ -353,9 +394,9 @@ export function PipelineCard({ pipeline }: { pipeline: HomePipeline }) {
       ) : !sourceSelectable ? (
         <div className="hint">{t("pipeline.sourceFixedHint")}</div>
       ) : null}
-      {pipeline === "speak" && !catalog.supportsAudioOutput(speak.target_language, speak.provider) ? (
+      {targetTextOnly ? (
         <div className="hint hint-warn">
-          {t("home.textOnlyHint", { lang: catalog.languageLabel(speak.target_language, uiLang) })}
+          {t("home.textOnlyHint", { lang: catalog.languageName(currentTarget, uiLang) })}
         </div>
       ) : null}
 
@@ -476,10 +517,18 @@ export function PipelineCard({ pipeline }: { pipeline: HomePipeline }) {
               <div className="toggle-line">
                 <span>{t("pipeline.playTranslation")}</span>
                 <Toggle
-                  checked={listen.speak_translation}
+                  checked={speaksTranslation}
+                  disabled={targetTextOnly}
                   label={t("pipeline.playTranslation")}
                   onChange={(checked) => patch({ listen: { speak_translation: checked } })}
                 />
+              </div>
+            ) : null}
+            {pipeline === "listen" && targetTextOnly ? (
+              <div className="hint">
+                {t("pipeline.playTranslationTextOnly", {
+                  lang: catalog.languageName(listen.target_language, uiLang),
+                })}
               </div>
             ) : null}
 
@@ -511,7 +560,7 @@ export function PipelineCard({ pipeline }: { pipeline: HomePipeline }) {
               </div>
             ) : null}
 
-            {pipeline === "speak" || listen.speak_translation ? (
+            {pipeline === "speak" || speaksTranslation ? (
               <div>
                 <label className="stat-label" htmlFor={`dd-home-${pipeline}-output`}>
                   {t("pipeline.outputDevice")}

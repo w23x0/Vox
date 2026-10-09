@@ -23,8 +23,61 @@ struct Catalog {
     capabilities: Capabilities,
     defaults: Defaults,
     legacy_removed_voice_ids: Vec<String>,
-    languages: Vec<Language>,
     voices: Vec<Voice>,
+}
+
+/// `catalog/languages.json`：统一语言登记表。
+#[derive(Deserialize)]
+struct Registry {
+    languages: Vec<RegistryLanguage>,
+    aliases: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct RegistryLanguage {
+    code: String,
+    en: String,
+}
+
+/// 语言集合：显式列表，或 `"all_registered"`（登记表全集——官方没给逐个代码清单的
+/// 服务商用它，构建期展开成登记表当时的全部代码）。
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum CodeSet {
+    Keyword(String),
+    Codes(Vec<String>),
+}
+
+impl CodeSet {
+    fn resolve(&self, registry: &Registry, what: &str) -> Vec<String> {
+        match self {
+            CodeSet::Codes(codes) => codes.clone(),
+            CodeSet::Keyword(word) => {
+                assert_eq!(
+                    word, "all_registered",
+                    "{what}：未知的语言集合关键字 {word:?}"
+                );
+                registry.languages.iter().map(|l| l.code.clone()).collect()
+            }
+        }
+    }
+}
+
+/// 一条方言的语言能力：源语言集合、目标语言集合（语音+文字 / 仅文字）、
+/// 规范码 → 该服务商线上码（只写不同名的）、两条流水线的缺省目标语言。
+#[derive(Deserialize)]
+struct DialectLanguages {
+    source: CodeSet,
+    target_audio: CodeSet,
+    target_text_only: CodeSet,
+    #[serde(default)]
+    wire: std::collections::BTreeMap<String, String>,
+    default_speak_target: String,
+    default_listen_target: String,
+    /// `[未核实]` 说明，只给人看。
+    #[serde(default)]
+    #[allow(dead_code)]
+    unverified: Vec<String>,
 }
 
 /// `catalog/*.json` 里的一个方言。
@@ -40,6 +93,7 @@ struct Dialect {
     match_prefixes: Vec<String>,
     #[serde(default)]
     transcription_model: Option<String>,
+    languages: DialectLanguages,
 }
 
 /// `catalog/*.json` `models[]` 里的一条。**表里只放官方接口给不了的东西**：
@@ -55,9 +109,9 @@ struct CatalogModel {
 
 #[derive(Deserialize)]
 struct ExpectedCounts {
-    languages: usize,
-    audio_output_languages: usize,
     voices: usize,
+    qwen_target_audio: usize,
+    qwen_target_text_only: usize,
 }
 
 #[derive(Deserialize)]
@@ -84,16 +138,7 @@ struct Capabilities {
 
 #[derive(Deserialize)]
 struct Defaults {
-    target_language: String,
-    listen_target_language: String,
     voice: String,
-}
-
-#[derive(Deserialize)]
-struct Language {
-    code: String,
-    label: L10n,
-    audio_output: bool,
 }
 
 #[derive(Deserialize)]
@@ -140,6 +185,12 @@ fn main() {
     println!("cargo:rerun-if-changed={}", source.display());
     println!("cargo:rerun-if-changed={}", gemini_source.display());
     println!("cargo:rerun-if-changed={}", gpt_source.display());
+    let registry_source = manifest.join("../../catalog/languages.json");
+    println!("cargo:rerun-if-changed={}", registry_source.display());
+    let registry_raw =
+        fs::read_to_string(&registry_source).expect("读取 catalog/languages.json 失败");
+    let registry: Registry =
+        serde_json::from_str(&registry_raw).expect("catalog/languages.json 格式不合法");
 
     let raw = fs::read_to_string(&source).expect("读取 catalog/aliyun.json 失败");
     let catalog: Catalog = serde_json::from_str(&raw).expect("catalog/aliyun.json 格式不合法");
@@ -165,13 +216,7 @@ fn main() {
         gpt.schema_version >= 2,
         "catalog/gpt.json 的 schema_version 至少应为 2"
     );
-    for lang in &catalog.languages {
-        assert!(
-            l10n_filled(&lang.label),
-            "语言 {} 的多语 label 有空值",
-            lang.code
-        );
-    }
+    validate_registry(&registry);
     for voice in &catalog.voices {
         assert!(l10n_filled(&voice.name), "音色 {} 的 name 有空值", voice.id);
         assert!(
@@ -195,6 +240,9 @@ fn main() {
         ("catalog/gpt.json", &gpt.dialects, &gpt.models),
     ] {
         assert!(!models.is_empty(), "{path} 的 models[] 是空的");
+        for (id, dialect) in dialects {
+            validate_dialect_languages(path, id, dialect, &registry);
+        }
         for model in models {
             let dialect = dialects.get(&model.dialect).unwrap_or_else(|| {
                 panic!(
@@ -231,6 +279,8 @@ fn main() {
     }
 
     let aliyun_default = recommended(catalog.models.iter(), "catalog/aliyun.json");
+    // 首次启动种子：阿里云推荐模型所属方言的缺省语言。
+    let aliyun_langs = &catalog.dialects[&aliyun_default.dialect].languages;
     let gemini_default = recommended(gemini.models.iter(), "catalog/gemini.json");
     let gpt_default = recommended(gpt.models.iter(), "catalog/gpt.json");
     assert_eq!(
@@ -274,34 +324,23 @@ fn main() {
             .starts_with("wss://generativelanguage.googleapis.com/"),
         "Gemini WebSocket 必须使用官方 generativelanguage 端点"
     );
-    assert_eq!(
-        catalog.languages.len(),
-        catalog.expected_counts.languages,
-        "语言表数量与 expected_counts 不一致"
-    );
-    assert_eq!(
-        catalog.languages.iter().filter(|l| l.audio_output).count(),
-        catalog.expected_counts.audio_output_languages,
-        "语音输出语言数量与 expected_counts 不一致"
-    );
+    for id in ["qwen3.8", "qwen3.5"] {
+        let langs = &catalog.dialects[id].languages;
+        assert_eq!(
+            langs.target_audio.resolve(&registry, id).len(),
+            catalog.expected_counts.qwen_target_audio,
+            "{id}：语音+文字目标语言数量与 expected_counts 不一致"
+        );
+        assert_eq!(
+            langs.target_text_only.resolve(&registry, id).len(),
+            catalog.expected_counts.qwen_target_text_only,
+            "{id}：仅文字目标语言数量与 expected_counts 不一致"
+        );
+    }
     assert_eq!(
         catalog.voices.len(),
         catalog.expected_counts.voices,
         "音色数量与 expected_counts 不一致"
-    );
-    assert!(
-        catalog
-            .languages
-            .iter()
-            .any(|l| l.code == catalog.defaults.target_language),
-        "默认目标语言不在语言表"
-    );
-    assert!(
-        catalog
-            .languages
-            .iter()
-            .any(|l| l.code == catalog.defaults.listen_target_language),
-        "听取目标语言不在语言表"
     );
     assert!(
         catalog
@@ -311,14 +350,6 @@ fn main() {
         "默认音色不在音色表"
     );
 
-    let mut language_ids = HashSet::new();
-    assert!(
-        catalog
-            .languages
-            .iter()
-            .all(|l| language_ids.insert(&l.code)),
-        "语言代码不应重复"
-    );
     let mut voice_ids = HashSet::new();
     assert!(
         catalog.voices.iter().all(|v| voice_ids.insert(&v.id)),
@@ -371,8 +402,8 @@ fn main() {
     ));
     out.push_str(&format!(
         "pub const DEFAULT_TARGET_LANGUAGE: &str = {};\npub const LISTEN_TARGET_LANGUAGE: &str = {};\npub const DEFAULT_VOICE: &str = {};\n",
-        lit(&catalog.defaults.target_language),
-        lit(&catalog.defaults.listen_target_language),
+        lit(&aliyun_langs.default_speak_target),
+        lit(&aliyun_langs.default_listen_target),
         lit(&catalog.defaults.voice)
     ));
 
@@ -427,7 +458,7 @@ fn main() {
     ] {
         for (id, dialect) in dialects {
             out.push_str(&format!(
-                "    DialectInfo {{ id: {}, label: {}, provider: {}, shape: {}, match_prefixes: &[{}], transcription_model: {} }},\n",
+                "    DialectInfo {{ id: {}, label: {}, provider: {}, shape: {}, match_prefixes: &[{}], transcription_model: {}, languages: {} }},\n",
                 lit(id),
                 lit(&dialect.label.zh),
                 lit(provider_id),
@@ -446,24 +477,24 @@ fn main() {
                     .transcription_model
                     .as_deref()
                     .filter(|model| !model.trim().is_empty())
-                    .map_or_else(|| "None".to_string(), lit)
+                    .map_or_else(|| "None".to_string(), lit),
+                dialect_languages_literal(id, &dialect.languages, &registry)
             ));
         }
     }
     out.push_str("];\n");
-    out.push_str("pub const LANGUAGE_LABELS: &[(&str, &str)] = &[\n");
-    for language in &catalog.languages {
+    out.push_str("pub const LANGUAGES: &[LanguageInfo] = &[\n");
+    for language in &registry.languages {
         out.push_str(&format!(
-            "    ({}, {}),\n",
+            "    LanguageInfo {{ code: {}, name_en: {} }},\n",
             lit(&language.code),
-            lit(&language.label.zh)
+            lit(&language.en)
         ));
     }
     out.push_str("];\n");
-
-    out.push_str("pub const AUDIO_OUTPUT_LANGUAGES: &[&str] = &[\n");
-    for language in catalog.languages.iter().filter(|l| l.audio_output) {
-        out.push_str(&format!("    {},\n", lit(&language.code)));
+    out.push_str("pub const LANGUAGE_ALIASES: &[(&str, &str)] = &[\n");
+    for (alias, code) in &registry.aliases {
+        out.push_str(&format!("    ({}, {}),\n", lit(alias), lit(code)));
     }
     out.push_str("];\n");
 
@@ -525,4 +556,116 @@ fn shape_variant(shape: &str) -> &'static str {
         "qwen_flat_audio" => "Some(SessionShape::QwenFlatAudio)",
         other => panic!("未知的 session_shape {other:?}"),
     }
+}
+
+/// 登记表自检：码不重复、en 兜底名非空、别名键规范（小写、`-`）且指向登记过的码。
+fn validate_registry(registry: &Registry) {
+    let mut seen = HashSet::new();
+    for language in &registry.languages {
+        assert!(
+            !language.en.is_empty(),
+            "语言 {} 的 en 兜底名为空",
+            language.code
+        );
+        assert!(
+            seen.insert(language.code.as_str()),
+            "语言代码重复：{}",
+            language.code
+        );
+    }
+    for (alias, code) in &registry.aliases {
+        assert_eq!(
+            alias,
+            &alias.to_ascii_lowercase().replace('_', "-"),
+            "别名键 {alias:?} 必须是小写且用 `-`"
+        );
+        assert!(
+            seen.contains(code.as_str()),
+            "别名 {alias:?} 指向未登记的码 {code:?}"
+        );
+        assert!(
+            !seen.contains(alias.as_str()),
+            "别名 {alias:?} 与登记码冲突"
+        );
+    }
+}
+
+/// 一条方言的语言表自检：全部在登记表里、集合内不重复、语音/仅文字两组不相交、
+/// 缺省目标在各自的目标集合里、wire 表的键是本方言能说的码。
+fn validate_dialect_languages(path: &str, id: &str, dialect: &Dialect, registry: &Registry) {
+    let what = format!("{path} 方言 {id}");
+    let registered: HashSet<&str> = registry.languages.iter().map(|l| l.code.as_str()).collect();
+    let langs = &dialect.languages;
+    let source = langs.source.resolve(registry, &what);
+    let audio = langs.target_audio.resolve(registry, &what);
+    let text = langs.target_text_only.resolve(registry, &what);
+    for (name, set) in [
+        ("source", &source),
+        ("target_audio", &audio),
+        ("target_text_only", &text),
+    ] {
+        let mut seen = HashSet::new();
+        for code in set {
+            assert!(
+                registered.contains(code.as_str()),
+                "{what}：{name} 里的 {code:?} 不在登记表"
+            );
+            assert!(
+                seen.insert(code.as_str()),
+                "{what}：{name} 里 {code:?} 重复"
+            );
+        }
+    }
+    assert!(
+        audio.iter().all(|c| !text.contains(c)),
+        "{what}：同一个码不能既是语音+文字又是仅文字"
+    );
+    assert!(
+        !audio.is_empty() || !text.is_empty(),
+        "{what}：目标语言集合是空的"
+    );
+    for (kind, default) in [
+        ("default_speak_target", &langs.default_speak_target),
+        ("default_listen_target", &langs.default_listen_target),
+    ] {
+        assert!(
+            audio.contains(default) || text.contains(default),
+            "{what}：{kind} {default:?} 不在目标语言集合里"
+        );
+    }
+    for (canonical, wire) in &langs.wire {
+        assert!(
+            source.contains(canonical) || audio.contains(canonical) || text.contains(canonical),
+            "{what}：wire 表的 {canonical:?} 不是本方言支持的码"
+        );
+        assert!(
+            !wire.is_empty(),
+            "{what}：wire 表里 {canonical:?} 的线上码为空"
+        );
+    }
+}
+
+fn codes_literal(codes: &[String]) -> String {
+    format!(
+        "&[{}]",
+        codes.iter().map(|c| lit(c)).collect::<Vec<_>>().join(", ")
+    )
+}
+
+fn dialect_languages_literal(id: &str, langs: &DialectLanguages, registry: &Registry) -> String {
+    let wire = langs
+        .wire
+        .iter()
+        .map(|(canonical, wire)| format!("({}, {})", lit(canonical), lit(wire)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "DialectLanguages {{ source: {}, target_audio: {}, target_text_only: {}, wire: &[{}], default_speak_target: {}, default_listen_target: {} }}",
+        codes_literal(&langs.source.resolve(registry, id)),
+        codes_literal(&langs.target_audio.resolve(registry, id)),
+        codes_literal(&langs.target_text_only.resolve(registry, id)),
+        wire,
+        lit(&langs.default_speak_target),
+        lit(&langs.default_listen_target),
+    )
 }

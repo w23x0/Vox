@@ -77,13 +77,25 @@ export function normalizeSettings(settings: Settings): Settings {
   s.aliyun_endpoint = /^wss?:\/\//i.test(endpoint) ? endpoint : "";
   if (!catalog.supportsVoiceClone(s.speak.provider)) s.speak.voice_clone_frequency = null;
   if (!catalog.supportsSourceLanguage(s.listen.provider)) s.listen.source_language = null;
-  if (
-    !catalog
-      .languageOptions(s.ui_language as "zh-CN" | "en")
-      .some((language) => language.value === s.speak.target_language)
-  ) {
-    s.speak.target_language = catalog.DEFAULT_TARGET_LANGUAGE;
-  }
+  // 语言只认当前模型的方言支持的那些（与 Rust `Settings::normalize` 同口径）：
+  // 目标语言不支持回方言缺省，源语言不支持回自动识别。
+  s.speak.target_language = catalog.resolveTarget(
+    s.speak.provider,
+    s.speak.model_name,
+    s.speak.target_language,
+    "speak",
+  ).code;
+  s.listen.target_language = catalog.resolveTarget(
+    s.listen.provider,
+    s.listen.model_name,
+    s.listen.target_language,
+    "listen",
+  ).code;
+  s.listen.source_language = catalog.resolveSource(
+    s.listen.provider,
+    s.listen.model_name,
+    s.listen.source_language,
+  ).code;
   if (!s.speak.voice || catalog.legacyRemovedVoiceIds().has(s.speak.voice)) {
     s.speak.voice = catalog.DEFAULT_VOICE;
   }

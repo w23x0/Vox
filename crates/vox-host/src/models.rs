@@ -424,21 +424,17 @@ fn provider_caps(provider: ModelProvider) -> EntryCapabilities {
     }
 }
 
-/// 语言明细只有阿里云的表里有（其余家只有一句"70+"，没有逐个代码）。
-fn provider_languages(provider: ModelProvider) -> Option<EntryLanguages> {
-    if provider != ModelProvider::Aliyun {
-        return None;
-    }
-    let audio: Vec<String> = catalog::AUDIO_OUTPUT_LANGUAGES
-        .iter()
-        .map(|c| c.to_string())
-        .collect();
-    let text_only = catalog::LANGUAGE_LABELS
-        .iter()
-        .map(|(c, _)| c.to_string())
-        .filter(|c| !audio.contains(c))
-        .collect();
-    Some(EntryLanguages { audio, text_only })
+/// 目标语言明细来自这个模型的方言（规范码）。
+fn provider_languages(provider: ModelProvider, id: &str) -> Option<EntryLanguages> {
+    let langs = catalog::dialect_for_model(provider, id)?.languages;
+    Some(EntryLanguages {
+        audio: langs.target_audio.iter().map(|c| c.to_string()).collect(),
+        text_only: langs
+            .target_text_only
+            .iter()
+            .map(|c| c.to_string())
+            .collect(),
+    })
 }
 
 fn is_recommended(provider: ModelProvider, id: &str) -> bool {
@@ -471,7 +467,7 @@ fn entry(
             }
         },
         languages: if adapted {
-            provider_languages(provider)
+            provider_languages(provider, id)
         } else {
             None
         },

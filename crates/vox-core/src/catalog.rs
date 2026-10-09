@@ -43,6 +43,75 @@ pub struct DialectInfo {
     pub match_prefixes: &'static [&'static str],
     /// 显式指定源文识别模型。`None` = 不发这个字段（服务端用缺省）。
     pub transcription_model: Option<&'static str>,
+    /// 这条方言会说哪些语言（规范码）、每个目标语言出不出语音、规范码 → 线上码。
+    pub languages: DialectLanguages,
+}
+
+/// 一条方言的语言能力。码一律是 `catalog/languages.json` 登记的规范码；
+/// 只有 `wire` 里写了的才和线上码不同名。
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct DialectLanguages {
+    pub source: &'static [&'static str],
+    /// 目标语言里"语音+文字"的那些。
+    pub target_audio: &'static [&'static str],
+    /// 目标语言里"仅文字"的那些。
+    pub target_text_only: &'static [&'static str],
+    /// 规范码 → 该服务商线上码（只列不同名的）。
+    pub wire: &'static [(&'static str, &'static str)],
+    pub default_speak_target: &'static str,
+    pub default_listen_target: &'static str,
+}
+
+/// 目标语言的输出形态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TargetMode {
+    /// 语音 + 文字。
+    Audio,
+    /// 仅文字（没有译音）。
+    TextOnly,
+}
+
+impl DialectLanguages {
+    /// 目标语言在这条方言里的输出形态；不支持返回 `None`。
+    pub fn target_mode(&self, code: &str) -> Option<TargetMode> {
+        if self.target_audio.contains(&code) {
+            Some(TargetMode::Audio)
+        } else if self.target_text_only.contains(&code) {
+            Some(TargetMode::TextOnly)
+        } else {
+            None
+        }
+    }
+
+    pub fn supports_source(&self, code: &str) -> bool {
+        self.source.contains(&code)
+    }
+
+    /// 规范码 → 线上码（目标语言）。不支持的目标语言返回 `None`。
+    pub fn wire_target<'a>(&self, code: &'a str) -> Option<&'a str> {
+        self.target_mode(code)?;
+        Some(self.wire_of(code))
+    }
+
+    /// 规范码 → 线上码（源语言）。不支持的源语言返回 `None`。
+    pub fn wire_source<'a>(&self, code: &'a str) -> Option<&'a str> {
+        self.supports_source(code).then(|| self.wire_of(code))
+    }
+
+    fn wire_of<'a>(&self, code: &'a str) -> &'a str {
+        self.wire
+            .iter()
+            .find(|(canonical, _)| *canonical == code)
+            .map_or(code, |(_, wire)| *wire)
+    }
+}
+
+/// 登记表里的一种语言。`name_en` 是 `Intl.DisplayNames` 给不出时的英文兜底名。
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct LanguageInfo {
+    pub code: &'static str,
+    pub name_en: &'static str,
 }
 
 /// 阿里云两条方言的 `session.update` 形状。
@@ -209,22 +278,107 @@ impl ActivationMode {
 
 // --- 查询 ------------------------------------------------------------------
 
-pub fn supports_audio_output(language: &str) -> bool {
-    AUDIO_OUTPUT_LANGUAGES.contains(&language)
+/// 登记表里有没有这个规范码。
+pub fn is_registered_language(code: &str) -> bool {
+    LANGUAGES.iter().any(|l| l.code == code)
 }
 
-pub fn language_label(code: &str) -> Option<&'static str> {
-    LANGUAGE_LABELS
-        .iter()
-        .find(|(c, _)| *c == code)
-        .map(|(_, l)| *l)
+/// 把任意写法的语言码收成登记表里的规范码。认不出返回 `None`。
+///
+/// **只用在设置迁移上**（旧设置文件里的值）。迁移之后，运行期各处只认登记表里的
+/// 规范码原样（[`is_registered_language`]），不再宽容别的写法。
+///
+/// 规则（按顺序）：去空白、转小写、`_` 换 `-`；整串是登记码就收下；整串是别名
+/// （`no`→`nb`、`tl`→`fil`、`iw`→`he`…）就换；否则取主语言子标签（`ja-JP`→`ja`、
+/// `zh-TW`→`zh`、`en_US`→`en`）再按前两条找。书写系统/区域差异登记表没有单独登记，
+/// 一律归到主语言。
+pub fn canonical_language(raw: &str) -> Option<&'static str> {
+    let key = raw.trim().to_ascii_lowercase().replace('_', "-");
+    let direct = |k: &str| -> Option<&'static str> {
+        LANGUAGES
+            .iter()
+            .find(|l| l.code == k)
+            .map(|l| l.code)
+            .or_else(|| {
+                LANGUAGE_ALIASES
+                    .iter()
+                    .find(|(alias, _)| *alias == k)
+                    .and_then(|(_, code)| LANGUAGES.iter().find(|l| l.code == *code))
+                    .map(|l| l.code)
+            })
+    };
+    direct(&key).or_else(|| {
+        key.split('-')
+            .next()
+            .filter(|primary| *primary != key)
+            .and_then(direct)
+    })
 }
 
+/// 登记表级的目标语言归一：不是登记过的规范码就回阿里云缺省。只给没有方言上下文的
+/// 调用方（热更新、探针）；有方言的地方用 [`normalize_speak_target`] / [`normalize_listen_target`]。
 pub fn normalize_language(code: &str) -> &'static str {
-    LANGUAGE_LABELS
-        .iter()
-        .find(|(c, _)| *c == code)
-        .map_or(DEFAULT_TARGET_LANGUAGE, |(c, _)| *c)
+    registered_code(code).unwrap_or(DEFAULT_TARGET_LANGUAGE)
+}
+
+fn registered_code(code: &str) -> Option<&'static str> {
+    LANGUAGES.iter().find(|l| l.code == code).map(|l| l.code)
+}
+
+/// 阿里云推荐模型的方言下，这个目标语言出不出译音。给没有模型上下文的调用方
+/// （探针）；会话里的判断走 `SessionParams::audio_enabled`，看自己模型的方言。
+pub fn supports_audio_output(language: &str) -> bool {
+    dialect_by_prefix(provider_info(ModelProvider::Aliyun).default_model)
+        .is_some_and(|d| d.languages.target_mode(language) == Some(TargetMode::Audio))
+}
+
+/// 对外说话的目标语言：规范化后必须是这个模型的方言支持的目标语言，否则回该方言缺省。
+pub fn normalize_speak_target(provider: ModelProvider, model: &str, raw: &str) -> &'static str {
+    normalize_target(
+        provider,
+        model,
+        raw,
+        |l| l.default_speak_target,
+        DEFAULT_TARGET_LANGUAGE,
+    )
+}
+
+/// 听人说话的目标语言，规则同上，缺省取方言的听取缺省。
+pub fn normalize_listen_target(provider: ModelProvider, model: &str, raw: &str) -> &'static str {
+    normalize_target(
+        provider,
+        model,
+        raw,
+        |l| l.default_listen_target,
+        LISTEN_TARGET_LANGUAGE,
+    )
+}
+
+fn normalize_target(
+    provider: ModelProvider,
+    model: &str,
+    raw: &str,
+    pick_default: fn(&DialectLanguages) -> &'static str,
+    no_dialect_default: &'static str,
+) -> &'static str {
+    let canonical = registered_code(raw);
+    match dialect_for_model(provider, model) {
+        Some(dialect) => canonical
+            .filter(|code| dialect.languages.target_mode(code).is_some())
+            .unwrap_or_else(|| pick_default(&dialect.languages)),
+        // 认不出方言的模型设置阶段就被归一掉了；万一到这里，只做登记表级判断。
+        None => canonical.unwrap_or(no_dialect_default),
+    }
+}
+
+/// 源语言（听人说话）：规范化后必须是这个模型的方言支持的源语言，否则 `None`（自动识别）。
+/// 宁可不锁识别，也不把服务端不认的码发上去换一次报错。
+pub fn normalize_source(provider: ModelProvider, model: &str, raw: &str) -> Option<&'static str> {
+    let canonical = registered_code(raw)?;
+    dialect_for_model(provider, model)?
+        .languages
+        .supports_source(canonical)
+        .then_some(canonical)
 }
 
 /// 音色 id 的显示名。只有 [`ordered_voices`] 用，不对外暴露。
@@ -538,5 +692,113 @@ mod tests {
         assert_eq!(normalize_key("F13"), None);
         assert_eq!(normalize_key(""), None);
         assert_eq!(key_options().len(), 26 + 10 + 12 + 3);
+    }
+
+    // --- 语言登记表 / 方言语言映射 ---------------------------------------
+
+    #[test]
+    fn canonical_language_keeps_every_registered_code_and_folds_legacy_spellings() {
+        assert_eq!(LANGUAGES.len(), 60);
+        for language in LANGUAGES {
+            assert_eq!(canonical_language(language.code), Some(language.code));
+        }
+        for (raw, want) in [
+            ("ja-JP", "ja"),
+            ("zh-CN", "zh"),
+            ("zh-TW", "zh"),
+            ("zh-Hant-TW", "zh"),
+            ("EN_us", "en"),
+            (" Ko ", "ko"),
+            ("no", "nb"),
+            ("nn", "nb"),
+            ("tl", "fil"),
+            ("iw", "he"),
+            ("in", "id"),
+            ("cmn", "zh"),
+        ] {
+            assert_eq!(canonical_language(raw), Some(want), "{raw:?}");
+        }
+        for junk in ["", "xx", "这不是语言代码", "-", "xx-JP"] {
+            assert_eq!(canonical_language(junk), None, "{junk:?}");
+        }
+    }
+
+    #[test]
+    fn dialect_target_modes_come_from_the_table() {
+        let qwen35 = dialect_by_prefix("qwen3.5-livetranslate-flash-realtime").unwrap();
+        assert_eq!(qwen35.languages.target_audio.len(), 29);
+        assert_eq!(qwen35.languages.target_text_only.len(), 31);
+        assert_eq!(qwen35.languages.target_mode("ja"), Some(TargetMode::Audio));
+        assert_eq!(
+            qwen35.languages.target_mode("yue"),
+            Some(TargetMode::TextOnly)
+        );
+        assert_eq!(qwen35.languages.target_mode("xx"), None);
+
+        // GPT 只有 13 个目标语言，瑞典语不在其中（阿里云的 29 个里有）。
+        let gpt = dialect_by_prefix("gpt-realtime-translate").unwrap();
+        assert_eq!(gpt.languages.target_audio.len(), 13);
+        assert_eq!(gpt.languages.target_mode("sv"), None);
+        assert_eq!(gpt.languages.target_mode("ja"), Some(TargetMode::Audio));
+        assert_eq!(qwen35.languages.target_mode("sv"), Some(TargetMode::Audio));
+
+        // 每条方言的缺省目标都在自己的目标集合里（构建期也钉死，这里防运行时数据漂移）。
+        for dialect in DIALECTS {
+            let l = &dialect.languages;
+            assert!(
+                l.target_mode(l.default_speak_target).is_some(),
+                "{}",
+                dialect.id
+            );
+            assert!(
+                l.target_mode(l.default_listen_target).is_some(),
+                "{}",
+                dialect.id
+            );
+        }
+    }
+
+    #[test]
+    fn wire_codes_follow_the_dialect_table_and_default_to_the_canonical_code() {
+        // 真数据里三家今天都同名（wire 表为空）。
+        for dialect in DIALECTS {
+            assert!(dialect.languages.wire.is_empty(), "{}", dialect.id);
+            assert_eq!(dialect.languages.wire_target("ja"), Some("ja"));
+        }
+        // 机制本身：表里写了的翻，没写的原样，方言不支持的是 None。
+        let langs = DialectLanguages {
+            source: &["nb", "ja", "en"],
+            target_audio: &["ja"],
+            target_text_only: &["nb"],
+            wire: &[("nb", "no")],
+            default_speak_target: "ja",
+            default_listen_target: "ja",
+        };
+        assert_eq!(langs.wire_target("nb"), Some("no"));
+        assert_eq!(langs.wire_target("ja"), Some("ja"));
+        assert_eq!(langs.wire_target("en"), None, "en 只是源语言，不是目标语言");
+        assert_eq!(langs.wire_source("nb"), Some("no"));
+        assert_eq!(langs.wire_source("en"), Some("en"));
+        assert_eq!(langs.wire_source("de"), None);
+    }
+
+    #[test]
+    fn switching_model_falls_back_to_the_new_dialects_default() {
+        let aliyun = (
+            ModelProvider::Aliyun,
+            "qwen3.8-livetranslate-flash-realtime",
+        );
+        let gpt = (ModelProvider::Gpt, "gpt-realtime-translate");
+        // 粤语阿里云能当目标（仅文字），GPT 不支持 → 回 GPT 方言的缺省。
+        assert_eq!(normalize_speak_target(aliyun.0, aliyun.1, "yue"), "yue");
+        assert_eq!(normalize_speak_target(gpt.0, gpt.1, "yue"), "ja");
+        assert_eq!(normalize_listen_target(gpt.0, gpt.1, "yue"), "zh");
+        assert_eq!(normalize_speak_target(gpt.0, gpt.1, "ko"), "ko");
+        // 运行期只认规范码原样：别的写法归迁移管，到这里就当认不出。
+        assert_eq!(normalize_speak_target(gpt.0, gpt.1, "ko-KR"), "ja");
+        // 源语言：阿里云 60 种都行，认不出的回自动识别。
+        assert_eq!(normalize_source(aliyun.0, aliyun.1, "en"), Some("en"));
+        assert_eq!(normalize_source(aliyun.0, aliyun.1, "EN_us"), None);
+        assert_eq!(normalize_source(aliyun.0, aliyun.1, "xx"), None);
     }
 }

@@ -34,7 +34,7 @@ pub fn input_sample_rate() -> u32 {
 pub fn session_update(params: &SessionParams) -> String {
     let mut audio = Map::new();
     let mut output = Map::new();
-    output.insert("language".to_string(), json!(params.target_language));
+    output.insert("language".to_string(), json!(params.wire_target()));
     audio.insert("output".to_string(), Value::Object(output));
 
     if catalog::supports(ModelProvider::Gpt, Capability::SourceLanguage)

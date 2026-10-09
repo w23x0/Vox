@@ -21,6 +21,7 @@
 import aliyun from "../../../catalog/aliyun.json";
 import gemini from "../../../catalog/gemini.json";
 import gpt from "../../../catalog/gpt.json";
+import registryData from "../../../catalog/languages.json";
 import type { ModelEntry, ModelProvider } from "./types";
 import type { VoxApi } from "./api";
 import type { UiLang } from "./i18n/types";
@@ -78,15 +79,53 @@ interface ProviderRaw {
   provider: { id: string; label: CatalogLabel; console_url: string };
   /** 多模型维护表；`recommended: true` 的那一条是"当前推荐模型"。 */
   models?: CatalogModelRaw[];
-  /** 方言表（协议形状 + 匹配前缀）。前端这轮只用它的存在与否，不读内容。 */
-  dialects?: Record<string, unknown>;
+  /** 方言表：匹配前缀 + 语言能力（源/目标语言集合、语音或仅文字、线上码映射）。 */
+  dialects?: Record<string, DialectRaw>;
   api: { api_key_placeholder?: string };
   capabilities: ProviderCapabilities;
-  languages?: { code: string; label: CatalogLabel; audio_output?: boolean }[];
   voices?: { id: string; name: CatalogLabel; description: CatalogLabel }[];
-  defaults?: { target_language: string; listen_target_language: string; voice: string };
+  defaults?: { voice: string };
   schema_version?: number;
   legacy_removed_voice_ids?: string[];
+}
+
+/** 语言集合：显式列表，或 `"all_registered"`（登记表全集）。 */
+type CodeSetRaw = string[] | "all_registered";
+
+/** 一条方言的语言能力，形状同 `catalog/*.json` 的 `dialects.*.languages`。 */
+interface DialectLanguagesRaw {
+  source: CodeSetRaw;
+  target_audio: CodeSetRaw;
+  target_text_only: CodeSetRaw;
+  /** 规范码 → 该服务商线上码（只列不同名的）。线上码只在 Rust 发报文时用，界面不读。 */
+  wire: Record<string, string>;
+  default_speak_target: string;
+  default_listen_target: string;
+}
+
+interface DialectRaw {
+  match_prefixes?: string[];
+  languages: DialectLanguagesRaw;
+}
+
+/** 展开后的方言语言表（`all_registered` 已按登记表展开）。 */
+export interface DialectLanguages {
+  source: string[];
+  target_audio: string[];
+  target_text_only: string[];
+  default_speak_target: string;
+  default_listen_target: string;
+}
+
+/** 目标语言的输出形态：语音+文字，或仅文字。 */
+export type TargetMode = "audio" | "text_only";
+
+/** 统一语言登记表（`catalog/languages.json`）：规范码 + 英文兜底名。 */
+const REGISTRY = registryData as unknown as { languages: { code: string; en: string }[] };
+const REGISTERED_CODES: string[] = REGISTRY.languages.map((l) => l.code);
+
+function resolveSet(set: CodeSetRaw): string[] {
+  return set === "all_registered" ? [...REGISTERED_CODES] : [...set];
 }
 
 /** 这家的推荐模型。目录必须给出恰好一条 `recommended`，否则这一层退回首条。 */
@@ -97,11 +136,20 @@ function recommended_model(raw: ProviderRaw): CatalogModelRaw {
 
 /** 内置 JSON（编译期打进二进制）解析成 registry 结构。 */
 function parse_data(raw: ProviderRaw): RegistryEntry {
-  const languages = (raw.languages ?? []).map((l) => ({
-    code: l.code,
-    label: l.label,
-    audio_output: l.audio_output ?? false,
-  }));
+  const dialects: Record<string, ResolvedDialect> = {};
+  for (const [id, dialect] of Object.entries(raw.dialects ?? {})) {
+    dialects[id] = {
+      id,
+      match_prefixes: dialect.match_prefixes ?? [],
+      languages: {
+        source: resolveSet(dialect.languages.source),
+        target_audio: resolveSet(dialect.languages.target_audio),
+        target_text_only: resolveSet(dialect.languages.target_text_only),
+        default_speak_target: dialect.languages.default_speak_target,
+        default_listen_target: dialect.languages.default_listen_target,
+      },
+    };
+  }
   const recommended = recommended_model(raw);
   return {
     provider: {
@@ -120,24 +168,26 @@ function parse_data(raw: ProviderRaw): RegistryEntry {
       },
     },
     models: raw.models ?? [],
-    languages,
+    dialects,
     voices: raw.voices ?? [],
-    defaults: raw.defaults ?? {
-      target_language: "",
-      listen_target_language: "",
-      voice: "",
-    },
+    defaults: raw.defaults ?? { voice: "" },
     legacy_removed_voice_ids: raw.legacy_removed_voice_ids ?? [],
   };
+}
+
+interface ResolvedDialect {
+  id: string;
+  match_prefixes: string[];
+  languages: DialectLanguages;
 }
 
 interface RegistryEntry {
   provider: ProviderCatalog;
   /** 这家登记在册的模型（维护表里的，不是官方列表接口拉回来的）。 */
   models: CatalogModelRaw[];
-  languages: { code: string; label: CatalogLabel; audio_output: boolean }[];
+  dialects: Record<string, ResolvedDialect>;
   voices: { id: string; name: CatalogLabel; description: CatalogLabel }[];
-  defaults: { target_language: string; listen_target_language: string; voice: string };
+  defaults: { voice: string };
   legacy_removed_voice_ids: string[];
 }
 
@@ -167,6 +217,9 @@ function notifyChanged() {
   version++;
   for (const fn of listeners) fn();
 }
+
+/** 覆盖版目录的最低 schema：4 起语言按方言声明（旧覆盖版没有这张表，读进来界面就没有语言可选）。 */
+const MIN_OVERRIDE_SCHEMA = 4;
 
 let initPromise: Promise<void> | null = null;
 
@@ -202,10 +255,10 @@ async function loadOverrides(): Promise<void> {
     try {
       const parsed = JSON.parse(text) as unknown;
       const entry = parse_data(parsed as ProviderRaw);
-      // 只认 schema_version >= 2（多语 label）的目录，否则保持内置。
+      // 只认 schema_version >= MIN_OVERRIDE_SCHEMA 的目录，否则保持内置。
       if (parsed && typeof parsed === "object" && "schema_version" in parsed) {
         const sv = (parsed as { schema_version?: number }).schema_version;
-        if (typeof sv !== "number" || sv < 2) continue;
+        if (typeof sv !== "number" || sv < MIN_OVERRIDE_SCHEMA) continue;
       }
       registry = { ...registry, [id]: entry };
       notifyChanged();
@@ -239,7 +292,7 @@ export async function reloadCatalog(): Promise<void> {
       const parsed = JSON.parse(text) as unknown;
       if (!(parsed && typeof parsed === "object" && "schema_version" in parsed)) continue;
       const sv = (parsed as { schema_version?: number }).schema_version;
-      if (typeof sv !== "number" || sv < 2) continue;
+      if (typeof sv !== "number" || sv < MIN_OVERRIDE_SCHEMA) continue;
       const entry = parse_data(parsed as ProviderRaw);
       registry = { ...registry, [id]: entry };
       notifyChanged();
@@ -296,29 +349,141 @@ export function providerLabel(provider: ModelProvider, uiLang: UiLang): string {
 
 // ─── 语言 ──────────────────────────────────────────────────────────────────────
 
-export function languageOptions(uiLang: UiLang): LabeledOption[] {
-  return (get("aliyun")?.languages ?? []).map((language) => ({
-    value: language.code,
-    label: l10n(language.label, uiLang),
-  }));
-}
+/** 界面语言 → `Intl` 用的 BCP-47 标签（三个界面语言本身就是合法标签）。 */
+const nameFormats = new Map<UiLang, Intl.DisplayNames | null>();
+const collators = new Map<UiLang, Intl.Collator>();
 
-export function sourceLanguageOptions(uiLang: UiLang, autoDetect: string): LabeledOption[] {
-  return [{ value: "", label: autoDetect }, ...languageOptions(uiLang)];
-}
-
-export function languageLabel(code: string, uiLang: UiLang): string {
-  const language = get("aliyun")?.languages.find((candidate) => candidate.code === code);
-  return language ? l10n(language.label, uiLang) : code;
-}
-
-export function supportsAudioOutput(language: string, provider: ModelProvider = "aliyun"): boolean {
-  const row = get(provider);
-  if (row?.provider.capabilities.voice_selection) {
-    const lang = row.languages.find((candidate) => candidate.code === language);
-    return lang ? lang.audio_output : false;
+function displayNames(uiLang: UiLang): Intl.DisplayNames | null {
+  if (!nameFormats.has(uiLang)) {
+    try {
+      nameFormats.set(uiLang, new Intl.DisplayNames([uiLang], { type: "language" }));
+    } catch {
+      nameFormats.set(uiLang, null);
+    }
   }
-  return (get("aliyun")?.languages ?? []).some((candidate) => candidate.code === language);
+  return nameFormats.get(uiLang) ?? null;
+}
+
+function collator(uiLang: UiLang): Intl.Collator {
+  let c = collators.get(uiLang);
+  if (!c) {
+    c = new Intl.Collator(uiLang);
+    collators.set(uiLang, c);
+  }
+  return c;
+}
+
+/**
+ * 语言名：交给 `Intl.DisplayNames` 按界面语言现算，不手写翻译。
+ * `Intl` 给不出（原样返回码、抛错）时用登记表的英文兜底名，登记表也没有就返回码本身。
+ */
+export function languageName(code: string, uiLang: UiLang): string {
+  try {
+    const name = displayNames(uiLang)?.of(code);
+    if (name && name.toLowerCase() !== code.toLowerCase()) return name;
+  } catch {
+    // 码形不合法时 `of` 会抛 RangeError：落到兜底名。
+  }
+  return REGISTRY.languages.find((l) => l.code === code)?.en ?? code;
+}
+
+/** 登记表是否登记过这个规范码。 */
+export function isRegisteredLanguage(code: string): boolean {
+  return REGISTERED_CODES.includes(code);
+}
+
+/** 模型 → 方言：先按 `models[]` 的显式 id，再按方言的 `match_prefixes`；认不出回这家推荐模型的方言。 */
+function dialectOf(provider: ModelProvider, model: string): ResolvedDialect | undefined {
+  const row = get(provider);
+  if (!row) return undefined;
+  const explicit = row.models.find((m) => m.id === model)?.dialect;
+  const byPrefix = Object.values(row.dialects).find((d) =>
+    d.match_prefixes.some((prefix) => model.startsWith(prefix)),
+  );
+  const own = (explicit ? row.dialects[explicit] : undefined) ?? byPrefix;
+  if (own) return own;
+  const fallback = row.models.find((m) => m.recommended)?.dialect;
+  return fallback ? row.dialects[fallback] : undefined;
+}
+
+/** 这个模型的方言语言表（目标/源语言集合与缺省）。 */
+export function dialectLanguages(provider: ModelProvider, model: string): DialectLanguages | null {
+  return dialectOf(provider, model)?.languages ?? null;
+}
+
+function sortedOptions(codes: readonly string[], uiLang: UiLang): LabeledOption[] {
+  const compare = collator(uiLang);
+  return codes
+    .map((code) => ({ value: code, label: languageName(code, uiLang) }))
+    .sort((a, b) => compare.compare(a.label, b.label));
+}
+
+/** 一组规范码的显示名，按界面语言排序（模型页展开行列语言用）。 */
+export function languageNames(codes: readonly string[], uiLang: UiLang): string[] {
+  return sortedOptions(codes, uiLang).map((option) => option.label);
+}
+
+/** 目标语言下拉：这个模型的方言支持的目标语言（语音+文字 ∪ 仅文字），按界面语言排序。 */
+export function targetLanguageOptions(
+  provider: ModelProvider,
+  model: string,
+  uiLang: UiLang,
+): LabeledOption[] {
+  const langs = dialectLanguages(provider, model);
+  return sortedOptions(langs ? [...langs.target_audio, ...langs.target_text_only] : [], uiLang);
+}
+
+/** 源语言下拉：首项是"自动识别"，其余是方言支持的源语言。 */
+export function sourceLanguageOptions(
+  provider: ModelProvider,
+  model: string,
+  uiLang: UiLang,
+  autoDetect: string,
+): LabeledOption[] {
+  const langs = dialectLanguages(provider, model);
+  return [{ value: "", label: autoDetect }, ...sortedOptions(langs?.source ?? [], uiLang)];
+}
+
+/** 这个目标语言在该模型的方言里是语音+文字还是仅文字；方言不支持返回 `null`。 */
+export function targetMode(provider: ModelProvider, model: string, code: string): TargetMode | null {
+  const langs = dialectLanguages(provider, model);
+  if (!langs) return null;
+  if (langs.target_audio.includes(code)) return "audio";
+  if (langs.target_text_only.includes(code)) return "text_only";
+  return null;
+}
+
+/** 该模型能不能为这个目标语言出译音。 */
+export function supportsAudioOutput(code: string, provider: ModelProvider, model: string): boolean {
+  return targetMode(provider, model, code) === "audio";
+}
+
+/**
+ * 目标语言归一：不被该模型的方言支持就回方言缺省（`speak` / `listen` 两条流水线缺省不同）。
+ * `changed` 告诉调用方"是不是被换掉了"，好发通知。
+ */
+export function resolveTarget(
+  provider: ModelProvider,
+  model: string,
+  code: string,
+  pipeline: "speak" | "listen",
+): { code: string; changed: boolean } {
+  const langs = dialectLanguages(provider, model);
+  if (!langs || targetMode(provider, model, code) !== null) return { code, changed: false };
+  const fallback = pipeline === "speak" ? langs.default_speak_target : langs.default_listen_target;
+  return { code: fallback, changed: true };
+}
+
+/** 源语言归一：方言不支持就回自动识别（`null`）。 */
+export function resolveSource(
+  provider: ModelProvider,
+  model: string,
+  code: string | null,
+): { code: string | null; changed: boolean } {
+  if (code === null || code === "") return { code: null, changed: false };
+  const langs = dialectLanguages(provider, model);
+  if (langs?.source.includes(code)) return { code, changed: false };
+  return { code: null, changed: true };
 }
 
 // ─── 音色 ──────────────────────────────────────────────────────────────────────
@@ -370,7 +535,7 @@ export function modelLabel(name: string, uiLang: UiLang): string {
 export function builtinModelEntry(provider: ModelProvider, uiLang: UiLang): ModelEntry {
   const row = get(provider);
   const caps = row?.provider.capabilities;
-  const withLanguages = (row?.languages.length ?? 0) > 0 ? row : undefined;
+  const langs = dialectLanguages(provider, defaultModelForProvider(provider));
   return {
     id: defaultModelForProvider(provider),
     label: row ? l10n(row.provider.model_label, uiLang) : defaultModelForProvider(provider),
@@ -384,12 +549,7 @@ export function builtinModelEntry(provider: ModelProvider, uiLang: UiLang): Mode
       source_language: caps?.source_language ?? false,
       hot_update_language: caps?.hot_update_language ?? false,
     },
-    languages: withLanguages
-      ? {
-          audio: withLanguages.languages.filter((l) => l.audio_output).map((l) => l.code),
-          text_only: withLanguages.languages.filter((l) => !l.audio_output).map((l) => l.code),
-        }
-      : null,
+    languages: langs ? { audio: langs.target_audio, text_only: langs.target_text_only } : null,
   };
 }
 
@@ -400,8 +560,10 @@ export function providerLanguageSummary(provider: ModelProvider): string | null 
 
 // ─── 首次启动种子（固定用内置，不被覆盖改） ────────────────────────────────
 
-/** 阿里云默认目标语言。界面上听的固定翻成中文。 */
-export const DEFAULT_TARGET_LANGUAGE = aliyun.defaults.target_language;
+/** 阿里云推荐模型所属方言的缺省目标语言（首次启动种子）。 */
+export const DEFAULT_TARGET_LANGUAGE =
+  BUILTIN.aliyun!.dialects[recommended_model(aliyun as unknown as ProviderRaw).dialect]!.languages
+    .default_speak_target;
 /** 首次兜底的模型名（阿里云那张表的推荐模型）。 */
 export const DEFAULT_MODEL_NAME = recommended_model(aliyun as unknown as ProviderRaw).id;
 /** 首次兜底的音色 id。 */

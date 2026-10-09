@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "verified_at": "2026-08-22",
   "provider": {
     "id": "gpt",
@@ -29,9 +29,19 @@
         "en": "GPT Realtime session dialect",
         "ja": "GPT Realtime セッション方言"
       },
-      "match_prefixes": [
-        "gpt-realtime-translate"
-      ]
+      "match_prefixes": ["gpt-realtime-translate"],
+      "languages": {
+        "source": "all_registered",
+        "target_audio": ["en", "es", "pt", "fr", "ja", "ru", "zh", "de", "ko", "hi", "id", "vi", "it"],
+        "target_text_only": [],
+        "wire": {},
+        "default_speak_target": "ja",
+        "default_listen_target": "zh",
+        "unverified": [
+          "[未核实] 目标语言 13 个（en es pt fr ja ru zh de ko hi id vi it）取自 catalog 现有的 \"70+ input, 13 output\" 与对 OpenAI 发布说明的记忆，未对官方页面逐项核对。",
+          "[未核实] 源语言 \"70+\" 没有逐个代码的官方清单，这里按登记表全集放行；产品不暴露 GPT 的源语言选择（source_language=false），不影响会话。"
+        ]
+      }
     }
   },
   "api": {

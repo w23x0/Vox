@@ -23,7 +23,7 @@ pub fn setup_frame(params: &SessionParams) -> String {
             "generationConfig": {
                 "responseModalities": ["AUDIO"],
                 "translationConfig": {
-                    "targetLanguageCode": params.target_language,
+                    "targetLanguageCode": params.wire_target(),
                     "echoTargetLanguage": true
                 }
             },

@@ -25,7 +25,7 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-use crate::catalog::{self, SessionShape};
+use crate::catalog::{self, DialectInfo, SessionShape, TargetMode};
 use crate::settings::AliyunRegion;
 use crate::usage::TurnUsage;
 
@@ -181,7 +181,32 @@ impl SessionParams {
     /// 这轮到底能不能出语音：要有音色，且目标语言支持语音输出。
     /// 目标语言不支持语音时，硬要 audio 会被服务端拒，所以这里先降级成纯文字。（坑）
     pub fn audio_enabled(&self) -> bool {
-        self.voice.is_some() && catalog::supports_audio_output(&self.target_language)
+        self.voice.is_some()
+            && self.dialect().is_some_and(|dialect| {
+                dialect.languages.target_mode(&self.target_language) == Some(TargetMode::Audio)
+            })
+    }
+
+    /// 这个模型的方言。认不出（设置阶段本应归一掉）就是 `None`。
+    fn dialect(&self) -> Option<&'static DialectInfo> {
+        catalog::dialect_by_prefix(&self.model_name)
+    }
+
+    /// 目标语言的**线上码**：规范码经方言的映射表翻成服务商认的写法再发。
+    /// 方言不认这个目标语言（或认不出方言）时原样发规范码。
+    pub fn wire_target(&self) -> &str {
+        self.dialect()
+            .and_then(|dialect| dialect.languages.wire_target(&self.target_language))
+            .unwrap_or(&self.target_language)
+    }
+
+    /// 源语言的线上码。没选、或方言不支持这个源语言时是 `None`（= 自动识别，不锁识别）。
+    pub fn wire_source(&self) -> Option<&str> {
+        let source = self.source_language.as_deref()?;
+        match self.dialect() {
+            Some(dialect) => dialect.languages.wire_source(source),
+            None => Some(source),
+        }
     }
 
     /// 有效音色。复刻模式下协议要求音色写死 `"default"`。
@@ -203,7 +228,7 @@ impl SessionParams {
         match catalog::dialect_by_prefix(&self.model_name).and_then(|dialect| dialect.shape) {
             // 认不出的模型不该走到建连（设置阶段就归一过）；万一到了这里，
             // 退回最保守的形状：只发翻译语言，不碰任何音频参数。
-            None => minimal_session_object(&self.target_language),
+            None => minimal_session_object(self.wire_target()),
             Some(SessionShape::QwenNestedAudio) => qwen38_session_object(self),
             Some(SessionShape::QwenFlatAudio) => qwen35_session_object(self),
         }
@@ -217,7 +242,7 @@ impl SessionParams {
     /// `input_audio_transcription` 对象：源语言与识别模型**都**没配就不发这个字段。
     fn transcription_object(&self) -> Option<Value> {
         let mut object = Map::new();
-        if let Some(language) = &self.source_language {
+        if let Some(language) = self.wire_source() {
             object.insert("language".into(), json!(language));
         }
         if let Some(model) = self.transcription_model() {
@@ -283,7 +308,7 @@ fn qwen38_session_object(params: &SessionParams) -> Value {
 
     session.insert(
         "translation".into(),
-        json!({ "language": params.target_language }),
+        json!({ "language": params.wire_target() }),
     );
     if let Some(transcription) = params.transcription_object() {
         session.insert("input_audio_transcription".into(), transcription);
@@ -313,7 +338,7 @@ fn qwen35_session_object(params: &SessionParams) -> Value {
 
     session.insert(
         "translation".into(),
-        json!({ "language": params.target_language }),
+        json!({ "language": params.wire_target() }),
     );
     if let Some(transcription) = params.transcription_object() {
         session.insert("input_audio_transcription".into(), transcription);
@@ -969,7 +994,7 @@ mod tests {
     #[test]
     fn language_without_voice_support_degrades_to_text() {
         let mut params = speak_params();
-        // 挑一个不在 AUDIO_OUTPUT_LANGUAGES 里的语言。
+        // 挑一个只支持文字的目标语言（方言的 `target_text_only` 里有它）。
         params.target_language = "yue".to_string();
         assert!(
             !catalog::supports_audio_output("yue"),
@@ -1421,5 +1446,30 @@ mod tests {
     fn sample_rates_match_the_old_client() {
         assert_eq!(INPUT_SAMPLE_RATE, 16_000);
         assert_eq!(OUTPUT_SAMPLE_RATE, 24_000);
+    }
+
+    #[test]
+    fn target_and_source_languages_go_out_as_wire_codes_and_text_only_is_per_dialect() {
+        // 同一个目标语言，各方言按自己的表判断出不出语音：阿里云的 sv 出语音，
+        // GPT 方言根本不认 sv（不在表里 → 不当语音目标）。
+        let mut aliyun = speak_params();
+        aliyun.target_language = "sv".to_string();
+        assert!(aliyun.audio_enabled());
+        let mut gpt = speak_params();
+        gpt.model_name = "gpt-realtime-translate".to_string();
+        gpt.target_language = "sv".to_string();
+        assert!(!gpt.audio_enabled());
+        // 线上码：真数据同名；认不出方言的模型名原样发规范码。
+        assert_eq!(aliyun.wire_target(), "sv");
+        let mut unknown = speak_params();
+        unknown.model_name = "nope".to_string();
+        unknown.source_language = Some("en".to_string());
+        assert_eq!(unknown.wire_target(), "ja");
+        assert_eq!(unknown.wire_source(), Some("en"));
+        // 方言不支持的源语言不发（= 自动识别）。
+        let mut gpt_src = speak_params();
+        gpt_src.model_name = "gpt-realtime-translate".to_string();
+        gpt_src.source_language = Some("klingon".to_string());
+        assert_eq!(gpt_src.wire_source(), None);
     }
 }

@@ -479,6 +479,18 @@ function ModelItem({
                 : (summary ?? "—")}
             </span>
           </div>
+          {model.languages && model.languages.audio.length > 0 ? (
+            <div className="sub-row">
+              <span>{t("models.langAudio")}</span>
+              <span>{catalog.languageNames(model.languages.audio, uiLang).join(t("models.listSep"))}</span>
+            </div>
+          ) : null}
+          {model.languages && model.languages.text_only.length > 0 ? (
+            <div className="sub-row">
+              <span>{t("models.langTextOnly")}</span>
+              <span>{catalog.languageNames(model.languages.text_only, uiLang).join(t("models.listSep"))}</span>
+            </div>
+          ) : null}
           <div className="sub-row">
             <span>{t("models.capVoices")}</span>
             <span>

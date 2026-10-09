@@ -28,9 +28,19 @@
         "en": "Gemini 3.5 Live session dialect",
         "ja": "Gemini 3.5 Live セッション方言"
       },
-      "match_prefixes": [
-        "gemini-3.5-live-translate-preview"
-      ]
+      "match_prefixes": ["gemini-3.5-live-translate-preview"],
+      "languages": {
+        "source": "all_registered",
+        "target_audio": "all_registered",
+        "target_text_only": [],
+        "wire": {},
+        "default_speak_target": "ja",
+        "default_listen_target": "zh",
+        "unverified": [
+          "[未核实] Gemini 3.5 Live Translate 的源/目标语言清单没有逐个代码的资料（catalog 只有 \"70+\"），按登记表全集放行并一律视为“语音+文字”。",
+          "[未核实] targetLanguageCode 接受裸码（如 ja）还是要区域码（如 ja-JP）未核实；现行报文发裸码，wire 表留空。"
+        ]
+      }
     }
   },
   "api": {
@@ -50,5 +60,5 @@
     "live_translation": "https://ai.google.dev/gemini-api/docs/live-api/live-translate",
     "rate_limits": "https://ai.google.dev/gemini-api/docs/rate-limits"
   },
-  "schema_version": 3
+  "schema_version": 4
 }

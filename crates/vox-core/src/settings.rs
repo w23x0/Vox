@@ -18,7 +18,7 @@ use crate::catalog::{
 use crate::hotkey::Hotkey;
 
 /// 配置结构版本号，用于迁移。
-pub const SETTINGS_VERSION: u32 = 2;
+pub const SETTINGS_VERSION: u32 = 3;
 
 /// 界面显示语言（UI locale）允许的取值。
 pub const UI_LANGUAGES: [&str; 3] = ["zh-CN", "ja-JP", "en"];
@@ -402,7 +402,35 @@ impl Settings {
             self.speak.model_name = legacy.clone();
             self.listen.model_name = legacy;
         }
+        if self.version < 3 {
+            self.migrate_languages();
+        }
         self.version = SETTINGS_VERSION;
+    }
+
+    /// v3：设置里的语言值一律改存登记表的规范码（`ja-JP`→`ja`、`no`→`nb`、`tl`→`fil`…，
+    /// 规则见 [`catalog::canonical_language`]）。认不出的值原样留着，交给 `normalize`
+    /// 回落到方言缺省。`voice_by_language` 的键同样迁移；新旧写法撞键时规范码那一条优先。
+    fn migrate_languages(&mut self) {
+        fn canon(value: &mut String) {
+            if let Some(code) = catalog::canonical_language(value) {
+                *value = code.to_string();
+            }
+        }
+        canon(&mut self.speak.target_language);
+        canon(&mut self.listen.target_language);
+        if let Some(source) = self.listen.source_language.as_mut() {
+            canon(source);
+        }
+        let old = std::mem::take(&mut self.speak.voice_by_language);
+        let (already, legacy): (Vec<_>, Vec<_>) = old
+            .into_iter()
+            .partition(|(key, _)| catalog::canonical_language(key) == Some(key.as_str()));
+        self.speak.voice_by_language.extend(already);
+        for (key, voice) in legacy {
+            let key = catalog::canonical_language(&key).map_or(key, str::to_string);
+            self.speak.voice_by_language.entry(key).or_insert(voice);
+        }
     }
 
     /// 把所有越界值拽回合法范围。
@@ -424,12 +452,17 @@ impl Settings {
         speak.speak_translation = true;
         speak.model_name =
             catalog::normalize_model_for(speak.provider, &speak.model_name).to_string();
-        speak.target_language = catalog::normalize_language(&speak.target_language).to_string();
+        speak.target_language = catalog::normalize_speak_target(
+            speak.provider,
+            &speak.model_name,
+            &speak.target_language,
+        )
+        .to_string();
         if !catalog::voice_available(&speak.target_language, &speak.voice) {
             speak.voice = catalog::default_voice_for_language(&speak.target_language);
         }
         speak.voice_by_language.retain(|lang, voice| {
-            catalog::language_label(lang).is_some() && catalog::voice_available(lang, voice)
+            catalog::is_registered_language(lang) && catalog::voice_available(lang, voice)
         });
         speak
             .voice_by_language
@@ -445,13 +478,16 @@ impl Settings {
 
         // 听人说话：目标语言表外的代码退回中文（不是对外说话那份缺省）。
         let listen = &mut self.listen;
-        if catalog::language_label(&listen.target_language).is_none() {
-            listen.target_language = LISTEN_TARGET_LANGUAGE.to_string();
-        }
         // 听人说话始终保留字幕，只把是否念出来交给用户选择。
         listen.show_translation = true;
         listen.model_name =
             catalog::normalize_model_for(listen.provider, &listen.model_name).to_string();
+        listen.target_language = catalog::normalize_listen_target(
+            listen.provider,
+            &listen.model_name,
+            &listen.target_language,
+        )
+        .to_string();
         if !catalog::voice_available(&listen.target_language, &listen.voice) {
             listen.voice = catalog::default_voice_for_language(&listen.target_language);
         }
@@ -462,12 +498,12 @@ impl Settings {
             }
         }
         listen.hotkey = listen.hotkey.take().filter(|hk| hk.is_valid());
-        // 源语言只认界面那份语言表；表外的代码（手改配置、拼错）一律丢回自动识别。
+        // 源语言只认当前模型的方言支持的那些；表外的代码（手改配置、拼错）一律丢回自动识别。
         // 宁可不锁识别，也不要把一个服务端不认的代码发上去换一次报错。
-        listen.source_language = listen
-            .source_language
-            .take()
-            .filter(|lang| catalog::language_label(lang).is_some());
+        listen.source_language = listen.source_language.take().and_then(|lang| {
+            catalog::normalize_source(listen.provider, &listen.model_name, &lang)
+                .map(str::to_string)
+        });
         if !catalog::supports(listen.provider, Capability::SourceLanguage) {
             listen.source_language = None;
         }
@@ -593,7 +629,7 @@ mod tests {
     #[test]
     fn v1_shared_model_migrates_to_both_pipelines() {
         let s = Settings::from_json(r#"{"version":1,"model_name":"retired-model"}"#);
-        assert_eq!(s.version, 2);
+        assert_eq!(s.version, SETTINGS_VERSION);
         assert_eq!(s.speak.model_name, DEFAULT_MODEL_NAME);
         assert_eq!(s.listen.model_name, DEFAULT_MODEL_NAME);
         let saved: serde_json::Value = serde_json::from_str(&s.to_json()).unwrap();
@@ -862,5 +898,67 @@ mod tests {
         original.normalize();
         let restored = Settings::from_json(&original.to_json());
         assert_eq!(restored, original);
+    }
+
+    #[test]
+    fn v2_language_values_migrate_to_canonical_codes() {
+        // 现存的每一个取值（登记表 60 码）原样保留。
+        for language in catalog::LANGUAGES {
+            let text = format!(
+                r#"{{"version":2,"speak":{{"target_language":"{c}"}},"listen":{{"target_language":"{c}","source_language":"{c}"}}}}"#,
+                c = language.code
+            );
+            let s = Settings::from_json(&text);
+            assert_eq!(s.speak.target_language, language.code);
+            assert_eq!(s.listen.target_language, language.code);
+            assert_eq!(s.listen.source_language.as_deref(), Some(language.code));
+        }
+        // 区域写法、旧 ISO 码、大小写、下划线 → 规范码；voice_by_language 的键一并迁移，
+        // 新旧写法撞键时规范码那一条优先。
+        let s = Settings::from_json(
+            r#"{"version":2,
+                "speak":{"target_language":"ko-KR",
+                         "voice_by_language":{"zh-CN":"Old","zh":"Keep","no":"Nor","ja_JP":"Ja"}},
+                "listen":{"target_language":"EN_us","source_language":"tl"}}"#,
+        );
+        assert_eq!(s.version, SETTINGS_VERSION);
+        assert_eq!(s.speak.target_language, "ko");
+        assert_eq!(s.listen.target_language, "en");
+        assert_eq!(s.listen.source_language.as_deref(), Some("fil"));
+        assert_eq!(
+            s.speak.voice_by_language.get("zh").map(String::as_str),
+            Some("Keep")
+        );
+        assert_eq!(
+            s.speak.voice_by_language.get("nb").map(String::as_str),
+            Some("Nor")
+        );
+        assert!(!s.speak.voice_by_language.contains_key("zh-CN"));
+        assert!(!s.speak.voice_by_language.contains_key("no"));
+        // 认不出的值不会被乱猜，落到方言缺省。
+        let s = Settings::from_json(
+            r#"{"version":2,"speak":{"target_language":"klingon"},"listen":{"target_language":"??","source_language":"??"}}"#,
+        );
+        assert_eq!(s.speak.target_language, DEFAULT_TARGET_LANGUAGE);
+        assert_eq!(s.listen.target_language, LISTEN_TARGET_LANGUAGE);
+        assert_eq!(s.listen.source_language, None);
+    }
+
+    #[test]
+    fn language_not_supported_by_the_chosen_model_falls_back_to_its_default() {
+        // GPT 的方言没有粤语目标：存着粤语 + GPT 的设置，加载后回 GPT 方言缺省。
+        let s = Settings::from_json(
+            r#"{"version":3,
+                "speak":{"provider":"gpt","model_name":"gpt-realtime-translate","target_language":"yue"},
+                "listen":{"provider":"gpt","model_name":"gpt-realtime-translate","target_language":"sv"}}"#,
+        );
+        assert_eq!(s.speak.target_language, "ja");
+        assert_eq!(s.listen.target_language, "zh");
+        // 同样的语言在阿里云方言里是合法的，原样保留。
+        let s = Settings::from_json(
+            r#"{"version":3,"speak":{"target_language":"yue"},"listen":{"target_language":"sv"}}"#,
+        );
+        assert_eq!(s.speak.target_language, "yue");
+        assert_eq!(s.listen.target_language, "sv");
     }
 }

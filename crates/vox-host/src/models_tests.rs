@@ -248,7 +248,7 @@ fn openai_sample_filters_to_realtime_translate() {
         by_id(&list, "gpt-realtime-translate-2026-08-01").adapted,
         "前缀认同族"
     );
-    assert!(list.models[0].languages.is_none());
+    assert!(list.models[0].languages.is_some());
     assert_eq!(fake.seen.borrow()[0].0, "https://api.openai.com/v1/models");
 }
 
