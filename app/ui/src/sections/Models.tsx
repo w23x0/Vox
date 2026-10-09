@@ -16,28 +16,6 @@ import { Dropdown } from "../ui/controls";
 import { IconChevron, IconExternal, IconRefresh, IconSave } from "../ui/icons";
 import { useToast } from "../ui/toast";
 
-/* ---- 密钥末四位：只记在本机，用来显示「已配置 ••••xxxx」----
-   后端快照里只有「配没配」一位，拿不到末四位；这里在保存那一刻记下，清除时删掉。 */
-
-const tailKey = (provider: ModelProvider) => `vox.keytail.${provider}`;
-
-function readTail(provider: ModelProvider): string {
-  try {
-    return localStorage.getItem(tailKey(provider)) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-function writeTail(provider: ModelProvider, tail: string | null): void {
-  try {
-    if (tail) localStorage.setItem(tailKey(provider), tail);
-    else localStorage.removeItem(tailKey(provider));
-  } catch {
-    // 存不下就不显示末四位，不影响密钥本身
-  }
-}
-
 type ProviderStatus = "configured" | "none" | "error";
 
 export function ModelsPage() {
@@ -120,13 +98,14 @@ function KeyCard({ provider }: { provider: ModelProvider }) {
   const [hasDraft, setHasDraft] = useState(false);
   const [replacing, setReplacing] = useState(false);
   const [busy, setBusy] = useState<"save" | "clear" | null>(null);
-  const [tail, setTail] = useState(() => readTail(provider));
   const input = useRef<HTMLInputElement | null>(null);
   const busyRef = useRef(false);
   const name = catalog.providerLabel(provider, uiLang);
 
   const loading = snapshot === null;
   const hasKey = snapshot?.api_keys[provider] ?? false;
+  // 末四位由后端快照给；保存 / 清除后 reload() 会带回新值。
+  const tail = snapshot?.api_key_tails[provider] ?? "";
   const editing = !hasKey || replacing;
 
   // 点「更换」后输入框才出现，出现时直接聚焦。
@@ -144,8 +123,6 @@ function KeyCard({ provider }: { provider: ModelProvider }) {
     setHasDraft(false);
     try {
       await api.setApiKey(provider, key);
-      writeTail(provider, key.slice(-4));
-      setTail(key.slice(-4));
       setReplacing(false);
       reload();
       void fetchModels(api, provider, true);
@@ -169,8 +146,6 @@ function KeyCard({ provider }: { provider: ModelProvider }) {
     setBusy("clear");
     try {
       await api.setApiKey(provider, "");
-      writeTail(provider, null);
-      setTail("");
       reload();
       void fetchModels(api, provider, true);
       toast("success", t("models.clearedToast", { name }));

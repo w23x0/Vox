@@ -28,6 +28,7 @@ pub mod control;
 pub mod core;
 pub mod entry;
 pub mod events;
+pub mod models;
 pub mod paths;
 pub mod persist;
 pub mod report;

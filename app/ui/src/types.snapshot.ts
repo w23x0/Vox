@@ -209,6 +209,8 @@ export interface ControlStatus {
 export interface Snapshot {
   settings: Settings;
   api_keys: Record<string, boolean>;
+  /** 每家密钥的末 4 位；没配密钥（或密钥短到不该露）为 null。只用来认钥匙，不是密钥本身。 */
+  api_key_tails: Record<string, string | null>;
   speak: PipelineSnapshot;
   listen: PipelineSnapshot;
   mic_active: boolean;

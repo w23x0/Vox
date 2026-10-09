@@ -58,6 +58,10 @@ export function createMockApi(): VoxApi {
   const apiKeys = Object.fromEntries(
     catalog.providerIds().map((provider) => [provider, false]),
   ) as Record<string, boolean>;
+  /** 假密钥末四位（真后端由快照给）。 */
+  const apiKeyTails: Record<string, string | null> = Object.fromEntries(
+    catalog.providerIds().map((provider) => [provider, null]),
+  );
   let virtualCableInstalled = true;
   let virtualCableStatus:
     | "installed"
@@ -369,6 +373,7 @@ export function createMockApi(): VoxApi {
     return {
       settings: cloneSettings(settings),
       api_keys: { ...apiKeys },
+      api_key_tails: { ...apiKeyTails },
       speak: snap("speak"),
       listen: snap("listen"),
       mic_active: micActive,
@@ -434,6 +439,7 @@ export function createMockApi(): VoxApi {
     if (params.get("cold") === "1") return;
     for (const provider of catalog.providerIds()) {
       apiKeys[provider] = true;
+      apiKeyTails[provider] = "a1b2";
     }
     const app = MOCK_APPS[0];
     if (app) {
@@ -490,6 +496,7 @@ export function createMockApi(): VoxApi {
     },
     async setApiKey(provider, key) {
       apiKeys[provider] = key.trim().length > 0;
+      apiKeyTails[provider] = key.trim().length >= 8 ? key.trim().slice(-4) : null;
       notify("info", apiKeys[provider] ? "密钥已保存" : "密钥已清空");
     },
     async togglePipeline(pipeline) {

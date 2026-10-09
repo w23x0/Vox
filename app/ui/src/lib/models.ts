@@ -3,7 +3,7 @@
  *
  * - 正常情况下 `api.listModels` 总是 resolve 一份 `ModelList`（拉取失败时 `error` 非空，
  *   `models` 是后端的内置列表）；
- * - 命令本身调不通（真后端还没有 `list_models` 命令）时，退回前端 `catalog.ts` 的内置信息，
+ * - 命令本身调不通时，退回前端 `catalog.ts` 的内置信息，
  *   标 `source: "builtin"`、没有 `error`——界面上就是「内置列表」；
  * - 不缓存展示名以外的东西：内置兜底在渲染时按当前界面语言生成。
  */

@@ -102,6 +102,7 @@ pub fn run() {
             commands::snapshot,
             commands::update_settings,
             commands::set_api_key,
+            commands::list_models,
             commands::start_pipeline,
             commands::stop_pipeline,
             commands::toggle_pipeline,

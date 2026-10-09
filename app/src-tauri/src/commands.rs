@@ -27,6 +27,26 @@ pub fn snapshot(state: State<'_>) -> SnapshotDto {
     crate::dto::snapshot(&state)
 }
 
+// ─── 官方模型列表 ──────────────────────────────────────────────────────────────
+
+/// 向服务商官方接口要模型清单（没密钥 / 拉失败回内置列表，见 `vox_host::models`）。
+/// 阻塞式 HTTP 放到工作线程，不占命令线程。
+#[tauri::command]
+pub async fn list_models(
+    state: State<'_>,
+    provider: String,
+    refresh: bool,
+) -> Result<vox_host::models::ModelList, String> {
+    let provider = parse_provider(&provider)?;
+    let key = state.runtime.api_key_of(provider);
+    let region = state.runtime.settings().aliyun_region;
+    tauri::async_runtime::spawn_blocking(move || {
+        vox_host::models::list_models(provider, key.as_deref(), region, refresh)
+    })
+    .await
+    .map_err(|e| format!("模型列表任务失败：{e}"))
+}
+
 // ─── 设置 ──────────────────────────────────────────────────────────────────────
 
 #[tauri::command]

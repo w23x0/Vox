@@ -152,6 +152,9 @@ pub struct Snapshot {
     pub usage: UsageLedger,
     pub api_key_configured: bool,
     pub api_keys_configured: BTreeMap<ModelProvider, bool>,
+    /// 每家密钥的末 4 位（没配密钥 = `None`；不足 4 位的整串都当尾巴也不给，直接 `None`）。
+    /// 只给界面认"这是哪把钥匙"用，从不返回整串。
+    pub api_key_tails: BTreeMap<ModelProvider, Option<String>>,
     pub devices: DeviceSnapshot,
     /// **有效能力位**：界面按 `(位, reason)` 降级，出口（S1 的 `describe`）读同一份。
     ///
@@ -441,6 +444,15 @@ impl Runtime {
                 )
             })
             .collect();
+        let api_key_tails = ModelProvider::ALL
+            .into_iter()
+            .map(|provider| {
+                (
+                    provider,
+                    s.api_keys.get(&provider).and_then(|key| key_tail(key)),
+                )
+            })
+            .collect();
         Snapshot {
             settings: s.settings.clone(),
             speak: PipelineSnapshot::of(s.pipeline(Pipeline::Speak)),
@@ -453,6 +465,7 @@ impl Runtime {
                 .or_else(|| s.api_keys.get(&s.settings.listen.provider))
                 .is_some_and(|k| !k.is_empty()),
             api_keys_configured,
+            api_key_tails,
             devices: s.devices.clone(),
             capabilities: CapabilityReport::of(
                 &s.facts,
@@ -584,6 +597,17 @@ impl Runtime {
     pub fn api_key(&self) -> Option<String> {
         let s = self.inner.state.read();
         s.api_keys.get(&s.settings.speak.provider).cloned()
+    }
+
+    /// 指定服务商的密钥（没配 = `None`）。给 `list_models` 这类"替用户去问服务商"的调用用。
+    pub fn api_key_of(&self, provider: ModelProvider) -> Option<String> {
+        self.inner
+            .state
+            .read()
+            .api_keys
+            .get(&provider)
+            .filter(|key| !key.is_empty())
+            .cloned()
     }
 
     // -- 设置 ---------------------------------------------------------------
@@ -1352,12 +1376,47 @@ impl Runtime {
     }
 }
 
+/// 密钥末 4 位。太短（< 8 个字符）的串不给，免得"尾巴"就是整把钥匙。
+fn key_tail(key: &str) -> Option<String> {
+    let chars: Vec<char> = key.chars().collect();
+    (chars.len() >= 8).then(|| chars[chars.len() - 4..].iter().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::gate::{GateKind, GateState};
     use crate::settings::ListenTarget;
     use crate::usage::Stamp;
+
+    #[test]
+    fn snapshot_carries_per_provider_key_tail_and_never_the_whole_key() {
+        let rt = Runtime::new(Settings::default(), Arc::new(TestClock));
+        assert!(rt.snapshot().api_key_tails.values().all(Option::is_none));
+        rt.set_api_key_for(ModelProvider::Gpt, "sk-abcdef-WXYZ");
+        rt.set_api_key_for(ModelProvider::Gemini, "short");
+        let snap = rt.snapshot();
+        assert_eq!(
+            snap.api_key_tails[&ModelProvider::Gpt].as_deref(),
+            Some("WXYZ")
+        );
+        assert_eq!(
+            snap.api_key_tails[&ModelProvider::Gemini],
+            None,
+            "短串不露尾巴"
+        );
+        assert_eq!(snap.api_key_tails[&ModelProvider::Aliyun], None);
+        assert_eq!(
+            rt.api_key_of(ModelProvider::Gpt).as_deref(),
+            Some("sk-abcdef-WXYZ")
+        );
+        rt.set_api_key_for(ModelProvider::Gpt, "");
+        assert_eq!(
+            rt.snapshot().api_key_tails[&ModelProvider::Gpt],
+            None,
+            "清空后尾巴消失"
+        );
+    }
 
     struct TestClock;
 

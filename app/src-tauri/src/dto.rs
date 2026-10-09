@@ -92,6 +92,8 @@ pub struct SnapshotDto {
     /// 前端字段名 `has_api_key`；内核给的是 `api_key_configured`。
     pub has_api_key: bool,
     pub api_keys: ProviderKeyStatusDto,
+    /// 每家密钥的末 4 位（没配 = null）。前端字段名 `api_key_tails`。
+    pub api_key_tails: BTreeMap<String, Option<String>>,
     pub speak: PipelineSnapshotDto,
     pub listen: PipelineSnapshotDto,
     pub mic_active: bool,
@@ -164,6 +166,11 @@ pub fn snapshot(state: &AppState) -> SnapshotDto {
             .api_keys_configured
             .iter()
             .map(|(provider, configured)| (provider.as_id().to_string(), *configured))
+            .collect(),
+        api_key_tails: core
+            .api_key_tails
+            .iter()
+            .map(|(provider, tail)| (provider.as_id().to_string(), tail.clone()))
             .collect(),
         speak: pipeline_dto(&core.speak, state.gate_of(Pipeline::Speak, speak_running)),
         listen: pipeline_dto(
@@ -248,6 +255,11 @@ mod tests {
                     )
                 },
             )),
+            api_key_tails: BTreeMap::from_iter(
+                vox_core::settings::ModelProvider::ALL
+                    .into_iter()
+                    .map(|provider| (provider.as_id().to_string(), None)),
+            ),
             speak: pipe.clone(),
             listen: pipe,
             mic_active: false,
@@ -301,6 +313,7 @@ mod tests {
             "settings",
             "has_api_key",
             "api_keys",
+            "api_key_tails",
             "speak",
             "listen",
             "mic_active",

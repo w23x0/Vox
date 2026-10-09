@@ -23,6 +23,7 @@ vox-mcp = { path = "../vox-mcp" }
 vox-dsp.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 tracing.workspace = true
 parking_lot.workspace = true
 # 本地日期（用量按天/按月分桶）走挂钟时间 + 本地时区。只要 clock + std，不要默认那一堆。

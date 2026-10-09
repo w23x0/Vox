@@ -164,7 +164,7 @@ export interface Settings {
 
 export type AliyunRegion = "cn" | "intl";
 
-/* ---- list_models（待 Rust 侧 list_models 落地后进 types.snapshot.ts）---- */
+/* ---- list_models（Rust: `vox_host::models::ModelList`，字段名逐字一致）---- */
 
 /** 一个服务商的模型清单。契约见 docs/plans/UI-REDESIGN.md §6。 */
 export interface ModelList {
