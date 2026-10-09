@@ -20,7 +20,7 @@ Vox 只做实时语音翻译。当前启用三个服务商，各自的模型登�
   **表里只放官方模型列表接口给不了的东西**——发布时间、下线时间、价格一律不进这里。
 - `dialects{}`：协议方言。`session_shape` 决定 `session.update` 的报文形状
   （`qwen_nested_audio` = qwen3.8 的 `audio.output.voice`；
-  `qwen_flat_audio` = qwen3.5 的平铺 `voice` + `input_audio_format`/`output_audio_format`）；
+  `qwen_flat_audio` = qwen3.5 的平铺 `voice` + `modalities` + `input_audio_format`/`output_audio_format`）；
   `match_prefixes` 用来把官方列表里带发布日期后缀的同族模型（`…-2026-05-19`）
   认成同一条方言；`transcription_model` 为空 = 不显式发识别模型（用服务端缺省）。
   语言表、音色表、能力位**在服务商级**（下面），因为它们被 `Settings`、界面与能力位

@@ -268,9 +268,18 @@ fn qwen38_session_object(params: &SessionParams) -> Value {
 }
 
 /// **qwen3.5** 的会话形状：音色**平铺**，音频格式是 `pcm` 字符串
-/// （16 kHz 上行 / 24 kHz 下行由服务端缺省），模态与格式都不再收在 `audio` 下面。
+/// （16 kHz 上行 / 24 kHz 下行由服务端缺省），模态用 `modalities`，格式都不再收在 `audio` 下面。
 fn qwen35_session_object(params: &SessionParams) -> Value {
     let mut session = Map::new();
+    // 服务端缺省是 `["text","audio"]`：不发就关不掉语音，所以文字模式也要显式声明。
+    session.insert(
+        "modalities".into(),
+        if params.audio_enabled() {
+            json!(["text", "audio"])
+        } else {
+            json!(["text"])
+        },
+    );
     if let Some(voice) = params.effective_voice() {
         session.insert("voice".into(), json!(voice));
     }
@@ -779,9 +788,45 @@ mod tests {
         assert_eq!(session["output_audio_format"], "pcm");
         assert_eq!(session["translation"]["language"], "ja");
         // 3.8 那些收在 audio 下的字段在 3.5 里不认，一个都不能出现。
-        for nested in ["audio", "output_modalities", "modalities", "turn_detection"] {
+        for nested in ["audio", "output_modalities", "turn_detection"] {
             assert!(session.get(nested).is_none(), "3.5 不该发 {nested}");
         }
+        assert_eq!(session["modalities"], json!(["text", "audio"]));
+    }
+
+    /// 3.5 缺省会出语音：关语音（无音色 / 目标语言不支持语音）必须显式发 `["text"]`，
+    /// 否则服务端照样回音频。
+    #[test]
+    fn qwen35_text_only_asks_for_text_modality_explicitly() {
+        let session = SessionParams::text_only(LIVE35, "ja").to_session_object();
+        assert_eq!(session["modalities"], json!(["text"]));
+        assert!(session.get("voice").is_none(), "不要语音就别报音色");
+
+        let mut unsupported = speak_params_for(LIVE35);
+        unsupported.target_language = "yue".to_string();
+        let session = unsupported.to_session_object();
+        assert_eq!(session["modalities"], json!(["text"]));
+        assert!(session.get("voice").is_none());
+    }
+
+    /// 3.5 的声音复刻：音色写死 default，复刻两格按开关发出，关语音时不发。
+    #[test]
+    fn qwen35_voice_clone_fields_follow_the_switch() {
+        let mut params = speak_params_for(LIVE35);
+        params.clone_frequency = Some(CloneFrequency::Once);
+        let session = params.to_session_object();
+        assert_eq!(session["voice"], "default");
+        assert_eq!(session["enable_voice_clone"], true);
+        assert_eq!(session["voice_clone_options"]["frequency"], "once");
+
+        params.clone_frequency = None;
+        let session = params.to_session_object();
+        assert!(session.get("enable_voice_clone").is_none());
+        assert!(session.get("voice_clone_options").is_none());
+
+        let mut text = SessionParams::text_only(LIVE35, "ja");
+        text.clone_frequency = Some(CloneFrequency::Always);
+        assert!(text.to_session_object().get("enable_voice_clone").is_none());
     }
 
     /// 快照模型也得走它自己的方言：3.5 的快照不能被当成 3.8 发出去。

@@ -18,15 +18,16 @@ use tokio::runtime::{Handle, Runtime};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::{self, Message};
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+use tokio_tungstenite::WebSocketStream;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 use vox_core::cloud::{ConnectRequest, Incoming, Transport};
 use vox_core::ports::{PortError, PortResult};
 
-/// 套在 TLS 之下、tungstenite 之上的那层：只读方向拦超长 close 帧（见 [`CloseCatcher`]）。
-type WsStream = WebSocketStream<MaybeTlsStream<CloseCatcher<tokio::net::TcpStream>>>;
+/// 套在 **TLS 之上**（明文一侧）、tungstenite 之下的那层：只读方向拦超长 close 帧
+/// （见 [`CloseCatcher`]）。放在 TLS 之下看到的是密文，会把握手字节当 WS 帧去改。
+type WsStream = WebSocketStream<CloseCatcher<Wire>>;
 type WsSink = SplitSink<WsStream, Message>;
 type WsReader = SplitStream<WsStream>;
 
@@ -72,6 +73,8 @@ pub struct WsTransport {
     /// 自己起的 runtime（standalone 模式）。持有它只为保活，不直接用。
     _owned_rt: Option<Runtime>,
     conn: Option<ActiveConn>,
+    /// `wss://` 的证书信任配置。生产恒为 webpki 内置根；测试可注入自签根。
+    tls: Arc<rustls::ClientConfig>,
 }
 
 impl WsTransport {
@@ -98,7 +101,15 @@ impl WsTransport {
             handle,
             _owned_rt: owned_rt,
             conn: None,
+            tls: default_tls_config(),
         }
+    }
+
+    /// 只给测试：换掉信任的根证书，好对着本地自签的 TLS 服务端连。
+    #[cfg(test)]
+    fn with_tls_config(mut self, tls: Arc<rustls::ClientConfig>) -> Self {
+        self.tls = tls;
+        self
     }
 
     /// 如果还有连接就关掉，为下一次 `connect` 腾地方。
@@ -147,14 +158,14 @@ impl Transport for WsTransport {
         // 在 runtime 上执行握手，阻塞当前线程等结果。
         // 30 秒连接超时——DNS 解析 + TCP 三次握手 + TLS 协商 + HTTP 升级。
         let stream: WsStream = block_on_timeout(&self.handle, Duration::from_secs(30), async {
-            connect_with_close_catcher(req, caught.clone()).await
+            connect_with_close_catcher(req, caught.clone(), self.tls.clone()).await
         })
         .ok_or_else(|| PortError::new("连接超时（30 秒内未完成握手）"))?
         .map_err(map_connect_error)?
         .0;
 
         // 实时音频是频繁的小帧；关闭 Nagle，避免小包在等待 ACK 时平白多挨一拍。
-        if let Err(error) = stream.get_ref().get_ref().inner().set_nodelay(true) {
+        if let Err(error) = stream.get_ref().inner().tcp().set_nodelay(true) {
             debug!(%error, "TCP_NODELAY 设置失败，继续使用系统默认行为");
         }
 
@@ -236,33 +247,114 @@ fn block_on_timeout<T>(
     handle.block_on(async { tokio::time::timeout(limit, fut).await.ok() })
 }
 
-/// 自己建连（DNS + TCP + TLS + 升级），中途插一层 [`CloseCatcher`]。
+/// 自己建连（DNS + TCP + TLS + 升级），在 **TLS 之上** 插一层 [`CloseCatcher`]。
 ///
 /// 不走 `connect_async` 的原因只有一个：那一层没有地方插我们自己的字节旁路，
 /// 而超长 close 帧必须在**进 tungstenite 之前**处理（见 [`CloseCatcher`]）。
-/// DNS/端口/协议分支都照 `tokio_tungstenite::connect` 的写法抄。
+/// 层次：TCP → TLS（`wss` 才有）→ `CloseCatcher`（明文）→ WS 握手与帧。
+/// `tls` 是证书信任配置，生产用 [`default_tls_config`]，测试注入自签根。
 async fn connect_with_close_catcher(
     request: tungstenite::handshake::client::Request,
     caught: CaughtCloseSlot,
+    tls: Arc<rustls::ClientConfig>,
 ) -> Result<(WsStream, tungstenite::handshake::client::Response), tungstenite::Error> {
     use tungstenite::error::UrlError;
 
     let uri = request.uri();
     let host = uri
         .host()
-        .ok_or(tungstenite::Error::Url(UrlError::NoHostName))?;
-    let port = uri.port_u16().or_else(|| match uri.scheme_str() {
-        Some("wss") => Some(443),
-        Some("ws") => Some(80),
-        _ => None,
-    });
-    let port = port.ok_or(tungstenite::Error::Url(UrlError::UnsupportedUrlScheme))?;
+        .ok_or(tungstenite::Error::Url(UrlError::NoHostName))?
+        .to_string();
+    let secure = match uri.scheme_str() {
+        Some("wss") => true,
+        Some("ws") => false,
+        _ => return Err(tungstenite::Error::Url(UrlError::UnsupportedUrlScheme)),
+    };
+    let port = uri.port_u16().unwrap_or(if secure { 443 } else { 80 });
 
-    let socket = tokio::net::TcpStream::connect((host, port))
+    let socket = tokio::net::TcpStream::connect((host.as_str(), port))
         .await
         .map_err(tungstenite::Error::Io)?;
-    let guarded = CloseCatcher::new(socket, caught);
-    tokio_tungstenite::client_async_tls_with_config(request, guarded, None, None).await
+    let wire = if secure {
+        let name = rustls::pki_types::ServerName::try_from(host)
+            .map_err(|_| tungstenite::Error::Url(UrlError::NoHostName))?;
+        let stream = tokio_rustls::TlsConnector::from(tls)
+            .connect(name, socket)
+            .await
+            .map_err(tungstenite::Error::Io)?;
+        Wire::Tls(Box::new(stream))
+    } else {
+        Wire::Plain(socket)
+    };
+    tokio_tungstenite::client_async_with_config(request, CloseCatcher::new(wire, caught), None)
+        .await
+}
+
+/// 生产用的 TLS 信任配置：webpki 内置根证书。
+fn default_tls_config() -> Arc<rustls::ClientConfig> {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    Arc::new(
+        rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth(),
+    )
+}
+
+/// TCP 之上的明文/TLS 二选一。`CloseCatcher` 包的是它——也就是 TLS 解出来的明文。
+enum Wire {
+    Plain(tokio::net::TcpStream),
+    Tls(Box<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>),
+}
+
+impl Wire {
+    /// 最底下的 TCP 连接（设置 TCP 选项用）。
+    fn tcp(&self) -> &tokio::net::TcpStream {
+        match self {
+            Wire::Plain(tcp) => tcp,
+            Wire::Tls(tls) => tls.get_ref().0,
+        }
+    }
+}
+
+impl AsyncRead for Wire {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match &mut *self {
+            Wire::Plain(s) => Pin::new(s).poll_read(cx, buf),
+            Wire::Tls(s) => Pin::new(s.as_mut()).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for Wire {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match &mut *self {
+            Wire::Plain(s) => Pin::new(s).poll_write(cx, buf),
+            Wire::Tls(s) => Pin::new(s.as_mut()).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match &mut *self {
+            Wire::Plain(s) => Pin::new(s).poll_flush(cx),
+            Wire::Tls(s) => Pin::new(s.as_mut()).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match &mut *self {
+            Wire::Plain(s) => Pin::new(s).poll_shutdown(cx),
+            Wire::Tls(s) => Pin::new(s.as_mut()).poll_shutdown(cx),
+        }
+    }
 }
 
 // --- 超长 close 帧 ----------------------------------------------------------
@@ -282,7 +374,7 @@ fn close_reason_slot() -> CaughtCloseSlot {
     Arc::new(Mutex::new(None))
 }
 
-/// TLS 之下的一层**只读旁路**：认出超长的 close 帧，把它截到 RFC 上限之内再交给
+/// TLS 之上（明文一侧）的一层**只读旁路**：认出超长的 close 帧，把它截到 RFC 上限之内再交给
 /// tungstenite，同时把原文另存给上层。
 ///
 /// 为什么必须有：百炼在模型额度用尽时会发一条负载 182 字节的 close 帧（code 1007），
@@ -929,6 +1021,79 @@ mod tests {
                 );
                 // 上层据此给出"去控制台关掉仅免费额度"的提示。
                 assert!(vox_core::cloud::explain_close(&reason).is_some());
+            }
+            other => panic!("应该是 Closed，实际是 {other:?}"),
+        }
+    }
+
+    /// 起一个本地 **TLS** WebSocket 服务端：先回一条普通文本帧，再甩一条 182 字节的
+    /// close 帧。返回地址与它的自签根证书。
+    ///
+    /// 这条路径专门防"`CloseCatcher` 套在 TLS 之下"：那样它看到的是密文，
+    /// 会把 TLS 握手字节当 WS 帧去截断，真连 `wss://` 全部失败，而 `ws://` 的测试看不出来。
+    async fn start_tls_oversized_close_server(
+        reason: &'static str,
+    ) -> (SocketAddr, rustls::pki_types::CertificateDer<'static>) {
+        use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+        let certified = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
+        let cert = certified.cert.der().clone();
+        let key =
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(certified.key_pair.serialize_der()));
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert.clone()], key)
+            .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.unwrap();
+            let tls = acceptor.accept(tcp).await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(tls).await.unwrap();
+            ws.send(Message::Text("hello over tls".into()))
+                .await
+                .unwrap();
+            let mut raw = ws.into_inner();
+            let _ = raw.write_all(&oversized_close_frame(1007, reason)).await;
+            let _ = raw.flush().await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        });
+        (addr, cert)
+    }
+
+    #[test]
+    fn an_oversized_close_frame_survives_over_tls_too() {
+        let rt = test_runtime();
+        let (addr, cert) = rt.block_on(start_tls_oversized_close_server(QUOTA_REASON));
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(cert).unwrap();
+        let tls = Arc::new(
+            rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth(),
+        );
+        let mut transport = WsTransport::new(rt.handle().clone()).with_tls_config(tls);
+        transport
+            .connect(&ConnectRequest {
+                url: format!("wss://localhost:{}", addr.port()),
+                auth_header: "Bearer sk-test-key".to_owned(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            transport.recv(2000).unwrap(),
+            Some(Incoming::Text("hello over tls".to_owned())),
+            "TLS 之上的普通帧要原样到达"
+        );
+        match transport.recv(2000).unwrap() {
+            Some(Incoming::Closed(reason)) => {
+                assert!(reason.contains("1007"), "close code 要透传：{reason}");
+                assert_eq!(
+                    reason.matches(QUOTA_REASON).count(),
+                    1,
+                    "TLS 下也要拿到完整原文：{reason}"
+                );
             }
             other => panic!("应该是 Closed，实际是 {other:?}"),
         }

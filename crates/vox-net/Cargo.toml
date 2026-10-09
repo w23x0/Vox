@@ -16,6 +16,9 @@ tokio-tungstenite.workspace = true
 # rustls 被拉进编译（Workspace 里声明了，但 crate 本身引用才真的生效）。
 rustls.workspace = true
 futures-util = "0.3.31"
+# TLS 自己做（CloseCatcher 要套在 TLS 之上的明文流上），不再交给 tokio-tungstenite 的 connector。
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "0.26"
 tokio-util = { version = "0.7.13", features = ["rt"] }
 # 媒体面的抖动缓冲要与读循环同步（`Mutex` + `Condvar`）。workspace 已有这个包。
 parking_lot.workspace = true
@@ -38,8 +41,8 @@ vox-host = { path = "../vox-host" }
 # 同样只挂 dev 边：`cargo tree -p vox-headless` 一个包都不多。
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
-tokio-rustls = "0.26"
-webpki-roots = "0.26"
+# 本地 TLS WebSocket 服务端测试用的自签证书。
+rcgen = "0.13"
 
 [features]
 default = []
