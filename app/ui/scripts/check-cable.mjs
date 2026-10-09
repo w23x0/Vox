@@ -21,7 +21,7 @@ const origin = preview.base;
 let browser;
 try {
   browser = await launch();
-  const page = await browser.newPage({ viewport: { width: 1040, height: 780 } });
+  const page = await browser.newPage({ locale: "zh-CN", viewport: { width: 1040, height: 780 } });
   await page.goto(`${origin}/?mock=1`, { waitUntil: "networkidle" });
   await page.click('.sidebar .nav-item[data-page="settings"]');
 

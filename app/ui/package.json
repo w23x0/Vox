@@ -18,7 +18,9 @@
     "check:capabilities": "node scripts/check-capabilities.mjs",
     "check:preview": "node scripts/check-preview.mjs",
     "check:agent": "node scripts/check-agent.mjs",
-    "verify": "npm run build && npm run check:classes && npm run check:preview && npm run a11y && npm run qa:narrow && npm run check:cable && npm run check:capabilities && npm run check:agent && npm run qa:home",
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "check:models": "node scripts/check-models.mjs",
+    "verify": "npm run build && npm run check:classes && npm run check:preview && npm run a11y && npm run qa:narrow && npm run check:cable && npm run check:capabilities && npm run check:agent && npm run check:i18n && npm run check:models && npm run qa:home",
     "tauri:dev:attach": "cd .. && tauri dev --config ui/tauri.dev.json",
     "check:classes": "node scripts/check-classes.mjs"
   },

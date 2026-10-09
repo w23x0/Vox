@@ -36,8 +36,8 @@ const REASON_MARK = {
   unsupported: { zh: "这台设备做不到", en: "can't do this" },
   not_installed: { zh: "需要先装虚拟声卡驱动", en: "install the virtual audio driver" },
   permission: { zh: "需要先授权", en: "Needs permission first" },
-  not_built: { zh: "这个构建里没编进去", en: "Not compiled into this build" },
-  not_wired: { zh: "装配层还没把它接上", en: "hasn't wired it up yet" },
+  not_built: { zh: "此版本不包含该功能", en: "does not include this feature" },
+  not_wired: { zh: "这个版本还没接通", en: "this version doesn't support it yet" },
   pending_reboot: { zh: "需要重启系统才生效", en: "reboot is required" },
   busy: { zh: "暂时用不了", en: "Temporarily unavailable" },
 };
@@ -109,12 +109,16 @@ async function noteText(page, bit) {
   return (await note.count()) > 0 ? (await note.first().innerText()).trim() : null;
 }
 
-async function switchLanguage(page) {
-  // 侧栏底部的语言按钮循环 zh-CN → ja-JP → en；点两次到英文。
-  const button = page.locator(".sidebar-bottom .nav-item").last();
-  await button.click();
-  await page.waitForTimeout(200);
-  await button.click();
+/** 去设置页的语言下拉里选一种界面语言（项名是该语言自己的名字），再回到 `backTo` 页。 */
+async function switchLanguage(page, nativeName, backTo) {
+  await page.click('.sidebar .nav-item[data-page="settings"]');
+  await page.locator("#dd-ui-language").click();
+  await page
+    .locator(".dropdown-options.show")
+    .getByRole("option", { name: nativeName, exact: true })
+    .click();
+  await page.waitForTimeout(300);
+  await page.click(`.sidebar .nav-item[data-page="${backTo}"]`);
   await page.waitForTimeout(300);
 }
 
@@ -124,7 +128,7 @@ const BASE = `${preview.base}/?mock=1`;
 let browser;
 try {
   browser = await launch();
-  const page = await browser.newPage({ viewport: { width: 1180, height: 820 } });
+  const page = await browser.newPage({ locale: "zh-CN", viewport: { width: 1180, height: 820 } });
 
   // ── [1] Windows 桌面：位为真的入口照旧，位为假的换成 reason ──────────────────
   await openPage(page, BASE, "home", "首页");
@@ -270,7 +274,7 @@ try {
   );
 
   // ── [6] 无屏：字幕页 / 热键整块不渲染 ───────────────────────────────────────
-  await openPage(page, `${BASE}&host=embedded`, "subtitle", "字幕外观");
+  await openPage(page, `${BASE}&host=embedded`, "subtitle", "字幕");
   expect(
     (await page.locator("#dd-subtitle-font").count()) === 0,
     "无屏档：字幕位为假，外观设置不许渲染",
@@ -318,7 +322,7 @@ try {
     expect(!zh.includes("capabilities."), `${reason}：zh 漏出 i18n key`);
     expect(zh.includes(REASON_MARK[reason].zh), `${reason}：zh 缺这句特征文案`);
 
-    await switchLanguage(page);
+    await switchLanguage(page, "English", "about");
     const en = await page.locator(".page.active").innerText();
     expect(!en.includes("capabilities."), `${reason}：en 漏出 i18n key`);
     expect(

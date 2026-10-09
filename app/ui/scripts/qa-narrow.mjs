@@ -21,10 +21,10 @@ import { startPreview } from "./preview.mjs";
 /* 页面 id; label 仅用于报错阅读 */
 const ORDER = [
   ["home", "首页", "首页"],
-  ["providers", "模型服务商", "模型服务商"],
-  ["subtitle", "字幕", "字幕外观"],
+  ["models", "模型", "模型"],
+  ["subtitle", "字幕", "字幕"],
   ["vrchat", "VRChat", "VRChat"],
-  ["agent", "Agent 控制面", "Agent 控制面"],
+  ["agent", "Agent 控制", "Agent 控制"],
   ["settings", "设置", "设置"],
   ["usage", "用量", "用量"],
   ["about", "关于", "关于"],
@@ -114,7 +114,7 @@ try {
   const browser = await launch();
 
   for (const { width, height } of widths) {
-    const page = await browser.newPage({ viewport: { width, height } });
+    const page = await browser.newPage({ locale: "zh-CN", viewport: { width, height } });
     page.on("pageerror", (e) => failures.push(`${width}x${height} pageerror: ${e.message}`));
     await page.goto(BASE, { waitUntil: "networkidle" });
     await page.waitForTimeout(400);

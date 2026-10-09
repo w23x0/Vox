@@ -41,7 +41,7 @@ async function launch() {
 }
 
 /** 打开控制面那一页（点侧栏，等页面标题出现）。 */
-async function openAgent(page, url, label = "Agent 控制面") {
+async function openAgent(page, url, label = "Agent 控制") {
   await page.goto(url, { waitUntil: "networkidle" });
   await page.click('.sidebar .nav-item[data-page="agent"]');
   await page.getByRole("heading", { name: label, exact: true }).waitFor();
@@ -77,7 +77,7 @@ const BASE = `${preview.base}/?mock=1`;
 let browser;
 try {
   browser = await launch();
-  const page = await browser.newPage({ viewport: { width: 1180, height: 820 } });
+  const page = await browser.newPage({ locale: "zh-CN", viewport: { width: 1180, height: 820 } });
 
   // ── [1] 默认档：开关关着，如实说"没在监听" ─────────────────────────────────
   await openAgent(page, BASE);
@@ -145,14 +145,26 @@ try {
   expect(!failed.text.includes("运行中"), `起不来时不许说"运行中"：${failed.text}`);
   expect(failed.text.includes("占用"), `要把后端给的原因带上：${failed.text}`);
 
-  // ── [8] en 文案 + ja 回落（冻结包缺 `agent`，落到基准中文，不许露出 key）──────
-  const language = page.locator(".sidebar-bottom .nav-item").last();
-  await language.click(); // zh-CN → ja-JP
-  await page.waitForTimeout(250);
+  // ── [8] 三种界面语言：ja / en 各有自己的文案，页面名随语言变，不许露出 key ────────
+  // 语言在设置页的下拉里选（项名是该语言自己的名字），选完回到控制面那一页。
+  async function pickLanguage(nativeName) {
+    await page.click('.sidebar .nav-item[data-page="settings"]');
+    await page.locator("#dd-ui-language").click();
+    await page
+      .locator(".dropdown-options.show")
+      .getByRole("option", { name: nativeName, exact: true })
+      .click();
+    await page.waitForTimeout(250);
+    await page.click('.sidebar .nav-item[data-page="agent"]');
+    await page.waitForTimeout(250);
+  }
+  await pickLanguage("日本語");
   const jaTitle = await page.locator(".page.active .page-head h1").innerText();
-  expect(jaTitle.trim() === "Agent 控制面", `ja 该回落到基准中文，实际「${jaTitle}」`);
-  await language.click(); // ja-JP → en
-  await page.waitForTimeout(250);
+  expect(jaTitle.trim() === "エージェント制御", `ja 页面名该是「エージェント制御」，实际「${jaTitle}」`);
+  const jaPage = await page.locator(".page.active").innerText();
+  expect(jaPage.includes("マスタースイッチ"), `ja 要有总开关的日文文案：${jaPage.slice(0, 120)}`);
+  expect(!jaPage.includes("agent."), `不许露出 i18n key：${jaPage.slice(0, 200)}`);
+  await pickLanguage("English");
   const enTitle = await page.locator(".page.active .page-head h1").innerText();
   expect(enTitle.trim() === "Agent control", `en 页面名该是 Agent control，实际「${enTitle}」`);
   const enPage = await page.locator(".page.active").innerText();
@@ -170,6 +182,6 @@ if (failures.length > 0) {
 } else {
   console.log(
     "\nAgent 控制面：状态按事实报（关着 / 运行中 / 起不来）、端口与去抖归一化、" +
-      "授权位可拨、en 文案齐、ja 回落中文。",
+      "授权位可拨、en / ja 文案齐。",
   );
 }

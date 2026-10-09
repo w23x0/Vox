@@ -16,16 +16,16 @@ import { chromium } from "playwright";
 
 import { startPreview } from "./preview.mjs";
 
-/** 和 src/nav.ts 保持一致。对不上就是导航表改了没同步过来。 */
+/** 和 src/nav.ts 的 NAV_GROUPS 保持一致（含顺序）。对不上就是导航表改了没同步过来。 */
 const PAGES = [
   { id: "home", label: "首页" },
-  { id: "providers", label: "模型服务商" },
-  { id: "subtitle", label: "字幕外观" },
+  { id: "models", label: "模型" },
+  { id: "subtitle", label: "字幕" },
   { id: "vrchat", label: "VRChat" },
-  { id: "agent", label: "Agent 控制面" },
+  { id: "agent", label: "Agent 控制" },
+  { id: "settings", label: "设置" },
   { id: "usage", label: "用量" },
   { id: "about", label: "关于" },
-  { id: "settings", label: "设置" },
 ];
 
 const PAGE_BUTTONS = ".sidebar .nav-item[data-page]";
@@ -133,7 +133,7 @@ const BASE = preview.base;
 try {
   const browser = await launch();
   // 按真窗口默认尺寸：tauri.conf.json 里 main 窗口是 1040×780
-  const page = await browser.newPage({ viewport: { width: 1040, height: 780 } });
+  const page = await browser.newPage({ locale: "zh-CN", viewport: { width: 1040, height: 780 } });
 
   // 运行时噪音全接住
   const noise = [];
@@ -389,41 +389,62 @@ try {
   }
 
   /*
-   * 风格红线。kirox-ui skill 里写明「破一条风格就散」的三条，
-   * 前两轮各踩过一次，所以钉在这里：
-   *   1. 整套界面全等宽，中文也走 Maple Mono Normal CN（掉回黑体就散了）
-   *   2. 浮空面板**无装饰性边框**（GlassUI 无边化：--border 恒为 transparent，
-   *      轮廓靠「填充比背景更亮」+ 极轻垂直阴影，分层不靠描边）
-   *   3. 没有顶部工具条 —— 标题栏只放固定应用名，工具项在侧栏底部
+   * 风格红线（UI 重设计后）：
+   *   1. 界面字体是系统无衬线栈，不再打包 CJK 字体；等宽只给数值 / ID / 密钥（.num / .mono）；
+   *      正文、标题、标签不加字距；页面标题 22px / 700 / 正文色（不用强调色）
+   *   2. 浮空面板**无装饰性边框**（--border 恒为 transparent，轮廓靠填充明度 + 极轻垂直阴影）
+   *   3. 没有顶部工具条 —— 标题栏只放固定应用名
+   *   4. 侧栏：图标 + 文字、三个分组标题、竖条指示器、底部只有版本号（语言 / 主题在设置页）
    */
   console.log("\n[14] 风格红线");
   const style = await page.evaluate(() => {
-    const body = getComputedStyle(document.body).fontFamily;
+    const body = getComputedStyle(document.body);
     const panel = document.querySelector(".page.active .panel, .page.active .settings-group, .page.active .stat-card");
     const bar = document.querySelector(".app-titlebar");
     // 标题栏里除了那行文字，不许有任何可交互元素
     const barCtl = bar
       ? bar.querySelectorAll("button, input, select, a[href], [tabindex='0']").length
       : -1;
+    const h1 = document.querySelector(".page.active .page-head h1");
+    const h1s = h1 ? getComputedStyle(h1) : null;
+    const labels = [...document.querySelectorAll(".sidebar .nav-item[data-page] .nav-label")];
     return {
-      font: body,
-      hasMaple: /Maple Mono Normal CN/i.test(body),
-      hasJetBrains: /JetBrains Mono/i.test(body),
+      font: body.fontFamily,
+      bodySpacing: body.letterSpacing,
+      h1: h1s && {
+        size: h1s.fontSize,
+        weight: h1s.fontWeight,
+        spacing: h1s.letterSpacing,
+        color: h1s.color,
+        bodyColor: body.color,
+      },
+      monoVar: getComputedStyle(document.documentElement).getPropertyValue("--font-mono"),
       panelClass: panel?.className ?? null,
       panelBorder: panel ? getComputedStyle(panel).borderTopColor : null,
       barCtl,
-      // 工具项必须在侧栏底部
-      bottomTools: document.querySelectorAll(".sidebar-bottom .nav-item").length,
-      bottomPages: document.querySelectorAll(".sidebar-bottom .nav-item[data-page]").length,
-      bottomActions: document.querySelectorAll(
-        ".sidebar-bottom .nav-item:not([data-page])",
-      ).length,
       navDots: document.querySelectorAll(".sidebar .nav-item[data-page] .nav-dot").length,
+      groupTitles: [...document.querySelectorAll(".sidebar .nav-group-title")].filter(
+        (e) => e.getBoundingClientRect().width > 0,
+      ).length,
+      labelsVisible: labels.filter((e) => e.getBoundingClientRect().width > 0).length,
+      legacyFooterItems: document.querySelectorAll(".sidebar-bottom").length,
+      version: document.querySelector(".sidebar-foot .sidebar-version")?.textContent ?? "",
+      sidebarWidth: document.querySelector(".sidebar")?.getBoundingClientRect().width ?? 0,
     };
   });
-  if (!style.hasMaple || !style.hasJetBrains)
-    fail(`字体栈不对（缺 Maple 或 JetBrains）：${style.font.slice(0, 70)}`);
-  else ok("整套等宽，中文走 Maple Mono Normal CN");
+  if (/Maple|GlassUI/i.test(style.font) || !/system-ui/.test(style.font))
+    fail(`正文字体应是系统无衬线栈（system-ui 在前，不含 Maple / GlassUI）：${style.font.slice(0, 80)}`);
+  else ok("正文字体是系统无衬线栈");
+  if (!/JetBrains Mono/.test(style.monoVar)) fail(`--font-mono 应以 JetBrains Mono 打头：${style.monoVar}`);
+  else ok("--font-mono = JetBrains Mono（只给数值 / ID / 密钥）");
+  if (style.bodySpacing !== "normal") fail(`正文不应加字距：${style.bodySpacing}`);
+  else if (!style.h1 || style.h1.spacing !== "normal") fail(`页面标题不应加字距：${style.h1?.spacing}`);
+  else ok("正文与标题没有字距");
+  if (!style.h1 || style.h1.size !== "22px" || style.h1.weight !== "700") {
+    fail(`页面标题应是 22px / 700：${JSON.stringify(style.h1)}`);
+  } else if (style.h1.color !== style.h1.bodyColor) {
+    fail(`页面标题应用正文色而非强调色：${style.h1.color} vs ${style.h1.bodyColor}`);
+  } else ok("页面标题 22px / 700 / 正文色");
 
   // 无装饰性边框：面板 borderTopColor 必须是透明的（alpha=0）。
   // 旧规格的「亮边」红线在 GlassUI 无边化后反了过来 —— 描边恢复了才叫破功。
@@ -437,13 +458,37 @@ try {
   if (style.barCtl !== 0) fail(`标题栏里有 ${style.barCtl} 个交互元素，应为 0`);
   else ok("标题栏只有固定应用名，没有工具条");
 
-  if (style.bottomTools !== 4)
-    fail(`侧栏底部应为关于/设置/主题/语言 4 项，实际 ${style.bottomTools} 项`);
-  else if (style.bottomPages !== 2 || style.bottomActions !== 2)
-    fail(`侧栏底部页面/动作应为 2/2，实际 ${style.bottomPages}/${style.bottomActions}`);
+  if (style.labelsVisible !== PAGES.length)
+    fail(`宽侧栏下每项都应有可见文字：${style.labelsVisible}/${PAGES.length}`);
+  else if (style.groupTitles !== 3) fail(`侧栏应有 3 个组标题（翻译 / 连接 / 系统）：${style.groupTitles}`);
   else if (style.navDots !== PAGES.length)
     fail(`每个页面项都应有竖条指示器：${style.navDots}/${PAGES.length}`);
-  else ok(`侧栏底部 4 项（2 页面 + 2 动作）、导航 ${style.navDots} 条竖条指示器`);
+  else if (style.legacyFooterItems !== 0) fail("侧栏底部不应再有主题 / 语言按钮区");
+  else if (!/^v\d+\.\d+\.\d+/.test(style.version)) fail(`侧栏底部应显示版本号，实际「${style.version}」`);
+  else if (Math.round(style.sidebarWidth) !== 200) fail(`宽侧栏应为 200px，实际 ${style.sidebarWidth}`);
+  else ok(`侧栏 200px：${PAGES.length} 项带文字、3 个组标题、竖条指示器、底部只有版本号 ${style.version}`);
+
+  // 窄窗（< 860px）：收成纯图标，文字隐藏但可访问名还在（tooltip 靠它）
+  await page.setViewportSize({ width: 820, height: 700 });
+  await page.waitForTimeout(300);
+  const narrow = await page.evaluate(() => ({
+    width: document.querySelector(".sidebar")?.getBoundingClientRect().width ?? 0,
+    labels: [...document.querySelectorAll(".sidebar .nav-label")].filter(
+      (e) => e.getBoundingClientRect().width > 0,
+    ).length,
+    titles: [...document.querySelectorAll(".sidebar .nav-group-title")].filter(
+      (e) => e.getBoundingClientRect().width > 0,
+    ).length,
+    named: [...document.querySelectorAll(".sidebar .nav-item[data-page]")].every((e) =>
+      e.getAttribute("aria-label"),
+    ),
+  }));
+  if (Math.round(narrow.width) !== 64) fail(`窄窗侧栏应收成 64px，实际 ${narrow.width}`);
+  else if (narrow.labels !== 0 || narrow.titles !== 0) fail("窄窗侧栏应只剩图标（文字与组标题隐藏）");
+  else if (!narrow.named) fail("窄窗纯图标侧栏的每项仍须有可访问名");
+  else ok("820px：侧栏收成 64px 纯图标，可访问名保留");
+  await page.setViewportSize({ width: 1040, height: 780 });
+  await page.waitForTimeout(300);
 
   // 运行时噪音：前面所有页面的都攒在这儿
   console.log("\n[15] 运行时噪音");
