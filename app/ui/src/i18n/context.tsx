@@ -6,12 +6,12 @@
  * 读 settings 作为驱动源，向子树提供当前语言与翻译函数 `t`。
  */
 
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, type ReactNode } from "react";
 
 import en from "./en";
 import ja from "./ja";
 import zh from "./zh";
-import type { Dict, TParams, UiLang } from "./types";
+import { UI_LANG_HTML, type Dict, type TParams, type UiLang } from "./types";
 
 /** 把嵌套字典展平成点分 key → 文案，运行时简单查找。 */
 const cache = new Map<Dict, Record<string, string>>();
@@ -40,16 +40,15 @@ const FLAT: Record<UiLang, Record<string, string>> = {
 /** 校验并替换 `{var}` 占位符。
  *
  * 查不到时的两级兜底：
- * 1. **ja 缺的键回落到基准中文**（zh）——日语包已冻结（`i18n/ja.ts` 头注释），
- *    新增条目只加 zh + en，缺的键在日文界面下显示中文，**不许**露出 `capabilities.xxx` 这种 key；
- * 2. 连 zh 都没有 → 原样返回 key（便于排查漏翻译）。
+ * 1. **缺的键回落到 English**（不回落中文——非中文用户看到中文比看到英文更糟）；
+ * 2. 连 English 都没有 → 原样返回 key（便于排查漏翻译）。
  */
 export function translate(
   lang: UiLang,
   key: string,
   params?: TParams,
 ): string {
-  let text = FLAT[lang][key] ?? (lang === "zh-CN" ? undefined : FLAT["zh-CN"][key]);
+  let text = FLAT[lang][key] ?? FLAT.en[key];
   if (text === undefined) text = key;
   if (!params) return text;
   return text.replace(/\{(\w+)\}/g, (match, name: string) =>
@@ -65,9 +64,9 @@ export interface I18nState {
 
 const I18nContext = createContext<I18nState | null>(null);
 
-/** 从 settings.ui_language 校验并取一个合法 UiLang（白名单外回退 zh-CN）。 */
+/** 从 settings.ui_language 校验并取一个合法 UiLang（白名单外回退 English）。 */
 export function toUiLang(value: string | undefined): UiLang {
-  return value === "en" ? "en" : value === "ja-JP" ? "ja-JP" : "zh-CN";
+  return value === "zh-CN" || value === "ja-JP" ? value : "en";
 }
 
 /**
@@ -83,6 +82,11 @@ export function LanguageProvider({
   children: ReactNode;
 }) {
   const lang = toUiLang(uiLang);
+
+  // <html lang> 跟界面语言走：:lang() 才能给 CJK 选对字体、日文汉字才用日文字形。
+  useEffect(() => {
+    document.documentElement.lang = UI_LANG_HTML[lang];
+  }, [lang]);
 
   const value = useMemo<I18nState>(
     () => ({ uiLang: lang, t: (key, params) => translate(lang, key, params) }),

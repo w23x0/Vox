@@ -1,82 +1,20 @@
 /* ==========================================================================
-   GlassUI — 字体（打包内嵌，不依赖用户系统装了什么）
+   字体：只打包 JetBrains Mono Regular 拉丁子集，作 --font-mono 用
+   （ID / 密钥 / 数值 / 快捷键）。界面正文走系统无衬线栈，CJK 字体按
+   语言用系统自带的，不再打包（见 tokens.css 的 --font-ui）。
 
-   为什么要打包：这套设计的观感建立在「全等宽 + 拉丁与汉字字宽对齐」上。
-   分发到没装字体的机器上会掉回系统默认（微软雅黑 / 宋体），
-   等宽感和字重对齐全部消失，观感大幅下降。
+   授权：JetBrains Mono 为 SIL Open Font License 1.1，OS/2 fsType = 0
+   （Installable Embedding），允许嵌入应用分发。
 
-   授权：JetBrains Mono 和 Maple Mono 均为 SIL Open Font License 1.1，
-   两者 OS/2 fsType = 0（Installable Embedding），明确允许嵌入应用分发。
-   OFL 要求：不可单独售卖字体、衍生字体需同样 OFL。我们只是嵌入使用，合规。
-
-   体积处理：Maple Mono CN 原始 17.6MB/字重（22721 个字符），全量打包
-   三字重要 55MB，桌面应用无法接受。所以做了子集化：
-     保留 GB2312 全部汉字（6763）+ 拉丁 + CJK 标点 + 日文假名 + 全角符号
-     = 7210 个字符，转 woff2 后 1.6MB/字重。覆盖现代中文 99.9%。
-   代价：极生僻字（子集外）会掉回系统字体。表单/日志场景下概率极低。
-   重新生成子集见 tools/build-fonts.mjs
-
-   字重策略：只打包 Regular(400) / Medium(500) / Bold(700) 三档。
-   界面里 600 用 Medium 合成、800 用 Bold 合成，肉眼无差别，
-   多打包两档要多 3.3MB 不值得。
+   字重：只有 400。.num 的加粗由浏览器合成，等宽数字场景下肉眼无差别。
    ========================================================================== */
-
-/* ---- JetBrains Mono：拉丁字形（数字、英文、符号）----
-   unicode-range 限定只在拉丁字符上生效，汉字自然落到下面的 Maple。
-   这是「拉丁取 JetBrains、汉字取 Maple」的实现方式 ——
-   浏览器按 unicode-range 逐字符选字体，不是整段选。 */
 @font-face {
-  font-family: 'GlassUI Mono';
+  font-family: 'JetBrains Mono';
   font-style: normal;
   font-weight: 400;
-  font-display: block;   /* 等字体到位再画，避免先用系统字体闪一下再跳字 */
+  font-display: swap;
   src: url('../assets/fonts/jetbrains-Regular.woff2') format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
                  U+02DA, U+02DC, U+0300-036F, U+2000-206F, U+2074, U+20AC,
                  U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: 'GlassUI Mono';
-  font-style: normal;
-  font-weight: 500;
-  font-display: block;
-  src: url('../assets/fonts/jetbrains-Medium.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
-                 U+02DA, U+02DC, U+0300-036F, U+2000-206F, U+2074, U+20AC,
-                 U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-@font-face {
-  font-family: 'GlassUI Mono';
-  font-style: normal;
-  font-weight: 700;
-  font-display: block;
-  src: url('../assets/fonts/jetbrains-Bold.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
-                 U+02DA, U+02DC, U+0300-036F, U+2000-206F, U+2074, U+20AC,
-                 U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-/* ---- Maple Mono CN：汉字 + 假名 + CJK 标点 ----
-   不设 unicode-range，作为兜底：拉丁已被上面的 JetBrains 接走，
-   剩下的 CJK 字符落到这里。 */
-@font-face {
-  font-family: 'GlassUI Mono';
-  font-style: normal;
-  font-weight: 400;
-  font-display: block;
-  src: url('../assets/fonts/maple-cn-Regular.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'GlassUI Mono';
-  font-style: normal;
-  font-weight: 500;
-  font-display: block;
-  src: url('../assets/fonts/maple-cn-Medium.woff2') format('woff2');
-}
-@font-face {
-  font-family: 'GlassUI Mono';
-  font-style: normal;
-  font-weight: 700;
-  font-display: block;
-  src: url('../assets/fonts/maple-cn-Bold.woff2') format('woff2');
 }

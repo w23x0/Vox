@@ -38,11 +38,11 @@ export const IconHome = (p: IconProps) => (
   </Svg>
 );
 
-export const IconKey = (p: IconProps) => (
+export const IconModel = (p: IconProps) => (
   <Svg {...p}>
-    <circle cx="7.5" cy="15.5" r="4.5" />
-    <path d="M10.7 12.3 21 2" />
-    <path d="M17 6l3 3" />
+    <rect x="5" y="5" width="14" height="14" rx="3" />
+    <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
+    <path d="M9.5 12h5M12 9.5v5" />
   </Svg>
 );
 
@@ -107,16 +107,29 @@ export const IconSettings = (p: IconProps) => (
 
 /* ---- 状态 / 操作 -------------------------------------------------- */
 
-export const IconSun = (p: IconProps) => (
+/* ---- 窗口按钮（Windows / Linux 右上角，线性）------------------------ */
+
+export const IconWinMinimize = (p: IconProps) => (
   <Svg {...p}>
-    <circle cx="12" cy="12" r="4" />
-    <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+    <path d="M5 12h14" />
   </Svg>
 );
 
-export const IconMoon = (p: IconProps) => (
+export const IconWinMaximize = (p: IconProps) => (
   <Svg {...p}>
-    <path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.5 6.5 0 0 0 9.8 9.8z" />
+    <rect x="5" y="5" width="14" height="14" rx="1.5" />
+  </Svg>
+);
+
+export const IconWinClose = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M6 6l12 12M18 6L6 18" />
+  </Svg>
+);
+
+export const IconChevron = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M9 6l6 6-6 6" />
   </Svg>
 );
 

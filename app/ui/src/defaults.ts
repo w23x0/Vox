@@ -81,6 +81,7 @@ export const DEFAULT_SETTINGS: Settings = {
     transcript_notify_ms: 250,
   },
   aliyun_region: "cn",
+  aliyun_endpoint: "",
 };
 
 export function clamp(value: number, min: number, max: number): number {

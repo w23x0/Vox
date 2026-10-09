@@ -15,8 +15,9 @@ import {
   TRANSCRIPT_NOTIFY_MS_RANGE,
 } from "../defaults";
 import * as catalog from "../catalog";
-import { UI_LANG_CYCLE, type UiLang } from "../i18n/types";
+import { UI_LANG_ORDER, type UiLang } from "../i18n/types";
 import type { Settings } from "../types";
+import { isAdaptedModel } from "./models";
 
 /** 整块替换而不是递归合并的键：语义上是「这一份就是全部」。 */
 const REPLACE_WHOLESALE = new Set(["voice_by_language", "hotkey", "geometry", "target"]);
@@ -59,12 +60,20 @@ export function normalizeSettings(settings: Settings): Settings {
 
   // 界面语言只认白名单；手改配置、拼错一律回退中文（与 Rust `Settings::normalize` /
   // `UI_LANGUAGES` 一致：三语 zh-CN / ja-JP / en）。
-  if (!UI_LANG_CYCLE.includes(s.ui_language as UiLang)) {
+  if (!UI_LANG_ORDER.includes(s.ui_language as UiLang)) {
     s.ui_language = "zh-CN";
   }
 
-  s.speak.model_name = catalog.defaultModelForProvider(s.speak.provider);
-  s.listen.model_name = catalog.defaultModelForProvider(s.listen.provider);
+  // 模型名：服务商列表里已适配的可以留，其余回落到该服务商的默认模型。
+  if (!isAdaptedModel(s.speak.provider, s.speak.model_name)) {
+    s.speak.model_name = catalog.defaultModelForProvider(s.speak.provider);
+  }
+  if (!isAdaptedModel(s.listen.provider, s.listen.model_name)) {
+    s.listen.model_name = catalog.defaultModelForProvider(s.listen.provider);
+  }
+  // 自定义接入点只认 ws(s):// 开头，别的清成空（= 按地区缺省）。
+  const endpoint = (s.aliyun_endpoint ?? "").trim();
+  s.aliyun_endpoint = /^wss?:\/\//i.test(endpoint) ? endpoint : "";
   if (!catalog.supportsVoiceClone(s.speak.provider)) s.speak.voice_clone_frequency = null;
   if (!catalog.supportsSourceLanguage(s.listen.provider)) s.listen.source_language = null;
   if (

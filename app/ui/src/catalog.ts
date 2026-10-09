@@ -21,7 +21,7 @@
 import aliyun from "../../../catalog/aliyun.json";
 import gemini from "../../../catalog/gemini.json";
 import gpt from "../../../catalog/gpt.json";
-import type { ModelProvider } from "./types";
+import type { ModelEntry, ModelProvider } from "./types";
 import type { VoxApi } from "./api";
 import type { UiLang } from "./i18n/types";
 
@@ -94,6 +94,7 @@ function parse_data(raw: ProviderRaw): RegistryEntry {
       model_name: raw.model.id,
       model_label: raw.model.label,
       capabilities: {
+        languages: raw.capabilities.languages,
         voice_selection: raw.capabilities.voice_selection ?? false,
         voice_clone: raw.capabilities.voice_clone ?? false,
         source_language: raw.capabilities.source_language ?? false,
@@ -336,6 +337,41 @@ export function modelLabel(name: string, uiLang: UiLang): string {
   return model ? l10n(model.label, uiLang) : name;
 }
 
+/**
+ * 内置的那一条模型（目录里每家只登记一个当前推荐模型），形状同 `list_models` 的条目。
+ * 拉不到官方列表时界面用它兜底；label 按界面语言解析。
+ */
+export function builtinModelEntry(provider: ModelProvider, uiLang: UiLang): ModelEntry {
+  const row = get(provider);
+  const caps = row?.provider.capabilities;
+  const withLanguages = (row?.languages.length ?? 0) > 0 ? row : undefined;
+  return {
+    id: defaultModelForProvider(provider),
+    label: row ? l10n(row.provider.model_label, uiLang) : defaultModelForProvider(provider),
+    adapted: true,
+    recommended: true,
+    snapshot_of: null,
+    offline_at: null,
+    capabilities: {
+      voice_selection: caps?.voice_selection ?? false,
+      voice_clone: caps?.voice_clone ?? false,
+      source_language: caps?.source_language ?? false,
+      hot_update_language: caps?.hot_update_language ?? false,
+    },
+    languages: withLanguages
+      ? {
+          audio: withLanguages.languages.filter((l) => l.audio_output).map((l) => l.code),
+          text_only: withLanguages.languages.filter((l) => !l.audio_output).map((l) => l.code),
+        }
+      : null,
+  };
+}
+
+/** 服务商能力里写的语言概述（如 "70+"）；目录没有语言明细的服务商靠它说话。 */
+export function providerLanguageSummary(provider: ModelProvider): string | null {
+  return get(provider)?.provider.capabilities.languages ?? null;
+}
+
 // ─── 首次启动种子（固定用内置，不被覆盖改） ────────────────────────────────
 
 /** 阿里云默认目标语言。界面上听的固定翻成中文。 */
@@ -344,20 +380,3 @@ export const DEFAULT_TARGET_LANGUAGE = aliyun.defaults.target_language;
 export const DEFAULT_MODEL_NAME = aliyun.model.id;
 /** 首次兜底的音色 id。 */
 export const DEFAULT_VOICE = aliyun.defaults.voice;
-
-// ─── 按键 ──────────────────────────────────────────────────────────────────────
-
-const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
-const DIGITS = "0123456789".split("");
-
-export const KEY_OPTIONS: LabeledOption[] = [
-  ...LETTERS.map((key) => ({ value: key, label: key })),
-  ...DIGITS.map((key) => ({ value: key, label: key })),
-  ...Array.from({ length: 12 }, (_, index) => ({
-    value: `F${index + 1}`,
-    label: `F${index + 1}`,
-  })),
-  { value: "Space", label: "空格" },
-  { value: "XButton1", label: "鼠标侧键1" },
-  { value: "XButton2", label: "鼠标侧键2" },
-];

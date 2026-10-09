@@ -1,15 +1,20 @@
 /**
  * 标题栏（38px）。照 GlassUI 规范：**只放固定的应用名**（Vox），
- * 不放当前页面名 —— 页面名是内容区顶部的蓝色大标题（.page-head h1），
- * 两处都放页面名才是重复。主题切换、其余工具项全部在侧栏底部。
+ * 不放当前页面名 —— 页面名是内容区顶部的大标题（.page-head h1），
+ * 两处都放页面名才是重复。界面语言与主题在「设置」页。
  *
- * 红绿灯顺序按 macOS 的红─黄─绿。三个色值是平台约定，不走 token（见 shell.css）。
+ * 窗口按钮按平台：macOS 左上红─黄─绿（三个色值是平台约定，不走 token）；
+ * Windows / Linux 右上 最小化 / 最大化 / 关闭（线性图标）。样式见 shell.css。
  */
 
 /** 应用名（和 tauri.conf.json 的 productName 一致）。固定不变，不随页面走。 */
 const APP_NAME = "Vox";
 
+import { useMemo } from "react";
+
 import { useT } from "../i18n/context";
+import { detectPlatform } from "../lib/platform";
+import { IconWinClose, IconWinMaximize, IconWinMinimize } from "../ui/icons";
 
 /** 不在 Tauri 里（浏览器跑 mock）时静默忽略，别让按钮抛异常。 */
 const inTauri = (): boolean =>
@@ -36,6 +41,10 @@ async function quitApp() {
 
 export function Titlebar() {
   const t = useT();
+  const platform = useMemo(detectPlatform, []);
+  const close = () => void quitApp();
+  const minimize = () => void win().then((w) => w?.minimize());
+  const maximize = () => void win().then((w) => w?.toggleMaximize());
   return (
     <>
       {/* 空白处可拖窗。data-tauri-drag-region 要权限 core:window:allow-start-dragging */}
@@ -43,26 +52,45 @@ export function Titlebar() {
         <span className="app-titlebar-text">{APP_NAME}</span>
       </div>
 
-      <div className="window-traffic">
-        <button
-          type="button"
-          aria-label={t("titlebar.close")}
-          style={{ background: "#ff5f57" }}
-          onClick={() => void quitApp()}
-        />
-        <button
-          type="button"
-          aria-label={t("titlebar.minimize")}
-          style={{ background: "#febc2e" }}
-          onClick={() => void win().then((w) => w?.minimize())}
-        />
-        <button
-          type="button"
-          aria-label={t("titlebar.maximize")}
-          style={{ background: "#28c840" }}
-          onClick={() => void win().then((w) => w?.toggleMaximize())}
-        />
-      </div>
+      {platform === "mac" ? (
+        <div className="window-traffic">
+          <button
+            type="button"
+            aria-label={t("titlebar.close")}
+            style={{ background: "#ff5f57" }}
+            onClick={close}
+          />
+          <button
+            type="button"
+            aria-label={t("titlebar.minimize")}
+            style={{ background: "#febc2e" }}
+            onClick={minimize}
+          />
+          <button
+            type="button"
+            aria-label={t("titlebar.maximize")}
+            style={{ background: "#28c840" }}
+            onClick={maximize}
+          />
+        </div>
+      ) : (
+        <div className="window-traffic window-controls">
+          <button type="button" aria-label={t("titlebar.minimize")} onClick={minimize}>
+            <IconWinMinimize size={16} />
+          </button>
+          <button type="button" aria-label={t("titlebar.maximize")} onClick={maximize}>
+            <IconWinMaximize size={14} />
+          </button>
+          <button
+            type="button"
+            className="window-close"
+            aria-label={t("titlebar.close")}
+            onClick={close}
+          >
+            <IconWinClose size={16} />
+          </button>
+        </div>
+      )}
     </>
   );
 }

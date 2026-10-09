@@ -9,7 +9,7 @@
  */
 
 import { createMockApi } from "./mock/backend";
-import type { ModelProvider, PipelineName, Settings } from "./types";
+import type { ModelList, ModelProvider, PipelineName, Settings } from "./types";
 import type {
   AudioApp,
   Snapshot,
@@ -69,6 +69,11 @@ export interface VoxApi {
   openVirtualCableWebsite(): Promise<void>;
   openVirtualCableDonation(): Promise<void>;
   openProviderConsole(provider: ModelProvider): Promise<void>;
+  /**
+   * 某服务商可用的模型清单。`refresh` 跳过缓存重新向官方拉。
+   * 拉取失败时**不抛错**，而是返回 `error` 非空 + 内置列表。
+   */
+  listModels(provider: ModelProvider, opts?: { refresh?: boolean }): Promise<ModelList>;
   /** 读某个服务商落盘的覆盖版目录；没覆盖时返回 null。 */
   readCatalogOverride(provider: ModelProvider): Promise<string | null>;
   /** 检查某服务商目录有没有线上更新（只查不写）。 */
@@ -124,6 +129,8 @@ function createTauriApi(): VoxApi {
     openVirtualCableDonation: async () => void (await call<unknown>("open_virtual_cable_donation")),
     openProviderConsole: async (provider) =>
       void (await call<unknown>("open_provider_console", { provider })),
+    listModels: (provider, opts) =>
+      call<ModelList>("list_models", { provider, refresh: opts?.refresh ?? false }),
     readCatalogOverride: (provider) =>
       call<string | null>("read_catalog_override", { provider }),
     checkCatalogUpdate: (provider) =>

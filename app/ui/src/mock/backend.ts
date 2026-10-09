@@ -7,7 +7,7 @@
  */
 
 import { DEFAULT_SETTINGS, cloneSettings } from "../defaults";
-import type { PipelineName, PipelineState, Track } from "../types";
+import type { ModelProvider, PipelineName, PipelineState, Track } from "../types";
 import * as catalog from "../catalog";
 import { HOST_CAPABILITIES, UNAVAILABLE_REASONS } from "../capabilities";
 import type {
@@ -39,6 +39,7 @@ import {
   type MockHost,
 } from "./data";
 import { mergePatch, normalizeSettings } from "./merge";
+import { mockModelList, parseMockErrors } from "./models";
 import { FakeGate, FakeVoice } from "./signal";
 import { FakeTyper } from "./typer";
 
@@ -83,6 +84,9 @@ export function createMockApi(): VoxApi {
   let holdUntil = 0;
   let holdNextAt = 0;
   let oscRunning = false;
+  /** 每家「官方列表」最近一次拉取的时间（毫秒）。首次给个几分钟前，好让「3 分钟前」点得通。 */
+  const modelFetchedAt: Partial<Record<ModelProvider, number>> = {};
+  const modelFailures = parseMockErrors(window.location.search);
   /**
    * 控制面起不来的那一档（`?control=busy`）：真后端里这是 `serve()` 的 `EADDRINUSE`，
    * 假后端造一句同样意思的话，好让"起不来时界面怎么显示"这条路点得通。
@@ -562,6 +566,19 @@ export function createMockApi(): VoxApi {
     },
     async openProviderConsole(provider) {
       window.open(catalog.providerConsoleUrl(provider), "_blank", "noopener");
+    },
+    async listModels(provider, opts) {
+      await wait(400);
+      if (modelFailures.missing.has(provider)) throw new Error("command list_models not found");
+      const now = Date.now();
+      if (opts?.refresh || modelFetchedAt[provider] === undefined) {
+        modelFetchedAt[provider] = opts?.refresh ? now : now - 3 * 60_000;
+      }
+      return mockModelList(provider, {
+        hasKey: apiKeys[provider] === true,
+        fetchedAt: modelFetchedAt[provider] ?? now,
+        errors: modelFailures.errors,
+      });
     },
     // 假后端没有真实网络/磁盘：覆盖版永远为空，检查/应用给一段占位结果。
     async readCatalogOverride() {

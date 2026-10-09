@@ -1,6 +1,5 @@
 /**
- * 外壳：38px 标题栏（只有居中页面名）+ 64px 浮空侧栏 + app-layout 主内容。
- * 结构照 GlassUI：顶栏固定应用名，工具项在侧栏底部。
+ * 外壳：38px 标题栏（只有居中应用名）+ 浮空侧栏（图标 + 文字，窄窗收成图标）+ app-layout 主内容。
  *
  * 八个页面全在 DOM 里，靠 .page.active 切显，不做入场动画。
  *
@@ -30,10 +29,11 @@ import {
   stepUpDown,
 } from "./lib/focus";
 import { handleShortcut } from "./lib/shortcuts";
+import { NavigateContext } from "./lib/navigate";
 import { ABOUT_NAV, DEFAULT_PAGE, PAGE_NAV } from "./nav";
 import { AboutPage } from "./sections/About";
 import { AgentControlPage } from "./sections/AgentControl";
-import { ProvidersPage } from "./sections/Aliyun";
+import { ModelsPage } from "./sections/Models";
 import { HomePage } from "./sections/Home";
 import { SettingsPage } from "./sections/Settings";
 import { SubtitlePage } from "./sections/Subtitle";
@@ -47,7 +47,7 @@ import { useToast } from "./ui/toast";
 
 const PAGES: Record<string, () => React.ReactElement> = {
   home: HomePage,
-  providers: ProvidersPage,
+  models: ModelsPage,
   subtitle: SubtitlePage,
   vrchat: VrchatPage,
   agent: AgentControlPage,
@@ -71,9 +71,7 @@ function focusNavItem(page: string) {
 export function App() {
   const [page, setPage] = useState(DEFAULT_PAGE);
   const t = useT();
-  useEffect(() => {
-    restoreTheme();
-  }, []);
+  useEffect(() => restoreTheme(), []);
   useNoticeToasts();
 
   // 启动时把 Rust 落盘的覆盖版目录灌进来。加载完成会触发重渲染，列表/下拉随即反映。
@@ -202,7 +200,7 @@ export function App() {
         case 'ArrowRight': {
           e.preventDefault();
           if (isInSidebar()) {
-            // 侧栏 ↑↓ 整条走（页面 + 底部主题/语言动作），→ 进内容区首控件
+            // 侧栏 ↑↓ 整条走各页，→ 进内容区首控件
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
               stepSidebarBy(pageRef.current, selectPage, e.key === 'ArrowDown' ? 1 : -1);
             } else if (e.key === 'ArrowRight') {
@@ -269,7 +267,7 @@ export function App() {
   }, [selectPage]);
 
   return (
-    <>
+    <NavigateContext.Provider value={selectPage}>
       <Titlebar />
       <Sidebar page={page} onNavigate={selectPage} />
       <div className="app-layout">
@@ -295,7 +293,7 @@ export function App() {
           })}
         </div>
       </div>
-    </>
+    </NavigateContext.Provider>
   );
 }
 

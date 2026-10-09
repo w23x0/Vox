@@ -1,19 +1,24 @@
-/** 设置：系统启动行为、激活模式与快捷键。虚拟麦克风管理区见 CableManager。 */
+/** 设置：通用（界面语言、主题、启动行为）、虚拟麦克风、激活模式与快捷键。虚拟麦克风管理区见 CableManager。 */
+
+import { useState } from "react";
 
 import { hostBit } from "../capabilities";
 import { CapabilityNote } from "../components/Capability";
-import { useT } from "../i18n/context";
+import { toUiLang, useLang } from "../i18n/context";
+import { UI_LANG_NAMES, UI_LANG_ORDER } from "../i18n/types";
 import { useStore } from "../store";
 import type { ActivationMode, Hotkey } from "../types";
 import { Dropdown, SettingsItem, Toggle } from "../ui/controls";
 import { HotkeyEditor } from "../ui/hotkey";
+import { getThemeMode, setThemeMode, type ThemeMode } from "../ui/theme";
 import { CableManager } from "./CableManager";
 
 const DEFAULT_LISTEN_HOTKEY: Hotkey = { ctrl: true, alt: false, shift: false, key: "L" };
 
 export function SettingsPage() {
   const { snapshot, settings, patch } = useStore();
-  const t = useT();
+  const { t, uiLang } = useLang();
+  const [themeMode, setThemeModeState] = useState<ThemeMode>(getThemeMode);
   const speak = settings.speak;
   const listenHotkey = settings.listen.hotkey;
   const loading = snapshot === null;
@@ -27,9 +32,43 @@ export function SettingsPage() {
 
   return (
     <>
-      <CableManager />
-
       <div className="settings-group">
+        <div className="group-title">{t("settings.general")}</div>
+        <SettingsItem
+          wide
+          htmlFor="dd-ui-language"
+          title={t("settings.uiLanguage")}
+          control={
+            <Dropdown
+              id="dd-ui-language"
+              label={t("settings.uiLanguageAria")}
+              value={uiLang}
+              options={UI_LANG_ORDER.map((lang) => ({ value: lang, label: UI_LANG_NAMES[lang] }))}
+              onChange={(lang) => patch({ ui_language: toUiLang(lang) })}
+            />
+          }
+        />
+        <SettingsItem
+          wide
+          htmlFor="dd-theme"
+          title={t("settings.theme")}
+          control={
+            <Dropdown
+              id="dd-theme"
+              label={t("settings.themeAria")}
+              value={themeMode}
+              options={[
+                { value: "system", label: t("settings.themeSystem") },
+                { value: "light", label: t("settings.themeLight") },
+                { value: "dark", label: t("settings.themeDark") },
+              ]}
+              onChange={(mode) => {
+                setThemeMode(mode as ThemeMode);
+                setThemeModeState(mode as ThemeMode);
+              }}
+            />
+          }
+        />
         <SettingsItem
           title={t("settings.autostart")}
           control={
@@ -53,6 +92,8 @@ export function SettingsPage() {
           }
         />
       </div>
+
+      <CableManager />
 
       <div className="settings-group">
         <SettingsItem

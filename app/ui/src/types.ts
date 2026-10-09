@@ -153,6 +153,54 @@ export interface Settings {
   control: ControlSettings;
   /** 阿里云百炼地区：`cn` 国内站（北京）/ `intl` 国际站（新加坡）。Key 只在注册地区有效。 */
   aliyun_region: AliyunRegion;
+  /**
+   * 阿里云百炼自定义接入点（工作空间专属 `wss://…` 地址）；空串 / 缺席 = 按地区缺省。
+   * 待 Rust 侧「接入点配置」落地后进快照；在那之前真后端的设置里没有这个键，所以是可选的。
+   */
+  aliyun_endpoint?: string;
 }
 
 export type AliyunRegion = "cn" | "intl";
+
+/* ---- list_models（待 Rust 侧 list_models 落地后进 types.snapshot.ts）---- */
+
+/** 一个服务商的模型清单。契约见 docs/plans/UI-REDESIGN.md §6。 */
+export interface ModelList {
+  provider: ModelProvider;
+  /** official = 本次 / 缓存里来自服务商官方列表接口；builtin = 内置列表。 */
+  source: "official" | "builtin";
+  /** 毫秒时间戳；builtin 时为 null。 */
+  fetched_at: number | null;
+  /** 拉取失败的原因；成功为 null。失败时 `models` 是内置列表。 */
+  error: ModelListError | null;
+  models: ModelEntry[];
+}
+
+export interface ModelListError {
+  kind: "auth" | "network" | "other";
+  /** 连不上的主机名，网络错误时用来提示用户。 */
+  host: string;
+  message: string;
+}
+
+export interface ModelEntry {
+  /** 调用用的模型 ID。 */
+  id: string;
+  /** 展示名（官方给的，没有就用 id）。 */
+  label: string;
+  /** 有对应协议方言才为 true；false 不可选。 */
+  adapted: boolean;
+  recommended: boolean;
+  /** 是某稳定版的快照时，指向该稳定版的 ID。 */
+  snapshot_of: string | null;
+  /** 官方预计下线日 YYYY-MM-DD。 */
+  offline_at: string | null;
+  capabilities: {
+    voice_selection: boolean;
+    voice_clone: boolean;
+    source_language: boolean;
+    hot_update_language: boolean;
+  };
+  /** 语言代码；服务商没给语言明细时为 null。 */
+  languages: { audio: string[]; text_only: string[] } | null;
+}

@@ -1,7 +1,7 @@
 /**
  * i18n 核心类型：语言枚举、字典形状、翻译接口。
  *
- * 架构一句话：语言偏好持久化在 Rust `settings.ui_language`（zh-CN / en），
+ * 架构一句话：语言偏好持久化在 Rust `settings.ui_language`（zh-CN / ja-JP / en），
  * 前端 `LanguageProvider` 监听它，向整棵组件树提供 `useT()`。
  * 翻译函数 `t(key)` 支持 `{var}` 占位符替换。
  */
@@ -9,17 +9,30 @@
 /** 当前支持的界面语言。值是 settings `ui_language` 的取值。 */
 export type UiLang = "zh-CN" | "ja-JP" | "en";
 
-/** 侧栏语言项显示的**文字缩写**（中 / あ / EN）。绝不用国旗图片 ——
- *  国旗和语言不是一一对应，远程取图断网就是碎图。CSS 里 `:lang(en)`
- *  会把 EN 单独调小，和汉字假名视觉对齐。 */
-export const UI_LANG_SHORT: Record<UiLang, string> = {
-  "zh-CN": "中",
-  "ja-JP": "あ",
-  en: "EN",
+/** 语言下拉里每项用**该语言自己的名字**，不随当前界面语言变。 */
+export const UI_LANG_NAMES: Record<UiLang, string> = {
+  "zh-CN": "简体中文",
+  en: "English",
+  "ja-JP": "日本語",
 };
 
-/** 侧栏语言按钮的循环顺序：点点切到下一个，到尾回到第一个。 */
-export const UI_LANG_CYCLE: readonly UiLang[] = ["zh-CN", "ja-JP", "en"];
+/** 下拉里的排列顺序。 */
+export const UI_LANG_ORDER: readonly UiLang[] = ["zh-CN", "en", "ja-JP"];
+
+/** `<html lang>` 取值（BCP 47）：`:lang()` 据此选 CJK 字体，日文汉字走日文字形。 */
+export const UI_LANG_HTML: Record<UiLang, string> = {
+  "zh-CN": "zh-CN",
+  "ja-JP": "ja",
+  en: "en",
+};
+
+/** 按系统语言（`navigator.language`）选界面语言；不支持的一律 English。 */
+export function detectUiLang(systemLang: string | undefined): UiLang {
+  const l = (systemLang ?? "").toLowerCase();
+  if (l.startsWith("zh")) return "zh-CN";
+  if (l.startsWith("ja")) return "ja-JP";
+  return "en";
+}
 
 /** 字典叶子：翻译后的字符串。占位符形如 `{name}`。 */
 export type MessageValue = string | { [key: string]: MessageValue };

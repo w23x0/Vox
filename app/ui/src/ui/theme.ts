@@ -1,5 +1,6 @@
 /**
- * 主题切换。照 kirox-ui skill 的 references/shell.md。
+ * 主题：跟随系统 / 浅色 / 深色。偏好存 localStorage（"app-theme"：dark | light，
+ * 没存 = 跟随系统）；落到 <html data-theme> 上的永远是解析后的 dark / light。
  *
  * 两个要点：
  *  1. 切换前必须锁住所有 transition —— 否则几十个元素同时补间会闪。
@@ -10,58 +11,74 @@
  */
 
 export type Theme = "light" | "dark";
+export type ThemeMode = "system" | Theme;
 
 const KEY = "app-theme";
 
-function read(): Theme | null {
+const systemDark = (): MediaQueryList => matchMedia("(prefers-color-scheme: dark)");
+
+/** 存下来的偏好；没存过（或存储被禁）就是跟随系统。 */
+export function getThemeMode(): ThemeMode {
   try {
     const v = localStorage.getItem(KEY);
-    return v === "dark" || v === "light" ? v : null;
+    return v === "dark" || v === "light" ? v : "system";
   } catch {
     // WebView 里 localStorage 偶尔被禁（隐私模式 / 沙箱），读不到就当没存过
-    return null;
+    return "system";
   }
 }
 
-/** 当前生效的主题。tokens.css 的暗色挂在 [data-theme=dark] 上，没属性就是亮色。 */
-export function currentTheme(): Theme {
+function resolve(mode: ThemeMode): Theme {
+  return mode === "system" ? (systemDark().matches ? "dark" : "light") : mode;
+}
+
+/** 当前生效的主题。tokens.css 的暗色挂在 [data-theme=dark] 上。 */
+function currentTheme(): Theme {
   return document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
 }
 
-/** 启动时恢复。index.html 已经同步做过一次，这里只兜「属性没写上」的情况。 */
-export function restoreTheme(): Theme {
-  const saved = read();
-  if (saved === "dark") document.documentElement.setAttribute("data-theme", "dark");
-  else if (saved === "light") document.documentElement.removeAttribute("data-theme");
-  return currentTheme();
+function paint(theme: Theme): void {
+  const root = document.documentElement;
+  if (theme === "dark") root.setAttribute("data-theme", "dark");
+  else root.removeAttribute("data-theme");
 }
 
-/** 切到另一个主题，返回切完之后的值。 */
-export function toggleTheme(): Theme {
+/** 启动时恢复，并让「跟随系统」随系统明暗实时变化。index.html 已经同步做过首帧那次。 */
+export function restoreTheme(): () => void {
+  paint(resolve(getThemeMode()));
+  const mq = systemDark();
+  const onChange = () => {
+    if (getThemeMode() === "system") paint(resolve("system"));
+  };
+  mq.addEventListener("change", onChange);
+  return () => mq.removeEventListener("change", onChange);
+}
+
+/** 切换偏好并（带过渡地）落到界面上。 */
+export function setThemeMode(mode: ThemeMode): void {
+  try {
+    if (mode === "system") localStorage.removeItem(KEY);
+    else localStorage.setItem(KEY, mode);
+  } catch {
+    // 存不下就只在本次会话里生效，不影响切换本身
+  }
+  const next = resolve(mode);
+  if (next === currentTheme()) return;
   const root = document.documentElement;
-  const toDark = currentTheme() !== "dark";
 
   // 1. 注入样式锁死过渡
   const lock = document.createElement("style");
   lock.textContent = "*, *::before, *::after { transition-duration: 0s !important; }";
   document.head.appendChild(lock);
 
-  const apply = () => {
-    if (toDark) root.setAttribute("data-theme", "dark");
-    else root.removeAttribute("data-theme");
-    try {
-      localStorage.setItem(KEY, toDark ? "dark" : "light");
-    } catch {
-      // 存不下就只在本次会话里生效，不影响切换本身
-    }
-  };
+  const apply = () => paint(next);
   const unlock = () => setTimeout(() => lock.remove(), 100);
 
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (!document.startViewTransition || reduce) {
     apply();
     unlock();
-    return toDark ? "dark" : "light";
+    return;
   }
 
   const vt = document.startViewTransition(apply);
@@ -80,6 +97,4 @@ export function toggleTheme(): Theme {
       },
     );
   });
-
-  return toDark ? "dark" : "light";
 }

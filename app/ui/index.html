@@ -1,22 +1,24 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vox 设置</title>
+    <title>Vox</title>
     <script>
       /*
        * 首帧前套用已存主题（UI_SPEC 第 5 节）。必须内联在 head 里同步执行 ——
        * 等 JS 模块加载完再套已经晚了，会先渲染亮色再跳暗色。
        * key 必须和 src/ui/theme.ts 的 KEY（"app-theme"）一致，否则暗色用户
        * 冷启动会先亮一下再跳暗。
-       * 没存过就不写 data-theme，让 CSS 里的系统偏好媒体查询生效。
+       * 没存过 = 跟随系统：按 prefers-color-scheme 套（src/ui/theme.ts 同口径）。
        */
       (function () {
         try {
           var s = localStorage.getItem("app-theme");
-          if (s === "dark" || s === "light")
-            document.documentElement.setAttribute("data-theme", s);
+          var dark =
+            s === "dark" ||
+            (s !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.setAttribute("data-theme", "dark");
         } catch (e) {}
       })();
     </script>

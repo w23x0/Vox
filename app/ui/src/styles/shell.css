@@ -23,8 +23,10 @@ body {
   }
 }
 
-/* ---- 侧栏：64px 窄条，顶留 44px、其余三边留 16px ----
-   用纯 CSS 的 top / bottom 跟随同一视口，避免 JS 读 innerHeight 后产生相位差。 */
+/* ---- 侧栏：200px 宽（图标 + 文字），< 860px 收成 64px 纯图标 ----
+   顶留 44px、其余三边留 16px。用纯 CSS 的 top / bottom 跟随同一视口，
+   避免 JS 读 innerHeight 后产生相位差。宽度走 --sidebar-width（tokens.css），
+   下面的媒体查询只改这个变量和「文字显隐」。 */
 .sidebar {
   position: fixed;
   left: 16px;
@@ -36,64 +38,61 @@ body {
   box-shadow: var(--shadow-md);
   display: flex;
   flex-direction: column;
-  align-items: center;
   z-index: 200;
   /* 无边设计：暗色下也不给侧栏描边，靠 --sidebar-bg 比渐变底亮来分层。
-     兜底：窗口压到 minHeight 时，底部图标宁可被面板边缘裁掉，
+     兜底：窗口压到 minHeight 时，底部宁可被面板边缘裁掉，
      也不能越过白色面板浮到渐变底上。 */
   overflow: hidden;
 }
 
 .sidebar-nav {
   flex: 1;
-  /* 撑回侧栏全宽：align-items:center 会让本容器塌成内容宽(42px)，
-     overflow-x:hidden 于是把 .nav-dot 的 -2px 左伸裁掉(顶部竖条变细)。
-     拉伸后按钮仍居中，竖条回到 4px 完整可见。 */
-  align-self: stretch;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: 8px 0 0;
-  gap: 4px;
+  gap: 2px;
+  padding: 10px 8px 0;
   overflow-y: auto;
   overflow-x: hidden;
-  /* 功能多了图标会溢出，但 64px 窄条里出滚动条很丑（占掉图标一侧的位置）。
-     隐藏它是安全的：键盘 ↑↓ 一样能到达被挤出去的项。 */
+  /* 项多了会溢出，但侧栏里出滚动条很丑。隐藏它是安全的：键盘 ↑↓ 一样能到达被挤出去的项。 */
   scrollbar-width: none;
 }
 .sidebar-nav::-webkit-scrollbar { display: none; }
 
-.sidebar-bottom {
+.nav-group {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: 0 0 20px;
-  gap: 6px;
-  flex-shrink: 0;
+  gap: 2px;
+}
+.nav-group + .nav-group {
+  margin-top: 10px;
 }
 
-.nav-divider {
-  width: 32px;
-  height: 1px;
-  /* 分隔线是功能性的，用 --divider；--border 恒为 transparent，画不出线 */
-  background: var(--divider);
-  margin: 0 0 6px;
+.nav-group-title {
+  padding: 4px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 
-/* ---- 导航项 42×42，激活态浅蓝底 + 左侧 4×20 竖条 ---- */
+/* ---- 导航项：整行，图标在左文字在右；激活态浅蓝底 + 左侧 3px 竖条 ---- */
 .nav-item {
   position: relative;
-  width: 42px;
-  height: 42px;
+  width: 100%;
+  min-height: 40px;
   flex-shrink: 0;
   border: none;
-  padding: 0;
+  padding: 8px 12px;
   background: transparent;
   border-radius: 12px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 12px;
   color: var(--text-secondary);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
   cursor: pointer;
   transition: background 0.2s, color 0.2s;
 }
@@ -107,6 +106,7 @@ body {
 .nav-item.active {
   background: var(--accent-soft);
   color: var(--accent-strong);
+  font-weight: 600;
 }
 
 [data-theme="dark"] .nav-item:hover {
@@ -121,8 +121,9 @@ body {
 }
 
 .nav-item svg {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
@@ -130,12 +131,20 @@ body {
   stroke-linejoin: round;
 }
 
+/* 长文案（德语 / 西语）换行而不截断 */
+.nav-label {
+  min-width: 0;
+  flex: 1;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
 .nav-dot {
   position: absolute;
-  left: -2px;
+  left: -8px;
   top: 50%;
   transform: translateY(-50%);
-  width: 4px;
+  width: 3px;
   height: 20px;
   border-radius: 2px;
   background: var(--accent);
@@ -147,26 +156,9 @@ body {
   opacity: 1;
 }
 
-/* ---- 语言项的文字缩写（中 / あ / EN）----
-   不用国旗图片：国旗和语言不是一对一，且远程取图断网就是碎图，
-   每次启动还在向第三方暴露使用痕迹。
-   16px 才压得住旁边 22px 的 SVG 图标；汉字/假名占满字面用 16px，
-   EN 是两个拉丁字母同字号偏小，单独用 :lang(en) 微调。 */
-.nav-lang-label {
-  font-size: 16px;
-  font-weight: 700;
-  line-height: 22px;          /* 和图标等高，切换语言时不上下跳 */
-  letter-spacing: -0.3px;
-}
-/* :lang() 按元素的 lang 属性自动匹配，不需要 JS 加 class */
-.nav-lang-label:lang(en) {
-  font-size: 15px;
-  letter-spacing: -0.8px;
-}
-
 /* 侧栏焦点环：激活项已有「蓝底 + 竖条」两重指示，不再加环；
    未激活项仍要画环 —— 键盘走到必须看得见落点。负 offset 内缩，
-   42px 按钮在 64px 侧栏里，外扩的环会顶到边缘。 */
+   避免外扩的环顶到侧栏边缘。 */
 .nav-item:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
@@ -175,9 +167,52 @@ body {
   outline: none;
 }
 
+/* ---- 底部：版本号 + 有更新徽章 ---- */
+.sidebar-foot {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px 20px 14px;
+}
+
+.sidebar-version {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.sidebar-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 10px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+[data-theme="dark"] .sidebar-update {
+  color: var(--accent);
+}
+.sidebar-update-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+
+/* tooltip 只在纯图标模式下用；宽侧栏里文字已经可见 */
 .nav-tooltip {
   position: fixed;
-  left: 88px;
+  left: calc(var(--sidebar-width) + 24px);
   transform: translateY(-50%);
   background: #1f2937;
   color: #fff;
@@ -193,6 +228,54 @@ body {
 
 [data-theme="dark"] .nav-tooltip {
   background: #374151;
+}
+
+@media (min-width: 860px) {
+  .nav-tooltip {
+    display: none;
+  }
+}
+
+/* ---- 窄窗：收成纯图标 ---- */
+@media (max-width: 859px) {
+  :root {
+    --sidebar-width: 64px;
+  }
+
+  .sidebar-nav {
+    align-items: stretch;
+    padding-inline: 11px;
+  }
+  .nav-group + .nav-group {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--divider);
+  }
+  .nav-group-title,
+  .nav-label {
+    display: none;
+  }
+  .nav-item {
+    justify-content: center;
+    padding: 0;
+    min-height: 42px;
+  }
+  .nav-dot {
+    left: -11px;
+  }
+  .sidebar-foot {
+    align-items: center;
+    padding-inline: 4px;
+  }
+  .sidebar-version {
+    font-size: 10px;
+  }
+  .sidebar-update {
+    padding: 4px;
+  }
+  .sidebar-update-text {
+    display: none;
+  }
 }
 
 /* ---- 标题栏：只放固定的应用名，不放当前页面名 ----
@@ -227,7 +310,6 @@ body {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
-  letter-spacing: -0.3px;
   white-space: nowrap;
   /* 必须：文字挡住拖拽区的话，正好抓在应用名上就拖不动窗口了 */
   pointer-events: none;
@@ -262,9 +344,47 @@ body {
   opacity: 0.8;
 }
 
-/* ---- 主内容：靠 margin 给侧栏让位 ---- */
+/* ---- Windows / Linux：右上角 最小化 / 最大化 / 关闭（线性图标）---- */
+.window-traffic.window-controls {
+  left: auto;
+  right: 0;
+  gap: 0;
+}
+.window-controls button {
+  width: 46px;
+  height: 100%;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.window-controls button:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.window-controls .window-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+.window-controls svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* 圆角窗口的右上角：关闭按钮的红底跟着裁圆 */
+.window-controls .window-close {
+  border-top-right-radius: var(--window-radius);
+}
+
+/* ---- 主内容：靠 margin 给侧栏让位（--sidebar-width 随窗宽变）---- */
 .app-layout {
-  /* 64 侧栏 + 16 左隙 + 16 右隙 */
+  /* 侧栏 + 16 左隙 + 16 右隙 */
   margin-left: calc(var(--sidebar-width) + 32px);
   margin-right: 16px;
   margin-top: var(--titlebar-height);
@@ -304,15 +424,14 @@ body {
 }
 
 .page-head h1 {
-  font-size: 26px;
-  font-weight: 800;
-  letter-spacing: -0.5px;
-  color: var(--accent);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
 }
 
 @media (max-width: 900px) {
   .app-layout {
-    margin-left: calc(var(--sidebar-width) + 20px);
+    margin-left: calc(var(--sidebar-width) + 32px);
     margin-right: 12px;
   }
 

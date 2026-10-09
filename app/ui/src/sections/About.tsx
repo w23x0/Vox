@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import * as catalog from "../catalog";
 import { CapabilityPanel } from "../components/Capability";
 import { useLang, useT } from "../i18n/context";
+import { checkAppUpdate, clearAppUpdate, useAppInfo } from "../lib/appinfo";
 import { useStore } from "../store";
 import type { ModelProvider } from "../types";
 import { useToast } from "../ui/toast";
@@ -29,18 +30,11 @@ export function AboutPage() {
   const { uiLang } = useLang();
   const { api } = useStore();
   const toast = useToast();
-  const [version, setVersion] = useState("0.1.0");
+  const { version } = useAppInfo();
   const [rows, setRows] = useState<Record<string, RowState>>({});
   const [appState, setAppState] = useState<AppState>({ kind: "idle" });
   // 进页只自动检查一次；手动点按钮的行为照旧。
   const didAutoCheck = useRef(false);
-
-  useEffect(() => {
-    void import("@tauri-apps/api/app")
-      .then(({ getVersion }) => getVersion())
-      .then(setVersion)
-      .catch(() => undefined);
-  }, []);
 
   // 目录被覆盖后本组件订阅重渲染，让下拉/列表那行的展示名跟上去。
   useEffect(() => {
@@ -96,14 +90,8 @@ export function AboutPage() {
   const checkApp = async (silent = false) => {
     setAppState({ kind: "checking" });
     try {
-      const { check } = await import("@tauri-apps/plugin-updater");
-      const update = await check();
-      if (!update) {
-        setAppState({ kind: "upToDate" });
-        return;
-      }
-      setAppState({ kind: "available", version: update.version });
-      void update.close().catch(() => undefined);
+      const latest = await checkAppUpdate();
+      setAppState(latest ? { kind: "available", version: latest } : { kind: "upToDate" });
     } catch (error: unknown) {
       if (!silent) {
         toast("danger", t("about.appInstallFailed", { error: String(error) }));
@@ -125,6 +113,7 @@ export function AboutPage() {
       }
       await update.downloadAndInstall();
       void update.close().catch(() => undefined);
+      clearAppUpdate();
       toast("success", t("about.appInstallDone"));
       setAppState({ kind: "upToDate" });
     } catch (error: unknown) {
@@ -142,7 +131,7 @@ export function AboutPage() {
       <div className="panel-body">
         <div className="sub-row">
           <span>{t("about.product")}</span>
-          <span className="num num-muted">{t("about.productValue")}</span>
+          <span className="hint">{t("about.productValue")}</span>
         </div>
 
         <div className="sub-card" style={{ marginTop: 14 }}>

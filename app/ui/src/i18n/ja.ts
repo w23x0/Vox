@@ -1,37 +1,27 @@
 /**
  * 界面文案 · 日本語（日本語パック）。
  *
- * `satisfies Omit<DictShape, "capabilities">` により、**能力位以外**の key 集合が
- * zh.ts と厳密に一致することを保証します（欠落・余剰・型の不一致はコンパイル時に検出）。
+ * `satisfies DictShape` により key 集合が zh.ts と厳密に一致することを保証します
+ * （欠落・余剰・型の不一致はコンパイル時に検出）。
  *
- * ⚠ 保守ルール（2026-09-22 改定）：日本語パックは**凍結**です。`DIRECTIONS.md` §10.5
- * 「機能処置表」で三言語 → 二言語（zh / en）に収束したため、**新規 key は ja に足しません**
- * （`capabilities` と、第十三輪で足した `agent` は意図的に持ちません）。足りない key は
- * `i18n/context.tsx` のフォールバックで基準中国語（zh）が出ます。既存 key の修正は可。
+ * 足りない key は `i18n/context.tsx` のフォールバックで English が出ます（中国語にはフォールバックしません）。
  */
 
 import type { DictShape } from "./zh";
 
-/**
- * 冻结包的形状：`capabilities` 整组没有，第十三轮加的 `agent` 整组没有，
- * **`nav.agent` 那一格也没有**（新页面的名字回落到基准中文）。
- *
- * 嵌套那一格要单独 `Omit`：顶层 `Omit<DictShape, "agent">` 只管整组，
- * `nav` 里缺 `agent` 照样是编译错——而"缺的键回落 zh"这条口径正是靠类型钉住的。
- */
-type JaShape = Omit<DictShape, "capabilities" | "agent" | "nav"> & {
-  nav: Omit<DictShape["nav"], "agent">;
-};
-
 const ja = {
   nav: {
     home: "ホーム",
-    providers: "モデルプロバイダー",
-    subtitle: "字幕の外観",
+    models: "モデル",
+    subtitle: "字幕",
     vrchat: "VRChat",
+    agent: "エージェント制御",
     settings: "設定",
     usage: "使用量",
     about: "バージョン情報",
+    groupTranslate: "翻訳",
+    groupConnect: "接続",
+    groupSystem: "システム",
   },
 
   titlebar: {
@@ -42,10 +32,8 @@ const ja = {
 
   sidebar: {
     navLabel: "ページナビゲーション",
-    toggleTheme: "テーマを切り替え",
-    toLight: "ライトテーマに切り替え",
-    toDark: "ダークテーマに切り替え",
-    language: "UI 言語を切り替え",
+    updateBadge: "更新あり",
+    updateAvailable: "新しいバージョン {ver} があります。クリックして確認",
   },
 
   pipeline: {
@@ -59,16 +47,11 @@ const ja = {
       reconnecting: "再接続中",
       failed: "エラー",
     },
-    provider: "モデルプロバイダー",
-    targetLanguage: "出力言語",
-    sourceLanguage: "相手の言語",
     targetLanguageAria: "発話側が話す出力言語",
     sourceLanguageAria: "受聴側が聴く相手の話す言語",
-    listenTargetLanguage: "翻訳先",
     listenTargetLanguageAria: "受聴側の翻訳先の言語",
     voice: "訳音声",
     voiceAria: "{pipe} の訳音声",
-    providerAria: "{pipe} のモデルプロバイダー",
     outputDevice: "訳音出力",
     outputDeviceAria: "{pipe} の訳音出力デバイス",
     inputDevice: "マイク",
@@ -84,6 +67,21 @@ const ja = {
     playTranslation: "訳音を再生",
     translate: "リアルタイム翻訳",
     translateOffHint: "リアルタイム翻訳は無効です：クラウド API を呼び出さず、あなたの原音をそのまま出力先デバイスへ送ります（発話方式・音量ゲートの制御は有効のまま。字幕・利用量なし）。",
+    stateLoading: "読み込み中",
+    changeModel: "変更",
+    changeModelAria: "{pipe}のモデルを変更",
+    pickerAria: "プロバイダーとモデルを選択",
+    pickProvider: "プロバイダー",
+    pickModel: "モデル",
+    notConfigured: "未設定",
+    goConfigure: "設定する",
+    noModels: "選択できるモデルがありません",
+    sourceLabelSpeak: "あなたの言語",
+    sourceLabelListen: "相手の言語",
+    targetLabel: "翻訳先",
+    speakSourceHint: "あなたの言語は自動で認識されます。",
+    sourceFixedHint: "このモデルでは相手の言語を指定できないため、自動認識に固定されます。",
+    more: "その他の設定",
     start: "開始",
     stop: "停止",
     systemDefault: "システム既定",
@@ -93,7 +91,6 @@ const ja = {
     appNotRunningSuffix: "（未実行）",
     blockedNoApiKey: "先に {provider} の API キーを設定してください",
     blockedSelectApp: "先に監視プログラムを選択してください",
-    openFailReason: "読み込み中",
     micNotConnected: "マイクが接続されていません",
     micNotFound: "マイクが見つかりません",
     appNoAudioFound: "オーディオプログラムが見つかりません",
@@ -165,6 +162,14 @@ const ja = {
     driveSite: "公式サイト",
     licenseDonate: "ライセンスと寄付",
     multichannel: "マルチチャンネル デバイス",
+    general: "一般",
+    uiLanguage: "表示言語",
+    uiLanguageAria: "表示言語",
+    theme: "テーマ",
+    themeAria: "表示テーマ",
+    themeSystem: "システムに合わせる",
+    themeLight: "ライト",
+    themeDark: "ダーク",
     autostart: "起動時に自動開始",
     startMinimized: "起動時に最小化",
     speakActivation: "発音側・有効化方法",
@@ -226,6 +231,9 @@ const ja = {
       checkBlockersFailed: "使用状況の確認に失敗: {error}",
       setChannelFailed: "マルチチャンネル デバイスの変更に失敗: {error}",
     },
+    keySpace: "スペース",
+    keyMouse1: "マウスサイドボタン 1",
+    keyMouse2: "マウスサイドボタン 2",
     primaryKey: "主キー",
     primaryKeyFor: "{label} の主キー",
   },
@@ -316,42 +324,64 @@ const ja = {
     resetAll: "全使用量",
   },
 
-  providersPage: {
-    region: "リージョン",
-    regionAria: "Model Studio のリージョン：API キーは作成したリージョンでのみ有効",
-    regionCn: "中国（北京）",
-    regionIntl: "国際（シンガポール）",
-    selectProvider: "設定するモデルプロバイダー",
-    apiKey: "API キー",
+  models: {
+    providerListAria: "モデルプロバイダー",
+    loading: "読み込み中",
+    statusConfigured: "設定済み",
+    statusNone: "未設定",
+    statusError: "エラー",
+    keyTitle: "API キー",
     apiKeySet: "設定済み",
     apiKeyNotSet: "未設定",
-    loading: "読み取り中",
+    keyMaskAria: "保存済みの API キー（末尾 4 文字のみ表示）",
+    replaceKey: "変更",
+    clearKey: "削除",
+    confirmClear: "削除を確定",
     saveKey: "保存",
     savingKey: "保存中…",
-    clearKey: "キーを削除",
-    confirmClear: "削除を確認",
-    overwriteHint: "入力してから保存してください",
-    pasteHint: "キーを貼り付けてから保存してください",
-    overwritePlaceholder: "新しいキーを入力して上書き",
+    pasteHint: "先にキーを貼り付けてから保存してください",
+    overwriteHint: "新しいキーを入力すると上書きされます",
+    keyInputAria: "{name} の API キー",
+    getKey: "キーを取得",
     savedToast: "{name} のキーを保存しました",
     clearedToast: "{name} のキーを削除しました",
-    saveFailed: "保存に失敗: {error}",
-    clearFailed: "削除に失敗: {error}",
+    saveFailed: "保存に失敗しました：{error}",
+    clearFailed: "削除に失敗しました：{error}",
     keyHidden: "[キーは非表示]",
-    openConsole: "コンソールを開く",
-    capabilities: "モデル機能",
-    realtimeModels: "リアルタイム翻訳モデル",
-    language: "言語",
-    realtimeInterp: "リアルタイム音声相互翻訳",
-    inputAudio: "入力音声",
-    outputAudio: "出力音声",
-    mono: "モノラル",
-    autoVoiceMono: "自動音声・モノラル",
-    autoLanguageCount: "自動",
-    voiceCount: "訳音・{n} 種類",
-    textOnlyCount: "訳文のみ・{n} 種類",
-    officialVoices: "公式音声・{n} 個",
-    viewAll: "すべてを表示",
+    regionTitle: "リージョンとエンドポイント",
+    region: "リージョン",
+    regionDesc: "キーは登録したリージョンでのみ有効です。",
+    regionAria: "Alibaba Cloud Model Studio のリージョン：キーは登録したリージョンでのみ有効です",
+    regionCn: "中国本土（北京）",
+    regionIntl: "国際（シンガポール）",
+    advanced: "詳細設定",
+    endpoint: "カスタムエンドポイント",
+    endpointHint: "空欄の場合はリージョンの既定エンドポイントを使います。ワークスペース専用のアドレスは Model Studio のコンソールで確認できます。",
+    endpointInvalid: "エンドポイントは wss:// または ws:// で始まる必要があります。",
+    title: "利用可能なモデル",
+    sourceOfficial: "公式リスト · {ago}",
+    sourceBuiltin: "内蔵リスト",
+    refresh: "更新",
+    refreshing: "更新中…",
+    needKey: "API キーを設定すると公式のモデル一覧を取得できます。",
+    errAuth: "キーが無効、または権限がありません",
+    errNetwork: "{host} に接続できません。お住まいの地域からこのサービスに直接アクセスできない場合は、先にネットワークプロキシを設定してください。",
+    errOther: "モデル一覧を取得できませんでした：{message}",
+    recommended: "おすすめ",
+    adapted: "対応済み",
+    notAdapted: "未対応",
+    snapshot: "スナップショット",
+    offlineAt: "{date} に終了予定",
+    capLanguages: "言語",
+    langCounts: "音声あり {audio} 言語 · 字幕のみ {text} 言語",
+    capVoices: "翻訳音声",
+    voiceCount: "{n} 種類から選択",
+    autoVoice: "自動",
+    yes: "対応",
+    no: "非対応",
+    capClone: "音声クローン",
+    capSource: "相手の言語の指定",
+    capSnapshotOf: "元のモデル",
   },
 
   common: {
@@ -375,8 +405,77 @@ const ja = {
     autoDetect: "自動認定",
     customVoiceSuffix: "（カスタム）",
     defaultVoiceSuffix: "・既定",
-    autoVoice: "自動音声",
   },
-} satisfies JaShape;
+  capabilities: {
+    title: "デバイスの機能",
+    note: "{bit}：{reason}",
+    tierName: {
+      windows: "Windows デスクトップ",
+      linux_desktop: "Linux デスクトップ",
+      android: "Android スマートフォン",
+      linux_headless: "Linux ヘッドレス",
+    },
+    bit: {
+      mic: "マイク入力",
+      programTap: "アプリ単位の音声取得",
+      virtualMic: "仮想マイク",
+      captions: "字幕",
+      globalHotkey: "グローバルホットキー",
+      tray: "トレイアイコン",
+      backgroundService: "バックグラウンド常駐",
+      vrCaptions: "ヘッドセット字幕",
+      netIn: "ネットワークからの音声入力",
+      netOut: "ネットワークへの音声出力",
+      fileConfig: "設定ファイルによる制御",
+    },
+    reason: {
+      unsupported: "このデバイスでは利用できません。",
+      notInstalled: "まだ使えません：先に仮想オーディオドライバーをインストールし、このページに戻ってください。",
+      permission: "先に許可が必要です：システムで許可（例：ユーザーを input グループに追加、録音やオーバーレイを許可）してから、このアプリを再起動してください。",
+      notBuilt: "このバージョンにはこの機能は含まれていません。",
+      notWired: "このデバイスでは可能ですが、このバージョンではまだ対応していません。今後のバージョンで対応すると自動的に使えるようになります（設定の変更は不要）。",
+      pendingReboot: "ドライバーのインストールまたは削除が完了していますが、反映にはシステムの再起動が必要です。",
+      busy: "一時的に使えません：別のプログラムがデバイスを使用中です。解放されると自動的に復帰します。",
+    },
+    specific: {
+      trayUnsupported:
+        "トレイアイコンは表示されません：このデスクトップにはトレイがありません（GNOME は標準では非対応で、AppIndicator / KStatusNotifier 拡張を入れると表示されます）。それまでウィンドウを閉じても最小化されるだけで、トレイには格納されません。",
+      hotkeyPermission:
+        "グローバルホットキーには先に許可が必要です：現在のユーザーを input グループに追加（`usermod -aG input $USER`）し、再ログインしてから、このアプリを再起動してください。",
+      programTapUnsupported:
+        "このデバイスでは利用できません：この種類のデバイスでは特定のプログラムの音声だけを取得できません（ヘッドレス機器はローカル取得を行わず、スマートフォンは通話音声を取得できません）。マイク入力を使うか、パソコンをご利用ください。",
+      virtualMicNotInstalled:
+        "まだ使えません：先に仮想オーディオドライバー（VB-CABLE）をインストールし、このページに戻ってください。そうすると他のプログラムの録音デバイスに表示されます。",
+    },
+  },
+
+  agent: {
+    title: "エージェント制御",
+    enabled: "マスタースイッチ",
+    enabledDesc:
+      "外部のエージェント（MCP / CLI）がこのマシンに接続することを許可します。オフの間は待ち受けも認証情報ファイルの書き込みも行わず、下の 4 つの許可は無効です。",
+    port: "待ち受けポート",
+    portDesc: "127.0.0.1 のみ。0 = システムが割り当て（既定）。1024 未満のポートは 0 になります。",
+    credentials: "認証情報ファイル",
+    credentialsDesc: "エージェント用のポートとトークンがこのファイルにあります（このマシンの所有者だけが読めます）。",
+    status: "状態",
+    statusLoading: "読み込み中",
+    statusApplying: "新しい設定を適用中…",
+    statusOff: "待ち受けていません（マスタースイッチがオフ）",
+    statusRunning: "動作中：127.0.0.1:{port}",
+    statusFailed: "起動できません：{error}",
+    statusUnknown: "起動できません（原因を取得できませんでした）",
+    allowMicrophone: "マイクの使用を許可",
+    allowMicrophoneDesc: "エージェントがマイクを開けます（自分で聞いて翻訳できます）。",
+    allowSystemAudio: "プログラム音声の取得を許可",
+    allowSystemAudioDesc: "エージェントが特定のプログラムの音声を録音できます。",
+    allowAudibleOutput: "音の出力を許可",
+    allowAudibleOutputDesc: "エージェントが再生デバイスに音を出せます。人に聞こえます。",
+    allowConfigWrite: "設定の変更を許可",
+    allowConfigWriteDesc: "エージェントがこのマシンのエンドポイント設定（翻訳先の言語や音声など）を変更できます。",
+    notify: "字幕通知の間隔",
+    notifyDesc: "字幕の変化をこの間隔で 1 回の通知にまとめます（ミリ秒、50〜5000）。",
+  },
+} satisfies DictShape;
 
 export default ja;

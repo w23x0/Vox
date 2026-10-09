@@ -16,11 +16,11 @@ import type { SubtitleSettings } from "../types";
 import { Dropdown, SettingsItem, Slider, Toggle } from "../ui/controls";
 
 const FONTS = [
-  { value: "Microsoft YaHei UI", label: "微软雅黑" },
+  { value: "Microsoft YaHei UI", label: "Microsoft YaHei UI" },
   { value: "Maple Mono Normal CN", label: "Maple Mono CN" },
-  { value: "SimHei", label: "黑体" },
-  { value: "KaiTi", label: "楷体" },
-  { value: "DengXian", label: "等线" },
+  { value: "SimHei", label: "SimHei" },
+  { value: "KaiTi", label: "KaiTi" },
+  { value: "DengXian", label: "DengXian" },
 ];
 
 /** 底衬颜色 = 纯黑 + 设置里的 alpha，和 vox-overlay-win 的 PLATE_COLOR 一致。 */

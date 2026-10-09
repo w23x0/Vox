@@ -42,16 +42,16 @@
   --radius-xl: 32px;           /* 大区块 */
   --radius-pill: 20px;         /* 徽章胶囊 */
 
-  /* ---- 字体：全等宽设计 ----
-     字体已打包进应用（fonts.css），分发不依赖用户装字体。
-     GlassUI Mono 是打包字体：JetBrains Mono（拉丁）+ Maple CN（汉字），
-     unicode-range 让浏览器逐字符分派。栈末尾保留系统字体兜底，
-     但正常情况永远走 GlassUI Mono，不会掉回系统。 */
-  --font-ui: 'GlassUI Mono', 'JetBrains Mono', 'Maple Mono Normal CN',
-             'Maple Mono Normal NF', 'Maple Mono Normal', 'Cascadia Code',
-             'SF Mono', Consolas, ui-monospace, monospace;
-  --font-mono: var(--font-ui);   /* 同一栈，语义区分保留给数值类 class */
-  --font-sans: var(--font-ui);   /* 兼容别名；这套设计里没有真正的无衬线层 */
+  /* ---- 字体 ----
+     界面用系统无衬线栈：拉丁取系统字体，CJK 由 :lang() 选一组该语言的字体
+     （日文汉字走日文字形），最后 sans-serif 兜底。不打包 CJK 字体。
+     等宽（打包的 JetBrains Mono 拉丁子集）只用于 ID / 密钥 / 数值 / 快捷键。 */
+  --font-latin: system-ui, -apple-system, "Segoe UI", "Noto Sans", Roboto,
+                "Helvetica Neue", Arial;
+  --font-cjk: "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC",
+              "Source Han Sans SC";
+  --font-ui: var(--font-latin), var(--font-cjk), sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   /* ---- 阴影（极轻，纯垂直） ----
      统一 x=0、无 spread：负 spread 会让阴影四边内缩，半透明面板一叠
@@ -64,7 +64,7 @@
   --shadow-ctl: 0 2px 6px rgba(16, 24, 40, 0.08);    /* 控件悬浮 / 聚焦 */
 
   /* ---- 布局 ---- */
-  --sidebar-width: 64px;
+  --sidebar-width: 200px;   /* < 860px 时收成 64px，见 shell.css */
   --titlebar-height: 38px;
   --sidebar-bg: #ffffff;
   --content-max: 1200px;
@@ -81,6 +81,14 @@
   --grad-red:    linear-gradient(135deg, #ef4444, #f87171);
   --grad-violet: linear-gradient(135deg, #8b5cf6, #a78bfa);
   --grad-blue:   linear-gradient(135deg, #3b82f6, #60a5fa);
+}
+
+/* CJK 字体按界面语言分组。lang 属性挂在 <html> 上（LanguageProvider 维护）。 */
+:root:lang(ja) {
+  --font-cjk: "Hiragino Sans", "Yu Gothic UI", "Meiryo UI", "Noto Sans CJK JP";
+}
+:root:lang(ko) {
+  --font-cjk: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans CJK KR";
 }
 
 /* ==========================================================================
@@ -151,15 +159,17 @@ html, body {
 /* 桌面应用外壳用；纯网页请删掉这行，否则页面无法滚动 */
 body.app-shell { overflow: hidden; }
 
-/* 全局已是等宽，所以 .num 的作用不是换字体，而是「加粗 + 负字距 + 表格数字」。
-   数值和正文的区分靠字重（800 vs 400~600）而不是字族。 */
-.num, .mono {
+/* 等宽只给数值 / ID / 密钥 / 快捷键。.num 加粗 + 负字距（仅数值），.mono 保持正常字重。 */
+.num {
   font-family: var(--font-mono);
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: -0.5px;
   font-variant-numeric: tabular-nums slashed-zero;
 }
-/* 斜杠零是这套字体的识别特征，数值区不要关掉 */
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+}
 .num-green { color: var(--success); }
 .num-red   { color: var(--danger); }
 .num-blue  { color: var(--accent); }
@@ -167,15 +177,13 @@ body.app-shell { overflow: hidden; }
 
 /* 10–11px 小标签：必须大写 + 字距 + 600 */
 .label-xs {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
 /* ---- 字号阶梯 ---- */
-.t-page    { font-size: 26px; font-weight: 800; letter-spacing: -0.5px; color: var(--accent); }
+.t-page    { font-size: 22px; font-weight: 700; color: var(--text); }
 .t-section { font-size: 17px; font-weight: 700; color: var(--text); }
 .t-block   { font-size: 15px; font-weight: 700; color: var(--text); }
 .t-card    { font-size: 14px; font-weight: 700; color: var(--text); }

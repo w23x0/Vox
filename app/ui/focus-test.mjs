@@ -29,7 +29,7 @@ for (let i = 0; i < 5; i++) { await step("ArrowUp"); ups.push(await who()); }
 console.log("  上", ups.join(" → "));
 
 console.log("\n=== B. ↓ 全程不跨卡（speak 卡内控件一路下行）===");
-await go("dd-home-speak-provider");
+await go("dd-home-input-device");
 let crossed = false;
 for (let i = 0; i < 4; i++) { await step("ArrowDown"); if ((await who()).includes("listen")) { crossed = true; break; } }
 console.log(crossed ? "  ❌ 跨卡" : "  ✅ 未跨卡");
