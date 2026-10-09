@@ -18,12 +18,13 @@
 ### 1.2 qwen3.8 会话
 - `audio.output.voice` 与平铺 `voice` **两种形状都被接受**，`session.updated` 两处都回显所选音色。产品继续用现有（3.8）形状。
 - 接受 `input_audio_transcription.language`（回显）。
-- 服务端缺省 `input_audio_transcription.model = "gummy-realtime-v1"`——而 gummy 2026-10-10 下线。**待查**：显式发 `input_audio_transcription.model = "qwen3-asr-flash-realtime"`（官方文档为 3.5 推荐的源语言识别模型）3.8 是否接受；若接受，3.8 方言默认显式带上。
+- 服务端缺省 `input_audio_transcription.model = "gummy-realtime-v1"`，而 gummy 2026-10-10 下线。Main 实测：显式发 `qwen3-asr-flash-realtime` 会被回显，但**随便编一个名字也照样回显**，所以 `session.updated` 证明不了它真被采用。**拍板**：本轮 3.8 方言**不**显式发识别模型（保持服务端缺省）；方言表给 3.8 留一个可选的 `transcription_model` 字段（空 = 不发），10-10 之后由 Main 用真实语音验证再填。
 - 3.8 缺省 `output_audio_format = pcm24`（24k）。
 
 ### 1.3 qwen3.5 会话 —— **当前连不通**
 - 收到 `session.created` 后，服务端立刻发一个**负载 > 125 字节的控制帧**（大概率是带长原因的 close 帧），tungstenite 报 `WebSocket protocol error: Control frame too big` 断开。文档形状（平铺 `voice` + `pcm`）和新形状都一样。
-- 这同样会打到产品（同一个 `WsTransport`）。本工单要查清：拿到原始 close 负载（例如临时用不校验的读取路径、或抓 TLS 之上的帧）看服务端到底说了什么，再决定是协议形状问题还是要容忍超长控制帧。查不清就把 3.5 标 `adapted=false` 并在报告里写明，不许硬糊。
+- **已查清（Main 用探针 `--raw` 抓帧）**：那是 close 帧，close code `1007`，原因原文 182 字节：`The free tier of the model has been exhausted. If you wish to continue access the model on a paid basis, please disable the "use free tier only" mode in the management console.`——**是账号额度问题，不是协议形状问题**，3.5 方言形状照文档实现即可。
+- **产品要修（M9）**：服务端的 close 原因超过 RFC 的 125 字节上限，tungstenite 直接报 `Control frame too big`，用户只看到一个看不懂的协议错误。`WsTransport` 必须把服务端 close 的 code + 原因原文交给上层并作为用户可见的错误（Notice）显示；做法自选（例如在流上加一层，识别 opcode 0x8 的超长帧并截断到 123 字节再交给 tungstenite，同时把完整原因另存），要有不联网的单测（喂一段手造的超长 close 帧字节）。额度类原因（含 `free tier` / `quota` / `Arrearage` 等）给出友好提示："该模型的额度已用完，请到服务商控制台检查额度或关闭『仅使用免费额度』"，并附原文。
 
 ## 2. 拍板
 
@@ -36,6 +37,7 @@
 | M5 | **`list_models` 命令**（Tauri + `vox-host` 共享实现，无屏档也能调）：按 `UI-REDESIGN.md` §6 的 `ModelList` 契约返回。阿里云按 §1.1 拉并翻页；OpenAI `GET https://api.openai.com/v1/models`（Bearer）按 id 含 `realtime-translate` 过滤；Gemini `GET https://generativelanguage.googleapis.com/v1beta/models?key=…&pageSize=1000` 按 name 含 `live-translate` 且 `supportedGenerationMethods` 含 `bidiGenerateContent` 过滤。`adapted` = 匹配到方言；`offline_at` 取 offline_time 的日期部分；能力与语言来自方言表。错误归类 `auth`（401/403）/ `network`（连接/超时/DNS）/ `other`，带 `host`。内存缓存 10 分钟，`refresh=true` 强制重拉；拉失败返回内置列表（方言表里的 `models[]`）+ error。HTTP 客户端用 workspace 已有的；**不许让 `cargo tree -p vox-headless` 多出 tauri/gtk/keyring/zbus 类依赖**（加一个纯 Rust HTTPS 客户端可以，报告写依赖树对比）。 |
 | M6 | **`api_key_tail`**：设置快照给每个服务商的密钥末 4 位（无密钥为 null），前端去掉 localStorage 的临时做法改读快照。 |
 | M7 | 地区：`AliyunRegion` 增加 `Hk`（香港，`cn-hongkong.dashscope.aliyuncs.com`）仅当 §1.1/§1.2 能证明香港有实时翻译 WebSocket 地址；证明不了就不加，报告写明。前端地区下拉的说明文案改为"密钥只在创建它的地区有效"。 |
+| M9 | 服务端 close 原因透传给用户（见 §1.3），含超长 close 帧的容忍。 |
 | M8 | gummy / qwen3 不进方言表（明天下线）；旧设置里若是这些值，归一到缺省模型。 |
 
 ## 3. 不做
