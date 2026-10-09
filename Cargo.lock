@@ -5957,12 +5957,15 @@ version = "0.3.0"
 dependencies = [
  "futures-util",
  "parking_lot",
+ "reqwest 0.12.28",
  "rustls",
+ "serde_json",
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
  "tracing",
  "vox-core",
+ "vox-host",
 ]
 
 [[package]]

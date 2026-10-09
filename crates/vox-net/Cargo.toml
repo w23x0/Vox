@@ -24,3 +24,34 @@ parking_lot.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "macros", "net"] }
 tokio-tungstenite = { workspace = true }
 futures-util = "0.3.31"
+# `--session-json` 那个文件要读进来再原样发出去（`--dry-run` 也要把它打出来），
+# 所以 example 需要直接操作 serde_json。workspace 里早就有它（vox-core 的依赖），
+# `Cargo.lock` 一个新包都不进。
+serde_json.workspace = true
+# 只给 `examples/aliyun_probe.rs --keyring` 那条腿用（Secret Service 的键名与
+# 取值规则都在 vox-host 那边，探针不另抄一份）。**dev-dependency 进不了依赖方的树**，
+# 所以 `cargo tree -p vox-headless` 跟改动前一致。
+# keyring/zbus 则藏在下面的 `probe-keyring` 后面（vox-host 的 `secret-service` 默认关）。
+vox-host = { path = "../vox-host" }
+# `--list-models` 要发 HTTPS GET。与 `app/src-tauri` 的写法逐字相同（同一个 reqwest
+# 0.12 已经在 `Cargo.lock` 里、feature 也一致），所以**零新包**，只多一行依赖名。
+# 同样只挂 dev 边：`cargo tree -p vox-headless` 一个包都不多。
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+[features]
+default = []
+# 探针从 Secret Service 读密钥的那一条腿。关着的时候 vox-host 的
+# `SecretBackend::SecretService` 造出一个"明确报错、绝不静默降级"的后端
+# （`secrets::UnavailableStore`），所以探针代码本身不需要 `cfg`，
+# 缺 feature 时 `--keyring` 报的是"需要 Linux + secret-service feature"。
+# `cargo run -p vox-net --features probe-keyring --example aliyun_probe -- --keyring …`
+probe-keyring = ["vox-host/secret-service"]
+
+# 把 example 显式列出来只为一件事：`cargo test` 默认**不跑 example 里的 `#[test]`**
+# （只 build 它们），不写这段的话 `aliyun_probe` 的 15 条单测永远不会被 CI / gate 跑到。
+# `test = true` + `harness = true` 是默认值，写出来是为了让"为什么有这一段"看得见；
+# 跑法：`cargo test -p vox-net --examples`。
+[[example]]
+name = "aliyun_probe"
+path = "examples/aliyun_probe.rs"
+test = true
