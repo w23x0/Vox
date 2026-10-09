@@ -1,6 +1,6 @@
 # S4-C · 半双工门 + 廉价重采样档 · 施工设计稿
 
-> 状态：**[设计稿·未开工]**（修订 r2，2026-10-09）。对应 [`S4-EMBEDDED-REFACTOR.md`](S4-EMBEDDED-REFACTOR.md) §3「S4-C 新模块」表里
+> 状态：**[设计稿·未开工]**（修订 r3，2026-10-10）。对应 [`S4-EMBEDDED-REFACTOR.md`](S4-EMBEDDED-REFACTOR.md) §3「S4-C 新模块」表里
 > 「半双工门」与「廉价重采样档」两行，§2.2（回声消除三档）、§2.3（轻量化与 A53 设计预算），以及 §4 的两行验收。
 >
 > 上游：[`S4-B-OP-CHAIN.md`](S4-B-OP-CHAIN.md)（算子链已落地，**B3 逐节计量也已落地**，本稿按**代码**写）、
@@ -8,13 +8,24 @@
 > 方向：[`docs/architecture/DIRECTIONS.md`](../architecture/DIRECTIONS.md) §8 第 16/17 行、§10.9 第 4/7 条。
 >
 > **口径**：代码与本稿打架以代码为准。**引用一律给符号名，不给行号**（`.omp/RULES.md` #11）。
-> 本轮（2026-10-09）把稿子里每一条代码引用对着 `main`（rebase 后 HEAD = `2bae6bb`）重新核过一遍；
-> 本轮**实跑过**的只有复核者重跑的 `tools/bench-dsp`（§3.1）与我自己的 `Linear` 越界推导（§3.1 末尾），
-> `cargo test` / `clippy` **我没跑**，凡涉及"跑出来的结果"的地方一律注明跑没跑（`.omp/RULES.md` #10）。
 >
-> **r2 相对 r1 的变化**（详见 §0.3）：① 复核发现的 6 条缺陷全部修掉；② 所有行号换成符号名；
-> ③ **R2 撞上一个 r1 没看到的新事实**：`Deps.resample` 的唯一出处已经收进 `vox_host`（§1.5、§3.3、§4.2），
-> "无屏档自己装便宜工厂"这条老路已经走不通，改法写在 §3.3；④ 新增 §4.6 与在途工单的文件冲突表。
+> **r3 的核对基线**：本稿 rebase 到本地 `main`，核对时 `git rev-parse main` = `4bc6e8a`。
+> r3 本轮（2026-10-10）**真跑过**的东西，逐条列清（`.omp/RULES.md` #10）：
+>
+> | 跑了的 | 命令 | 结果 |
+> | --- | --- | --- |
+> | 金样基线 | `cargo test -p vox-core pipeline::golden` | **16 passed, 0 failed**（15 场景 + 1 条 `goldens_are_deterministic_when_regenerated`，见 §5.2 的更正） |
+> | `mod.rs` 用例实数 | `grep -c '#\[test\]' crates/vox-core/src/pipeline/mod.rs` | **44** |
+> | `Resampler::new` 调用方实数 | `grep -rn 'Resampler::new' crates/ tools/ app/` | **17** 处（§1.5） |
+> | `Linear` 越界条件（E2） | `/tmp/opencode/lin` 里三个独立小程序，逐字复刻 `bench-dsp` 的 `Linear::process` 后扫块长 | 见 §3.2 的表；**本稿在这一条上从"纸上推导"升级为"实跑"** |
+>
+> **r3 没跑**：`cargo test --workspace` / `clippy` / `npm run verify` 全没跑（本稿只改文档，`git diff --stat` 只有一个 `.md`）。
+> `tools/bench-dsp` 本身也叫复核者跑过（§3.1），r3 没有重跑它。
+>
+> **r2 → r3 的变化**（详见 §0.3）：① 修 6 处与现状不符或数量数错的事实（§0.3 的 E10–E15）；
+> ② **§3.2 的越界条件从推导升级为实跑**，`44.1k→16k` 那条"[未核实]"随之结案；
+> ③ **两张在途稿（`OVERLAY-CAPTIONS` / `MODEL-TABLE`）的施工部分已经合进 `main`**，"排在谁之后"的约束随之消解，§4.5 整节重写；
+> ④ §5.2 的金样期望条数从 16 改成"现在 16、G4 之后 17"（`pipeline::golden` 这个过滤器会多匹配一条确定性自检）。
 
 ---
 
@@ -25,7 +36,7 @@
 廉价重采样档 = `vox-dsp` 加一档**只对升采样方向生效**的线性插值实现，装配期由**入口**选，
 `ports.rs` / `vox-core` / 清单 / 能力位**一行都不动。**
 
-两件事**互不重叠文件**（§4.4），可以并行派；但两者都撞在途工单（§4.6）。
+两件事**互不重叠文件**（§4.4），可以并行派；但两者都撞相邻稿子（§4.5）。
 
 ### 0.1 本稿对上位稿的收窄与推翻（`DIRECTIONS.md` §8「新者胜」）
 
@@ -41,23 +52,34 @@
 S4-B 的 **INV-1**（任何 `Note` 都不许重建算子链）、**INV-2**（断线不重建链）、契约 C1–C6、
 `DenoiseSkip` 的两支路可观察行为、15 份金样"逐字不变"——**一条都不动**，本稿的全部设计都与它们相容（§2.5.5、§4.1）。
 
-### 0.3 r1 → r2 的修订清单（复核报告逐条对应）
+### 0.3 r1 → r3 的修订清单（复核报告逐条对应）
 
 | # | 复核报告提的问题 | r2 怎么修的 |
 | --- | --- | --- |
 | **E1**（重要） | §2.2.4 与 §2.2.3 自相矛盾：压制分支只判 `mute_samples > 0`，而 `set_config` 保留该窗口 ⇒ 没装半双工的会话会被继续压住 | 分支加判 `config.half_duplex.is_some()`（§2.2.3），`set_config` 在 `half_duplex` 变 `None` 时把窗口一并归零（§2.2.4）。**两道**机制各自一条用例钉住 |
-| **E2**（重要） | R3 的越界触发条件写错：不是"非整数步长"而是 `step > 2` 撞特定余数；整数步长 3.0 在块长 320 时同样炸；`44.1k→16k` bench-dsp 根本没构造过 | §3.1 末尾整段重写，给出推导与三个反例；R3 的范围按真实条件重排，并**新增"补 44.1k→16k 行"这一条**（§3.5、§4.2、§4.3） |
+| **E2**（重要） | R3 的越界触发条件写错：不是"非整数步长"而是 `step > 2` 撞特定余数；整数步长 3.0 在块长 320 时同样炸；`44.1k→16k` bench-dsp 根本没构造过 | §3.2 整段重写，给出推导、三个反例，并在 r3 换成**实跑**结果（§3.2 的表）；R3 的范围按真实条件重排，并**新增"补 44.1k→16k 行"这一条**（§3.2、§3.6、§4.2、§4.3） |
 | **E3**（次要） | `Speaker::rendered` 不是"测试可拨的计数器"（私有 `AtomicU64`，全仓库零写入、无 setter） | §1.6 改写为"只读、恒为 0" |
 | **E4**（次要） | "41 条既有测试"数错 | §1.6 / §4.1 改为 `pipeline/mod.rs::tests` 实数 **44** 条，并说明 B3 新增 2 条 |
 | **E5**（次要） | `Resampler::new` 的"全部调用方"漏 8 处 | §1.5 给出 **17 处**完整清单（复核报告找到 6 处，我另外找到 2 处：`vox-audio-alsa/examples/loopback.rs`、`vox-audio-alsa/tests/aloop_roundtrip.rs`） |
 | **E6**（次要） | §2.5.2 正文说判据侧要有 session，代码里没有 | 判据加 `&& !passthrough`（等价于读 `composition.session.is_some()`），并把"两道保险"那段写实（§2.5.2） |
-| **E7**（次要） | 行号漂移：`mod.rs:1130` 是 `chain.run()` 而非 `take_gate_status`；`resample.rs::process`、`golden.rs::start_speak`、`dto.rs` 三处漂移 | 全部行号删除、改符号名（`RULES.md` #11）。其中 `take_gate_status` 那条**不只是漂移而是已消失**——B3 之后 `Chain::take_gate_status` 不复存在，门状态改由 `Chain::run` 的返回值带出（§1.3） |
-| **E8**（待裁决） | Q2 引用了不存在的 `docs/plans/S4-C-AEC.md` | 保留引用，注明"见 AEC 稿（另行合入）"，并写清该文件截至 2026-10-09 尚不存在（§6.3 Q2、§7） |
-| **E9**（r1 漏、本轮新发现） | —— | **R2 的前提被 S4-A W4 推翻了**：`Deps.resample` 的唯一出处已经收进 `vox_host::entry::HostPorts::deps`，桌面与无屏共用一行。无屏档**没有**自己的装工厂的地方，必须给 `HostPorts` 加一格。改法见 §3.3 / §4.2 |
+| **E7**（次要） | 行号漂移：`mod.rs:1130` 是 `chain.run()` 而非 `take_gate_status`；`resample.rs::process`、`golden.rs::start_speak`、`dto.rs` 三处漂移 | 全部行号删除、改符号名（`RULES.md` #11）。⚠️ **r3 更正**：r2 在这里多写了一句话——"`Chain::take_gate_status` 在 B3 之后不复存在"——**这是假的**，它还在，`Chain::run` 就是调它的那一方（见下面 E10） |
+| **E8**（待裁决） | Q2 引用了不存在的 `docs/plans/S4-C-AEC.md` | 保留引用，注明"见 AEC 稿（另行合入）"，并写清该文件截至 2026-10-10 尚不存在（§7.3 Q2、§8） |
+| **E9**（r1 漏、r2 新发现） | —— | **R2 的前提被 S4-A W4 推翻了**：`Deps.resample` 的唯一出处已经收进 `vox_host::entry::HostPorts::deps`，桌面与无屏共用一行。无屏档**没有**自己的装工厂的地方，必须给 `HostPorts` 加一格。改法见 §3.4 / §4.2 |
+
+**r3 新查出的（E10–E15）**——都是"对着 `main` @ `4bc6e8a` 重新核代码引用"时浮出来的，一条都不是复核报告提的：
+
+| # | r3 发现的问题 | r3 怎么改的 |
+| --- | --- | --- |
+| **E10** | §1.3 写"`Chain::take_gate_status` 在 B3 之后**不复存在**"——**假的**。它在 `chain.rs` 里活得好好的（`pub(crate)`），`Chain::run` 的返回表达式就是 `(scratch.take_current(), self.take_gate_status())` | §1.3 改写：`run` 的返回值带出状态这件事没错，但 `take_gate_status` 是**被 `run` 调用**、不是消失。`Worker` 侧仍然只认 `run` 的返回值，所以对 G2 的结论一个字不变 |
+| **E11** | §1.4 写"有**两条**逐字比 JSON 的既有测试"——**数错**。`composition.rs` 里只有**一条** `the_manifests_match_the_design_documents_instances`，它的函数体里有**两份**期望值（对外说话那份 / 听人说话那份） | §1.4、§4.3（G3-⑪）、§5.2 的变异表、§7.1 的 GR-1 四处统一改成"一条测试、两份期望值" |
+| **E12** | §5.2 / §4.3 的金样期望条数写 16 | **现在跑出来就是 16**（15 条场景测试 + 1 条 `goldens_are_deterministic_when_regenerated`，后者也被 `pipeline::golden` 这个过滤器命中）。改成"G4 之前 16、G4 之后 17" |
+| **E13** | §4.2 给 `crates/vox-headless/src/platform/linux.rs` 标了"（第 34 行那一句）"——**行号**，违反 `RULES.md` #11 | 改成符号名：`platform::platform` 的 `playback` 闭包里那一句 `let resample = vox_dsp::ports::resample_factory();` |
+| **E14** | §4.5 写"在途的两张稿子都还没开工"——**过期**。`OVERLAY-CAPTIONS`（`690efef` + `33927d3`）与 `MODEL-TABLE`（`73e7c58` + `6b91a9a` + `0a04e19` + `7ca4333`）的施工部分**都已经合进 `main`** | §4.5 整节重写：文件冲突仍在，但"排在谁之后"的约束**已经消解**；逐张工单改标"落点上已经是什么" |
+| **E15** | §3.2 把 `44.1k→16k` 会不会炸标成 `[未核实]`（"取决于 `pos` 的轨迹"）——r3 实跑之后这一条可以结案 | §3.2 换成实跑结果，`step > 2` 的口径也从"推导"升级为"测量"；§7.3 Q10 对应的一条未决项一起结案 |
 
 ---
 
-## 1. 现状证据（2026-10-09 对着 rebase 后的 `main` 核，全部按符号名）
+## 1. 现状证据（r3 于 2026-10-10 对着 `main` @ `4bc6e8a` 核，全部按符号名）
 
 ### 1.1 门：`ActivationGate` 的形状与状态机
 
@@ -101,7 +123,7 @@ RMS 的两行计算之后紧接着就是这个 `match`。**新逻辑要插在 RM
 1. "正在播"这件事**在芯里是现成的、零分配的、同一线程的事实**，不需要新通道、不需要 `Arc<AtomicU64>`、不需要 `Cell`。
 2. 播完没播完**也已经有一个测法**（`playback_queue_ms`），本稿复用同一个式子。
 3. S4-B §2.7 给 AEC 预留的参考信号口（`Worker::handle_server_event` 的 `AudioDelta` 分支、两次 `sink.push` 附近）
-   与本稿的"标记正在播"落点是**同一处**——两者要串行派（都改 `pipeline/mod.rs`），见 §4.6。
+   与本稿的"标记正在播"落点是**同一处**——两者要串行派（都改 `pipeline/mod.rs`），见 §4.5。
 
 ### 1.3 算子链的接线点（S4-B 已落地的代码，以代码为准；**B3 已合入**）
 
@@ -113,13 +135,18 @@ RMS 的两行计算之后紧接着就是这个 `match`。**新逻辑要插在 RM
 | 建链时门建在**采集率**上，参数逐字取清单的 `Op::Gate { config }` | `Chain::build` 的 `Op::Gate { config }` 臂 |
 | 链尾率 / 无门时的 `flush_resample` / 断线只清有流状态的节 | `Chain::out_rate`、`Chain::flush_resample`、`Chain::on_disconnect` |
 | **B3 已落地（r1 写稿时还没有）**：`Chain` 里的定长计量数组、逐节自计时、`Chain::timings()` / `Chain::stage_names()` | `Chain::build`、`Chain::run`、`Chain::timings`、`Chain::stage_names`；`chain::OpTiming` |
-| 门状态出口**已经改了形**（r1 写的 `Chain::take_gate_status` 在 B3 之后**不存在**）：改由 `Chain::run` 的返回值 `(BlockOut, Option<GateStatus>)` 带出，调用方在 `Worker::feed_chain` 里就地 `let Some(status) = … else` 早退 | `Chain::run`、`Worker::feed_chain` |
+| 门状态出口：`Chain::run` 的返回值 `(BlockOut, Option<GateStatus>)`，调用方 `Worker::feed_chain` 就地 `let Some(status) = … else` 早退 | `Chain::run`、`Chain::take_gate_status`、`Worker::feed_chain` |
 | 剩下两个门的外部口**仍在 `Chain` 上**，`Worker` 不直接碰门 | `Chain::set_gate_active`、`Chain::set_gate_config` |
 | 门的外部口在 `Worker` 侧的调用点 | `Worker::boot`（`set_gate_active`）、`Worker::handle_note` 的 `Note::GateConfig` 臂（`set_gate_config`）、`Worker::feed_chain`（消费 `Chain::run` 的返回值） |
 
 > **对 G2 的影响**：`Chain::run` 的循环体现在每节两侧夹着计量（两次 `Instant::now()`）。
 > G2 只在 `impl Chain` 的**末尾**加两个方法、不碰 `Chain::run`、不碰 `ChainStage::process`，
 > 冲突面为零。
+>
+> **r3 更正（E10）**：`Chain::take_gate_status` **仍然存在**（`pub(crate)`，§1.3 表里那一行）。
+> r1/r2 说它"已消失"是错的——消失的只是"`Worker` 直接调它"这条路：现在 `Worker` 只读
+> `Chain::run` 的返回值，而 `run` 内部**调** `take_gate_status`。这一点对 G2 的落点没有影响
+> （新方法照样加在 `impl Chain` 末尾，照样只被 `Worker` 调），但**别再告诉施工的人它没了**。
 
 ### 1.4 `GateConfig` 的下游（决定"加一个字段"要动哪些地方）
 
@@ -129,7 +156,7 @@ RMS 的两行计算之后紧接着就是这个 `match`。**新逻辑要插在 RM
 | 会话配置 | `runtime::SessionConfig` 的 `gate` 字段 | 不动 |
 | 控制面命令 | `runtime::PipelineCommand::SetGateConfig { config }`、账本侧的自动派发 | 不动（`GateConfig` 整体传） |
 | 账本事件 | `runtime::Runtime::on_gate_status` → `PipelineStatus.gate` | 不动 |
-| 清单 JSON | `composition::Op::Gate { config: GateConfig }` | ⚠️ **有两条逐字比 JSON 的既有测试**：`composition.rs::tests::the_manifests_match_the_design_documents_instances`，两份期望值里的 gate 是 `{ "kind": "level", "threshold": 0.012, "tail_ms": 600, "preroll_ms": 200 }` 与 `{ "kind": "level", "threshold": 0.0, "tail_ms": 600, "preroll_ms": 200 }` ⇒ **新字段必须 `skip_serializing_if`**，否则这两条红 |
+| 清单 JSON | `composition::Op::Gate { config: GateConfig }` | ⚠️ **一条**逐字比 JSON 的既有测试：`composition.rs::tests::the_manifests_match_the_design_documents_instances`，它的函数体里有**两份**期望值（对外说话那份 + 听人说话那份），两份里的 gate 分别是 `{ "kind": "level", "threshold": 0.012, "tail_ms": 600, "preroll_ms": 200 }` 与 `{ "kind": "level", "threshold": 0.0, "tail_ms": 600, "preroll_ms": 200 }` ⇒ **新字段必须 `skip_serializing_if`**，否则这一条红（r3 更正：是"一条测试两份期望值"，不是"两条测试"） |
 | 前端类型 | `app/ui/src/types.ts::GateState`（9 个 `snake_case` 字面量的联合类型） | 加 `GateState` 变体要同步加一行 |
 | 前端渲染 | 全 `app/ui/src` grep：**`live.gates` 只在 `app/ui/src/store.tsx` 被写，没有任何组件读 `gate.state`** | 不用加 i18n、不用改组件 |
 | DTO | `app/src-tauri/src/dto.rs`：`PipelineStatusDto`（`gate: Option<GateStatus>`）与 `SnapshotDto`（同样一格） | `GateStatus` 加字段会改 DTO 的线上形状 ⇒ **本稿不给 `GateStatus` 加字段**（见 §2.2.1） |
@@ -176,7 +203,7 @@ RMS 的两行计算之后紧接着就是这个 `match`。**新逻辑要插在 RM
 | 清单是由**账本**在 `Start` 时派生的（`Plan::build(&config, &runtime.host_facts())`），夹具注入的是 `HostFacts::all_wired(HostKind::Windows)` | `pipeline::Plan::build`；`pipeline::tests::Rig::build` |
 | 15 份金样的 Speak 场景：`output_device = Some("CABLE Input")`、`voice = Some("Tina")`、`monitor_translation = false` ⇒ 角色是 **`virtual_mic`**（`all_wired(Windows)` 里 `Capability::VirtualMic` 开着） | `golden.rs::start_speak`、`speak::composition` 的 `role` 那一段 |
 | 假播放汇的 `stats()` **真的报了 `queued_samples`**（= `played.len()`，只被 `flush` 清空），`sample_rate` 写死 48 kHz、`channels` 写死 1 | `pipeline::tests::SpeakerHandle` 的 `PlaybackSink::stats` 实现 |
-| **r2 更正**：`rendered_samples` **不是"测试可拨的计数器"** | `pipeline::tests::Speaker::rendered` 是**私有** `AtomicU64`，**全仓库没有任何一处写它**，也没有 setter。它的唯一读者是上面那个 `stats()` 实现 ⇒ 差分台里它**恒为 0**。文档注释"测试拨它模拟渲染前进"是** aspirational**，代码没跟上。**本稿不碰它**（`poll_playback` 因此在差分台里永远不触发，这是既有事实，不是回归） |
+| **r2 更正 / r3 复核**：`rendered_samples` **不是"测试可拨的计数器"** | `pipeline::tests::Speaker::rendered` 是 `pub(crate) struct Speaker` 里的一个**私有**字段 `AtomicU64`，**全仓库只有一处碰它**——`SpeakerHandle::stats` 里的 `.load()`；没有任何一处写它、没有 setter、没有 `store`。它的唯一读者就是那个 `stats()` 实现 ⇒ 差分台里它**恒为 0**。文档注释那句"测试拨它模拟渲染前进"是**一厢情愿**（注释跑在代码前面了）。**本稿不碰它**（`Worker::poll_playback` 因此在差分台里永远不触发，这是既有事实，不是回归） |
 | `LatencyChanged` 的**内容**不进金样（有两个墙钟来源） | `golden.rs` 模块头 |
 
 ---
@@ -384,7 +411,7 @@ impl ActivationGate {
 | --- | --- |
 | 谁配 | **清单**：`Op::Gate.config.half_duplex.tail_ms`。本机派生时由 `speak::composition` 填 `HalfDuplex::DEFAULT`（§2.5.2）；外部提交的清单（S1 / Agent 面 / 无屏档的配置文件）可以自己填。**不进 `Settings`**（理由见 §2.5.3） |
 | 生效范围 | 整条会话（`Chain::build` 时进 `ActivationGate`），**运行期不热改**（改清单 = 新会话 = `Stop`+`Start`，与 INV-1 不冲突，见 §2.5.5） |
-| 缺省 300 ms 的来由 | ① 门本来就有两个尾巴量级可参照：`MANUAL.tail_ms = 150`（断句用）、`level().tail_ms = 600`（断句用），半双工尾巴夹在中间；② 面对面轮流说的一轮约 500–800 ms，尾巴每多 100 ms 就少接得上半句；③ 常见办公室的混响 RT60 在 300–500 ms，尾巴短于它就等于没关。**这是一个估算值，不是实测值**——`[未核实]`：真机上到底要多少，取决于箱子与房间，得等有板子时听（见 §6.3 Q1） |
+| 缺省 300 ms 的来由 | ① 门本来就有两个尾巴量级可参照：`MANUAL.tail_ms = 150`（断句用）、`level().tail_ms = 600`（断句用），半双工尾巴夹在中间；② 面对面轮流说的一轮约 500–800 ms，尾巴每多 100 ms 就少接得上半句；③ 常见办公室的混响 RT60 在 300–500 ms，尾巴短于它就等于没关。**这是一个估算值，不是实测值**——`[未核实]`：真机上到底要多少，取决于箱子与房间，得等有板子时听（见 §7.3 Q1） |
 | 与 `config.tail_ms` 的关系 | **两个不同的东西，别混**：`config.tail_ms` 是"门关掉时发多少零样本去触发服务端断句"（`process_manual` 里的 `vec![0.0; …]`），`half_duplex.tail_ms` 是"播完之后压多久才重新开门"。§2.2.3 的收尾边用前者，压制窗口用后者 |
 
 ### 2.4 与手动门 / 电平门的组合语义
@@ -422,7 +449,7 @@ impl ActivationGate {
 | 备选 | 为什么不选 |
 | --- | --- |
 | 新 `GateKind::HalfDuplex` | 半双工与 `Manual`/`Level` **正交**（§2.4 的决策表）。加成 kind 就得表达 `HalfDuplex × {Manual, Level}` 的叉积：3 个 kind、6 份参数、两条状态机。而且 `Op::kind()` → `Chain::stage_names()` / 计量行名全是按 `Op` 的种类取的，新增 kind 会牵动那一列 |
-| 新 `Op::HalfDuplex` 一节 | 它**不改样本**：没有自己的 `process(&[f32]) -> Vec<f32>` 语义，不满足链的契约 C1/C2（`S4-B-OP-CHAIN.md` §2.2）。而且它需要的是"播放参考信号"，那正是 S4-B §2.7 给 AEC 留的口子——同一张嘴开两次不如开一次。⇒ **AEC 与半双工若同时在链上，应共用一个口**（§6.3 Q2） |
+| 新 `Op::HalfDuplex` 一节 | 它**不改样本**：没有自己的 `process(&[f32]) -> Vec<f32>` 语义，不满足链的契约 C1/C2（`S4-B-OP-CHAIN.md` §2.2）。而且它需要的是"播放参考信号"，那正是 S4-B §2.7 给 AEC 留的口子——同一张嘴开两次不如开一次。⇒ **AEC 与半双工若同时在链上，应共用一个口**（§7.3 Q2） |
 | **`GateConfig` 新字段**（**本稿采纳**） | ① `Op::Gate` 已在 `Composition::OP_ORDER` 里，清单不用动；② `Chain::build` 已经**逐字**把 `Op::Gate.config` 喂给 `ActivationGate::new`（S4-B B2 修掉了 D1/D2/D3 那个"清单说了代码不听"的缺陷），本稿只是让这一格里多一个字段被读；③ `ChainStage` **不加变体** ⇒ 执行器的 `match` 一个字不动；④ `GateConfig` 是 `Copy`，热路径代价是 §2.2.3 的一次比较 |
 
 #### 2.5.2 本机派生：什么时候自动开
@@ -449,7 +476,9 @@ impl ActivationGate {
             Output::Playback { role: PlaybackRole::Speaker | PlaybackRole::Monitor, .. }));
 
     let mut gate = config.gate;
-    // 半双工门（保底档）：只在"麦克风采集"+"译音真的会从房间里放出来"+"无屏档"三条同时成立时开。
+    // 半双工门（保底档）：只在"译音真的会从房间里放出来"+"无屏档"两条同时成立时开。
+    // （"采集是麦克风"这一条**不用写成判据**：这里是 `speak::composition`，采集天生是
+    //  `Input::Mic`——抓进程环回的那条腿在 `listen::composition`，本稿一个字都不改。）
     if audible && facts.host == HostKind::LinuxHeadless {
         gate.half_duplex = Some(HalfDuplex::DEFAULT);
     }
@@ -461,8 +490,8 @@ impl ActivationGate {
 | 条件 | 为什么必须有 |
 | --- | --- |
 | `audible`（角色是 `Speaker` 或 `Monitor`，**且不是直通**） | 译音进 `VirtualMic`（VB-CABLE / PipeWire sink）时声音在**线缆里**，不在房间里，麦克风听不到 ⇒ 无回声、无需关门。`Monitor`（回听）例外：它进的是系统默认设备，是**真出声**的。直通那一支见上面的修正注释 |
-| 采集是麦克风 | 走 `Input::Mic` 才有"房间"这回事。Listen 抓的是**进程环回**（数字源），根本录不到回声 ⇒ `listen::composition` 一个字都不改 |
-| `facts.host == HostKind::LinuxHeadless` | **这一条是纯保守，为了不动已经发货的桌面产品。** 桌面 Linux 用户若没装 VB-CABLE，角色会退成 `Speaker`（`speak::composition` 的 `role` 那一段），此时开了半双工就是**在用户没要求的情况下切断他说话**。概要稿 §3 的原则是"先搭骨架、行为不变，再插新模块"；无屏盒子是本轮目标（§10.9 第 1 条），桌面保持逐字不变 |
+| 采集是麦克风（**结构性成立，不写成判据**） | 走 `Input::Mic` 才有"房间"这回事。Listen 抓的是**进程环回**（数字源），根本录不到回声 ⇒ `listen::composition` 一个字都不改。在 `speak::composition` 里这一条**不用判**：这一格的采集天生就是 `Input::Mic`（`bits.contains(Capability::Mic)` 才 push），抓环回的那条腿在 `listen::composition` |
+| `facts.host == HostKind::LinuxHeadless` | **这一条是纯保守，为了不动已经发货的桌面产品。** 桌面 Linux 用户若没装 VB-CABLE，角色会退成 `Speaker`（`speak::composition` 的 `role` 那一段），此时开了半双工就是**在用户没要求的情况下切断他说话**。概要稿 §3 的原则是"先搭骨架、行为不变，再插新模块"；无屏盒子是本轮目标（§10.9 第 1 条），桌面保持逐字不变。**r3 补核**：`host_ceiling(LinuxHeadless)` = `Mic` + `BackgroundService`，**里面没有 `VirtualMic`** ⇒ 无屏档的 `role` 永远是 `Speaker`，`audible` 只可能被 `!passthrough` 翻掉 |
 
 **调用侧的保险**：`Worker::mark_playing` 只从 `Worker::handle_server_event` 的
 `ServerEvent::AudioDelta` 分支调用——直通时那个分支根本不会被走到（直通走 `Worker::pump_passthrough`），
@@ -481,7 +510,7 @@ S1 / Agent 面 / 无屏档的配置文件都能写，**零代码改动**。所�
   运行期唯一的门控口是 `Note::GateConfig`（INV-1 允许的），它改的是 `ActivationGate.config`——
   **改 `half_duplex` 字段恰好是 `set_config` 能做的、不重建链的事**（§2.2.4）。
   ⇒ 技术上"用户热开关"是零成本的；**本稿不做的理由是它会让半双工在没有耳机/扬声器信息的机器上乱切话**，
-  而这一轮的目标机器（无屏盒子）压根不需要这个开关。留作后续：`[未决]` §6.3 Q3。
+  而这一轮的目标机器（无屏盒子）压根不需要这个开关。留作后续：`[未决]` §7.3 Q3。
 
 #### 2.5.4 为什么不新增能力位（以及什么时候该补）
 
@@ -493,7 +522,7 @@ S1 / Agent 面 / 无屏档的配置文件都能写，**零代码改动**。所�
 - **什么时候该补**：AEC 落地时。三档（`hw_aec` / `soft_aec` / 半双工）是**互斥的三选一**，
   选档入口应当是 `Composition::of` 里的一处 `match`，
   那时才值得把"这机器有硬件 AEC"做成位。本稿的 `audible && host == LinuxHeadless`
-  到那时**整条替换**掉（§6.3 Q2）。
+  到那时**整条替换**掉（§7.3 Q2）。
 
 #### 2.5.5 与 INV-1 的相容性（逐条核）
 
@@ -611,7 +640,7 @@ impl Chain {
 反向（队列溢出丢样本）只会让窗口偏长，**保守安全**。缓解：`mark_playing` 在**每一次** `AudioDelta`
 都重新装满，所以只要还有译音在推进，窗口就被续上；真正只靠倒数的只有"最后一次 push 之后"那一段。
 `[未核实]` 真机上渲染卡顿多久算一次事件——有板子后用自计时（`Chain::timings` 的 `max_ns`）看
-（`op_timings` 读取口 **B3 已落地**，见 §6.3 Q5）。
+（`op_timings` 读取口 **B3 已落地**，见 §7.3 Q5）。
 
 ### 2.7 热路径零新增分配（`RULES.md` #6）逐条记账
 
@@ -735,7 +764,7 @@ impl Chain {
 > **r2 补一条**：复核者**没有**复现这张表（`/tmp/resample-probe` 不在仓库里，也不是 workspace 成员），
 > 只复现了表一。所以表二是**单一来源、不可复现**的数字。§3.1.1 的结论里，
 > 只有"降采样方向上线性会混叠到 0 dBFS"这一条是**结构性事实**（线性插值没有低通，镜像能量必然全量折进语音带），
-> 不依赖具体数字；其余比值（12.7×、多相不划算）依赖这张表，**标 `[未核实]`**（见 §6.3 Q10）。
+> 不依赖具体数字；其余比值（12.7×、多相不划算）依赖这张表，**标 `[未核实]`**（见 §7.3 Q10）。
 
 #### 3.1.1 三条能直接下结论的读法
 
@@ -757,9 +786,9 @@ impl Chain {
 **有可能**在 T=32 档追平甚至超过 rubato。本稿**不**据此改结论，因为：即使追平，
 它也只值 0.5 ms/s（A53 口径约 2 ms/s），而 R 的收益全在升采样那一侧。
 
-### 3.2 `bench-dsp` 的对照 `Linear` 越界 —— **r2 整段重写（E2）**
+### 3.2 `bench-dsp` 的对照 `Linear` 越界 —— **r2 整段重写（E2）、r3 换成实跑（E15）**
 
-`tools/bench-dsp/src/main.rs` 里的对照用 `Linear` 的 `process` 是这样写的：
+`tools/bench-dsp/src/main.rs` 里的对照用 `Linear` 的 `process` 是这样写的（逐字照抄现状）：
 
 ```rust
 fn process(&mut self, input: &[f32]) -> Vec<f32> {
@@ -781,31 +810,65 @@ fn process(&mut self, input: &[f32]) -> Vec<f32> {
 }
 ```
 
-**r1 说"非整数步长会炸、`44.1k→16k` 会炸"——两句话都不对**：
+#### 3.2.1 纸上推导（r2 写的，r3 保留）
 
-- 触发条件不是"非整数"。把 `L = buf.len()`、`p = pos` 代进去推一遍：
-  ① 循环能继续的条件是 `floor(pos) + 1 < L`，即 `floor(pos) ≤ L-2`，也就是 **`pos < L-1`**；
-  ② 循环退出后 `done = floor(pos_last + step)`，而 `pos_last < L-1`；
-  ③ `copy_within(done..)` 在 `done > L` 时 panic（`done == L` 是合法的空区间，**不炸**）；
-  ④ 所以炸的条件是 `pos_last + step ≥ L+1`，即 **`step > 2`** 且 **`pos` 恰好落在
-     `[L+1-step, L-1)` 这段宽度为 `step-2` 的窗口里**。
+把 `L = buf.len()`、`p = pos` 代进去推一遍：
 
-  ⇒ **一句话口径：降采样倍数大于 2 时，`Linear` 有机会越界；不是"步长非整数"的问题。**
-  `step ≤ 2` 的路径（16k→48k 的 1/3、24k→48k 的 1/2）**结构上不可能**炸。
+1. 循环能继续的条件是 `floor(pos) + 1 < L`，即 `floor(pos) ≤ L-2`，也就是 **`pos < L-1`**；
+2. 循环退出后 `done = floor(pos_last + step)`，而 `pos_last < L-1`；
+3. `copy_within(done..)` 在 `done > L` 时 panic（`done == L` 是合法的空区间，**不炸**）；
+4. 所以炸的条件是 `pos_last + step ≥ L+1`，即 **`step > 2`** 且 **`pos` 恰好落在
+   `[L+1-step, L-1)` 这段宽度为 `step-2` 的窗口里**。
 
-- **整数步长照样炸**：`step = 3.0`（48k→16k）时 `pos` 一直是整数、每次加 3，
-  窗口 `[L-2, L-1)` 宽度是 1。`pos` 命中它当且仅当 `L ≡ 2 (mod 3)`。
-  ⇒ **块长 320（320 ≡ 2 mod 3）必炸，块长 960（960 ≡ 0 mod 3）侥幸躲过**。
-  这正是复核报告说的"整数步长 3.0 在块长 320 时同样炸"。
+⇒ **一句话口径：降采样倍数大于 2 时，`Linear` 有机会越界；不是"步长非整数"的问题。**
+`step ≤ 2` 的路径（16k→48k 的 1/3、24k→48k 的 1/2、48k→24k 的 2）**结构上不可能**炸。
 
-- **`44.1k→16k`（step = 2.75625）落在危险区**（> 2），但**能不能真炸取决于 `pos` 的轨迹**，
-  **本稿没有实跑验证过**（`tools/bench-dsp` 里**根本没有 44.1k 这个用例**，
-  `grep 44_100` 零命中）⇒ r1 那句"44.1k→16k 会炸"是**未经验证的断言**，
-  按 `.omp/RULES.md` #10 标 `[未核实]`，并由 R3 补一个用例把它变成事实（§3.5）。
+#### 3.2.2 实跑（r3 新增，E15）——把上面那句话从推导变成测量
+
+r3 把上面那个 `process` 逐字抄进 `/tmp` 里的三个独立小程序（**不在仓库里、不是 workspace 成员**，
+`rustc -O` 直接编），扫"输入率 → 输出率 × 块长"，每个组合连喂 128 块看它炸不炸。
+**跑出来的原始结果**：
+
+| 路径 | step | 扫的块长范围 | 炸的次数 | 不炸的块长 |
+| --- | --- | --- | --- | --- |
+| 48k→16k | 3.00000 | 300–1000（701 个） | **467** | 恰好是 **3 的倍数的那 234 个**（300/303/306/…/999） |
+| 44.1k→16k | 2.75625 | 300–1000（701 个） | **693** | 只有 **8** 个：328 / 441 / 554 / 588 / 735 / 769 / 882 / 995 |
+| 16k→48k | 0.33333 | 960 | 0 | 全部 |
+| 24k→48k | 0.50000 | 960 | 0 | 全部 |
+| 48k→24k | 2.00000 | 960 | 0 | 全部 |
+
+panic 原文（`RUST_BACKTRACE=1` 不设时的 core 信息）：
+
+```
+thread 'main' panicked at library/core/src/slice/index.rs:1020:55:
+range start index 321 out of range for slice of length 320
+```
+
+**从这张表能直接下的四条结论**：
+
+1. **`step ≤ 2` 一笔勾销**：三条（0.333 / 0.5 / 2.0）全部不炸，与推导一致。
+2. **整数步长照样炸，而且比推导说的更宽**。`step = 3.0` 时"不炸"的充要条件不是
+   "`L ≡ 0 (mod 3)`"这么一句静态的话——**每一次调用**的 `L` 都必须是 3 的倍数。
+   而 `process` 退出时会留下 `L - done` 个残留样本，**残留会攒**：块长 `N ≡ 1 (mod 3)` 时
+   第一轮 `L = N ≡ 1` 侥幸不炸（`done = L-1`，残留 1），第二轮 `L = 1+N ≡ 2` **必炸**。
+   ⇒ **实测口径：`step = 3.0` 时，块长必须是 3 的倍数；`320 ≡ 2` 必炸，`319 ≡ 1` 也炸（只是晚一轮），`960 ≡ 0` 不炸。**
+3. **`44.1k→16k` 会炸——r1 说对了，只是理由说错了**。701 个块长里炸 693 个，
+   活的 8 个是"`pos` 的分数部分恰好躲开窗口"的幸运残差，**没有任何结构性的理由**。
+   r2 把它标成 `[未核实]`（"取决于 `pos` 的轨迹"）是过于保守，r3 按实跑结果**结案：会炸**。
+4. **`bench-dsp` 今天不炸，是因为它喂的是 960**。`chunks()` 按 `per_block` 切，
+   `b48 = mono48.chunks(960)`、`b16 = mono24.chunks(320)`、`b24 = mono24.chunks(480)`——
+   48k→16k 的线性对照只喂 `b48`（960，3 的倍数），所以这条 bug **在仓库里是潜伏的，
+   从来没被触发过**。这也解释了为什么 `bench-dsp` 一直"跑得过"。
 
 **⇒ 对 R3 的直接要求**：① 修 `Linear::process` 的守卫（循环退出后把 `done` 夹到 `buf.len()`，
-或把循环条件改成"`pos + 1 < len` 用同一个取整口径"）；② **补一条 44.1k→16k 的测量**，
-让这条路径真的被跑一次；③ 补便宜档的行（§3.5）。
+或把循环条件改成"`pos + 1 < len` 用同一个取整口径"）；② **补一条 44.1k→16k 的测量**
+（今天这个率在 `tools/` 里 `grep 44_100` / `grep 44100` 零命中，**根本没被构造过**），
+修完之后它就是"越界条件确实是 `step > 2` 而不是非整数步长"这条说法的**可执行证据**；
+③ 补便宜档的行（§3.6）。
+
+> **证据强度自评**：上面的表是 r3 用一个 `/tmp` 小程序跑出来的，**不是仓库里的测试**。
+> R3 落地时应该把其中至少一条钉成 `tools/bench-dsp` 里的可执行用例（见 §4.2 R3 的范围），
+> 否则这条结论仍然是"某个人的一次运行"。
 
 ### 3.3 算法选择
 
@@ -895,7 +958,7 @@ impl HostPorts {
 | 禁令 | 为什么 |
 | --- | --- |
 | **不许**在 `HostPorts::deps` 里读环境变量 | 那里是共享层，桌面与无屏共用；读了就变成"桌面也被无屏的环境变量影响" |
-| **不许**让桌面也走 `cheap_resample_factory()` | 桌面是发货产品，音质按 sinc 出厂校验（§6.2 第 2 条的镜像代价） |
+| **不许**让桌面也走 `cheap_resample_factory()` | 桌面是发货产品，音质按 sinc 出厂校验（§7.2 第 2 条的镜像代价） |
 | **不许**同时留 `VOX_RESAMPLE_QUALITY` 与一个 `Settings` 字段 | 两条真源（`RULES.md` #3） |
 
 **其余备选与结论**：
@@ -966,7 +1029,7 @@ pub fn cheap_resample_factory() -> ResampleFactory {
 理由：加一个 `fn quality(&self)` 的默认方法确实能拿到"这条链用的是哪一档"，
 但**这一格在 R1 里没有消费者**：真要说清楚，只有两个地方能说——装工厂的入口（它自己知道）与日志。
 为一个"以后可能要用"的读取口改 `pub` trait，按 `RULES.md` #4 属于半成品。
-> `[未决]` §6.3 Q4：自计时读取口（B3 的 `Runtime::op_timings`）**已经落地**了，
+> `[未决]` §7.3 Q4：自计时读取口（B3 的 `Runtime::op_timings`）**已经落地**了，
 > 若 `Snapshot` 要显示"本条链的重采样档"，那时才加 `ports::Resample::quality()` 的默认方法，
 > 并同步 `vox-dsp` 与各测试替身。**这一格今天仍然没有消费者**，所以仍然不加。
 
@@ -978,11 +1041,17 @@ pub fn cheap_resample_factory() -> ResampleFactory {
 - `vox-dsp` 的 **5** 条既有单测（`vox_dsp::resample::tests`）测的是 `Resampler::new` = sinc 路径，
   **一条都不用改**（`RULES.md` #5：新 API 是加法）。
 - **新增 5 条** `vox_dsp::resample::tests`（§4.3）。
-- **`tools/bench-dsp` 三件事**（R3，§3.2 与 §3.1 末尾指的那两件 + 便宜档）：
+- **`tools/bench-dsp` 四件事**（R3，§3.2.1/§3.2.2 指的那两件 + 便宜档 + 证据固化）：
   ① 把对照 `Linear` 的越界守卫修掉；
-  ② **补一条 44.1k→16k 的测量**（今天这个率根本没被构造过，`grep 44_100` 零命中），
-  修完之后它就是"越界条件确实是 `step > 2` 而不是非整数步长"这条说法的**可执行证据**；
-  ③ 把便宜档加进基准表，让"这个数是怎么来的"留在仓库里而不是留在 `/tmp`。
+  ② **补一条 44.1k→16k 的测量**（今天这个率在 `tools/` 里 `grep 44_100` / `grep 44100` 双双零命中，
+     **根本没被构造过**），修完之后它就是"越界条件确实是 `step > 2` 而不是非整数步长"这条说法的**可执行证据**；
+  ③ 把便宜档加进基准表，让"这个数是怎么来的"留在仓库里而不是留在 `/tmp`；
+  ④ 把 §3.2.2 里"`step = 3.0` 扫块长"至少一条钉成 bench-dsp 自己能跑的用例——
+     r3 那张表来自 `/tmp` 小程序，**不是仓库里的测试**（§3.2 末尾的自评）。
+- **为什么这条 bug 一直在仓库里潜伏**：`chunks()` 的 `b48 = mono48.chunks(960)` / `b16 = …chunks(320)` /
+  `b24 = …chunks(480)`，48k→16k 的线性对照只喂 `b48`（960 = 3 的倍数，恰好躲开），
+  所以 `bench-dsp` 从来跑得过。**R3 补 44.1k 那一行会当场炸**——这不是"补了一条测量"，
+  是"补了一条会 panic 的测量"，守卫必须先修（§3.2.2 的第 4 条结论）。
 
 ---
 
@@ -992,13 +1061,13 @@ pub fn cheap_resample_factory() -> ResampleFactory {
 
 | 动作 | 文件 | 改什么 | owner |
 | --- | --- | --- | --- |
-| 修改 | `crates/vox-core/src/gate.rs` | ① 新增 `HalfDuplex`（§2.2.1）；② `GateConfig` 加 `half_duplex`（含两个 serde 属性）+ 两个预设各补一行；③ `GateState` 加 `PlaybackMute`；④ `ActivationGate` 加 `mute_samples` 字段 + `set_mute_for_ms`；⑤ `process` 加压制分支（§2.2.3，**含 `&& half_duplex.is_some()`**）；⑥ `reset` 清它、`set_config` 装回它（§2.2.4）；⑦ 模块头补一段"第三种门不是 kind，是正交的一格"；⑧ **新增 6 条单测，既有 5 条一字不动** | core-dev |
+| 修改 | `crates/vox-core/src/gate.rs` | ① 新增 `HalfDuplex`（§2.2.1）；② `GateConfig` 加 `half_duplex`（含两个 serde 属性）+ 两个预设各补一行；③ `GateState` 加 `PlaybackMute`；④ `ActivationGate` 加 `mute_samples` 字段 + `set_mute_for_ms`；⑤ `process` 加压制分支（§2.2.3，**含 `&& half_duplex.is_some()`**）；⑥ `reset` 清它、`set_config` 装回它（§2.2.4）；⑦ 模块头补一段"第三种门不是 kind，是正交的一格"；⑧ **新增 7 条单测（§4.3 的 ①–⑦），既有 5 条一字不动** | core-dev |
 | 修改 | `crates/vox-core/src/pipeline/chain.rs` | ① `Chain::echo_guard_tail_ms` + `Chain::set_echo_guard_ms`（§2.6，**加在 `impl Chain` 末尾**）；② `ChainStage` / `ChainStage::process` / `Chain::run`（含 B3 的自计时代码）/ `on_disconnect` **一个字不动**；③ **新增 2 条单测** | core-dev |
-| 修改 | `crates/vox-core/src/pipeline/mod.rs` | ① 拆出自由函数 `sink_queue_ms`（`Worker::playback_queue_ms` 改为逐字转调）；② `Worker::mark_playing` + `handle_server_event` 的 `AudioDelta` 分支插一行；③ `tests::Rig` 加 `with_facts`（`build` 函数体行为不变）；④ **既有 44 条测试（§1.6）断言一字不动** | core-dev |
+| 修改 | `crates/vox-core/src/pipeline/mod.rs` | ① 拆出自由函数 `sink_queue_ms`（`Worker::playback_queue_ms` 改为逐字转调）；② `Worker::mark_playing` + `handle_server_event` 的 `AudioDelta` 分支插一行；③ `tests::Rig` 加 `with_facts`（`build` 函数体行为不变）；④ **既有 44 条 `#[test]`（数法见 §4.3）断言一字不动** | core-dev |
 | 修改 | `crates/vox-core/src/pipeline/speak.rs` | ① `composition` 里 `ops` 段**纯位移**到 `out` 段之后；② 算 `audible`（**含 `&& !passthrough`**）+ 填 `half_duplex`；③ `use` 补 `HostKind`；④ **新增 2 条单测** | core-dev |
 | 修改 | `crates/vox-core/src/pipeline/golden.rs` + 新增 `golden/speak_48k_speaker_half_duplex.txt` | `SCENARIOS` 加一条 + 一个 `#[test]` + 一个 `verify!` 调用 | core-dev |
 | 修改 | `crates/vox-core/src/lib.rs` | `pub use gate::{…}` 补 `HalfDuplex` | core-dev |
-| 修改 | `app/ui/src/types.ts` | `GateState` 联合类型加一行 `"playback_mute"`（**一行**；§1.4 已核：没有任何组件读 `gate.state`，不用改 i18n 与组件） | shell-dev |
+| 修改 | `app/ui/src/types.ts` | `GateState` 联合类型加一行 `"playback_mute"`（**一行**；§1.4 已核：`live.gates` 只在 `store.tsx` 被写、没有任何组件读 `gate.state`，不用改 i18n 与组件）。⚠️ **与 G3 的 `types.ts` 是同一处** ⇒ 按 `#8` 与 G3 并轨或串行（§4.5 / §4.6） | shell-dev |
 | **不动** | `composition.rs` / `capability.rs` / `ports.rs` / `runtime.rs` / `vox-dsp/**` / `app/src-tauri/**` / `vox-host/**` / `vox-audio-*/**` | 见 §4.4 的自证表 | — |
 
 ### 4.2 廉价重采样档（R）
@@ -1010,8 +1079,8 @@ pub fn cheap_resample_factory() -> ResampleFactory {
 | 修改 | **`crates/vox-host/src/entry.rs`** | **`HostPorts` 加 `resample` 字段；`HostPorts::deps` 把写死的 `resample_factory()` 改成读该字段**（§3.4，r2 新增） | shell-dev |
 | 修改 | **`app/src-tauri/src/lib.rs`** | **装配 `HostPorts` 的那一处加 `resample: vox_dsp::ports::resample_factory(),`（桌面行为逐字不变，r2 新增）** | shell-dev |
 | 修改 | `crates/vox-headless/src/headless.rs` | `host_ports()` 里传 `cheap_resample_factory()` + 读 `VOX_RESAMPLE_QUALITY` + 启动时 `tracing::info!` 记实际档 | shell-dev |
-| 修改 | `crates/vox-headless/src/platform/linux.rs` | `platform()` 里的 `PlaybackFactory` 闭包（第 34 行那一句）同上（与上一条**同一个 owner，同一张工单**） | shell-dev |
-| 修改 | `tools/bench-dsp/src/main.rs` | ① 修对照 `Linear` 的越界守卫；② **补 44.1k→16k 一行**；③ 加便宜档两行测量（§3.6） | core-dev |
+| 修改 | `crates/vox-headless/src/platform/linux.rs` | `platform::platform` 的 `playback` 闭包里那一句 `let resample = vox_dsp::ports::resample_factory();` 换成读 `VOX_RESAMPLE_QUALITY` 选档（与上一条**同一个 owner，同一张工单**） | shell-dev |
+| 修改 | `tools/bench-dsp/src/main.rs` | ① 修对照 `Linear` 的越界守卫（§3.2.1 的推导 / §3.2.2 的实测）；② **补一条 44.1k→16k 的测量**；③ 加便宜档两行测量；④ **把 §3.2.2 至少一条扫块长的结果钉成可执行用例**（现在那条证据只是 `/tmp` 里的一次运行） | core-dev |
 | **不动** | `crates/vox-core/src/ports.rs` / `**/pipeline/**` / `composition.rs` / `capability.rs` / `crates/vox-audio-*/**` / `app/src-tauri/src/platform/**` | 见 §4.4 | — |
 
 ### 4.3 测试清单（逐条可数）
@@ -1020,21 +1089,26 @@ pub fn cheap_resample_factory() -> ResampleFactory {
 | --- | --- | --- |
 | **G1** `gate.rs` | ① `half_duplex_silences_the_uplink_until_the_window_runs_out` ② `a_mute_arriving_mid_sentence_ends_it_with_a_zero_tail` ③ `the_prebuffer_is_cleared_when_the_mute_begins_and_not_refilled` ④ `the_window_ends_after_exactly_its_tail_in_capture_samples` ⑤ `a_gate_without_half_duplex_never_mutes`（**变异验证**：`ActivationGate` 直接调 `set_mute_for_ms` 之后仍不压任何一块——钉 §2.2.3 的 `&&` 那一半）⑥ `set_config_keeps_the_mute_window`（同形于既有 `set_config_keeps_external_active`）**＋ ⑦ `set_config_dropping_half_duplex_ends_the_mute_immediately`**（钉 §2.2.4 的第二道机制与那张三行表） | **+7** |
 | **G2** `chain.rs` | ⑧ `a_chain_without_a_half_duplex_gate_ignores_the_echo_guard` ⑨ `the_echo_guard_reaches_the_gate_through_the_manifest` | **+2** |
-| **G3** `speak.rs` | ⑩ `speak_opens_a_half_duplex_gate_only_on_the_headless_tier_with_a_speaker`（Windows+virtual_mic → `None`；LinuxHeadless+speaker → `Some`；**直通 → `None`（钉 E6 的 `&& !passthrough`）**；Windows+speaker → `None`）⑪ `the_headless_manifest_keeps_its_json_shape_when_the_gate_is_unset`（对着 `composition.rs::tests` 那份期望值再比一次，钉 `skip_serializing_if`） | **+2** |
+| **G3** `speak.rs` | ⑩ `speak_opens_a_half_duplex_gate_only_on_the_headless_tier_with_a_speaker`（Windows+virtual_mic → `None`；LinuxHeadless+speaker → `Some`；**直通 → `None`（钉 E6 的 `&& !passthrough`）**；Windows+speaker → `None`）⑪ `the_headless_manifest_keeps_its_json_shape_when_the_gate_is_unset`（拿一份 `LinuxHeadless` + `Speaker` 的清单去比 `composition.rs::tests::the_manifests_match_the_design_documents_instances` 里那**两份**期望值的形状，钉 `skip_serializing_if`） | **+2** |
 | **G4** `golden.rs` | ⑫ `speak_48k_speaker_half_duplex_matches_its_golden` + 1 份 `.txt` | **+1** |
 | **G5** `app/ui` | 0（`npm run verify` 里 `tsc` 过即可） | 0 |
 | **R1** `vox-dsp` | ⑬ `cheap_upsampler_exists_only_for_upsampling` ⑭ `a_cheap_upsampler_hits_the_target_rate_within_a_few_samples`（流式散碎块 vs 一次性的总量差 ≤ 5，与既有 `streaming_odd_chunks_matches_single_big_chunk` 同口径）⑮ `flush_drains_the_cheap_path` ⑯ `reset_clears_the_cheap_path` ⑰ `the_cheap_path_stays_linear_where_linear_is_better`（同一段 1 kHz，线性档与 sinc 档的带内电平差 ≤ 0.1 dB，**不给它带任何抗混叠的承诺**） | **+5** |
-| **R3** `bench-dsp` | 0（这个 crate 没有单测；越界修复的证据是"44.1k→16k 与 48k→16k 两行都跑得出来"这条**可执行事实**，见 §3.6-②） | 0 |
+| **R3** `bench-dsp` | 0（这个 crate 没有 `#[test]`；越界修复的证据是"44.1k→16k 与 48k→16k 的两种块长都跑得出来、不 panic"这条**可执行事实**，见 §3.6-②④） | 0 |
 | | | **净 +17** |
 
 **既有用例改动数：0。**（唯一有风险的是 `composition.rs::tests::the_manifests_match_the_design_documents_instances`，
 它**必须**在 G 之后仍然绿——那正是 `skip_serializing_if` + `host == LinuxHeadless` 两条机制的价值，
 它就是"15 份金样不变"在清单侧的对偶证据。）
 
-**既有用例的真实条数**（r2 更正，r1 写的"41 条"是错的）：
-`crates/vox-core/src/pipeline/mod.rs::tests` 共 **44** 个 `#[test]`（S4-B B3 合入前 42，
-B3 新增 `no_note_rebuilds_the_chain` 与 `op_timings_reports_one_row_per_installed_stage` 两条）；
-`crates/vox-core/src/gate.rs::tests` 共 **5** 条；`crates/vox-dsp/src/resample.rs::tests` 共 **5** 条。
+**既有用例的真实条数**（r3 用命令重数过一遍；复核报告提的"41 实为 39"，我按 `main` @ `4bc6e8a` 数出来对不上那个 39，所以这条**只写我数出来的数、不解释别人的数**）：
+
+| 文件 | 条数 | 数法（`.omp/RULES.md` #10：可复现） |
+| --- | --- | --- |
+| `crates/vox-core/src/pipeline/mod.rs::tests` | **44** | `grep -c '#\[test\]' crates/vox-core/src/pipeline/mod.rs` = 44。其中 B3（`85324b9`）加的两条是 `no_note_rebuilds_the_chain` 与 `op_timings_reports_one_row_per_installed_stage`（`git log -S` 逐条查过，都只命中 B3 这一个 commit） |
+| `crates/vox-core/src/gate.rs::tests` | **5** | 同上，= 5 |
+| `crates/vox-dsp/src/resample.rs::tests` | **5** | 同上，= 5 |
+
+⚠️ **别把 44 当"净增的分母就用 44"**：第 5.2 节的期望条数是**过滤后**的条数，`pipeline::golden` 这个过滤器还会多命中一条 `goldens_are_deterministic_when_regenerated`（见 E12）。
 
 ### 4.4 平行性自证（G ∥ R）
 
@@ -1054,56 +1128,80 @@ B3 新增 `no_note_rebuilds_the_chain` 与 `op_timings_reports_one_row_per_insta
 
 **r2 删掉的一段**：r1 用整节论证"G 与 S4-B B3 抢 `chain.rs` / `pipeline/mod.rs`，建议 G 排在 B3 之后"。
 **B3 已经合入了**（`op_timings` 读取口、`Chain::timings`、B3 的两条用例都在树上），
-这个冲突**不存在了**。取而代之的是 §4.6 的在途工单冲突。
+这个冲突**不存在了**。取而代之的是 §4.5 的相邻稿子冲突。
 
-### 4.5 与在途工单的文件冲突（**r2 新增**）
+### 4.5 与相邻稿子的文件冲突（**r3 整节重写：E14**）
 
-在途的两张稿子都还没开工，都与本稿有文件交集。按 `.omp/RULES.md` #8（同一文件不许两张工单并行）
-逐张列清楚：
+> **先说结论，别再按 r2 的排期派工单**：r2 写这一节时说"在途的两张稿子都还没开工"。
+> **这句话现在已经过期了。** 截至本稿 rebase 后的 `main`（`4bc6e8a`）：
+>
+> | 稿子 | 落地情况（对着 `git log` 核的） |
+> | --- | --- |
+> | `OVERLAY-CAPTIONS.md` | **施工部分已全部合入**：`690efef`（C1 句子序列 + C4/C5b/C6/C7/C8 + C2 的 `pipeline/mod.rs` 字幕喂入）+ `33927d3`（C5b 行首锚点）。`replace_text` 已删、`update_sentence` / `finish_sentence` 在位、`Worker::push_text` 已是新签名 |
+> | `MODEL-TABLE.md` | **主体已合入**：`73e7c58`（M1/M2/M4/M8）+ `6b91a9a` + `0a04e19`（M9 的复核缺陷）+ `7ca4333`（M5/M6）。**只剩 M7（`AliyunRegion::Hk`）没落**——`settings.rs` 里 `AliyunRegion` 仍只有 `Cn` / `Intl`；它只碰 `settings.rs` 与前端，与本稿零交集 |
+> | `LANG.md` | 也已合入（`4bc6e8a`），碰 `crates/vox-core/src/{settings,catalog,cloud/protocol}.rs`、`build.rs`、`app/ui/**`——与本稿零交集 |
+>
+> **⇒ 所以"排在 OVERLAY-CAPTIONS / MODEL-TABLE 之后"这个约束已经消解**：那些文件已经在树上被改过了，
+> G / R 落在它们**上面**，不再需要等。真正还剩的约束只有两条：**同一张工单内部的前后置**
+> （G3→G4、R1→R2/R3）与**本稿与 AEC 的串行**（§7.3 Q2）。
+>
+> 下表按 `.omp/RULES.md` #8 逐张列清楚：每张工单碰什么文件、那个文件**现在已经被谁改过**、
+> 落点在哪。**"已经被谁改过"这一列的用处**：施工的人 rebase / merge 时要盯的冲突点。
 
-| 工单 | 会碰的文件 | 冲突的对方 | 应排在哪张在途工单之后 | 冲突面与最小化做法 |
+| 工单 | 会碰的文件 | 那个文件现在已经被谁改过（`main` @ `4bc6e8a`） | 落点（按符号名） | 前置 |
 | --- | --- | --- | --- | --- |
-| **G1** `gate.rs` | `crates/vox-core/src/gate.rs` | —— | 无冲突，可立即开工 | — |
-| **G2** `chain.rs` | `crates/vox-core/src/pipeline/chain.rs` | —— | 无冲突，可立即开工 | —— |
-| **G3** `pipeline/mod.rs` + `speak.rs` + `lib.rs` + `types.ts` | `crates/vox-core/src/pipeline/mod.rs`、`crates/vox-core/src/pipeline/speak.rs`、`crates/vox-core/src/lib.rs`、`app/ui/src/types.ts` | ① **OVERLAY-CAPTIONS** C2 改 `pipeline/mod.rs` 的 `push_text`；② **MODEL-TABLE** 前端同步改 `app/ui/src/types.ts` | ① 排在 **OVERLAY-CAPTIONS 之后**；② `types.ts` 那一行排在 **MODEL-TABLE 之后** | 两处都在 `pipeline/mod.rs` 但**位置相距很远**：OVERLAY 在字幕喂入段（约 1300 行附近），G3 在播放遥测段（`Worker::playback_queue_ms` / `handle_server_event`）与 `tests::Rig`。真撞了也是小 hunk，**但仍按 #8 串行** |
-| **G4** `golden.rs` + 新 `.txt` | `crates/vox-core/src/pipeline/golden.rs`、`golden/*.txt` | —— | 排在 G3 之后 | G4 还会读到 `Rig::with_facts`，所以必须在 G3 之后 |
-| **G5** `types.ts` | `app/ui/src/types.ts` | **MODEL-TABLE**（前端 `types.ts`/快照同步，M6） | 排在 **MODEL-TABLE 之后** | 一行字面量；两稿都是加法，**但不许并行** |
-| **R1** `vox-dsp` | `crates/vox-dsp/src/{resample,ports}.rs` | —— | 无冲突，可立即开工 | — |
-| **R2** 无屏装便宜档 | `crates/vox-host/src/entry.rs`、`app/src-tauri/src/lib.rs`、`crates/vox-headless/src/{headless.rs,platform/linux.rs}` | **MODEL-TABLE**（`catalog/**`、`crates/vox-core/src/cloud/protocol.rs`、`settings.rs`、`catalog.rs`、前端 `types.ts`） | 无文件交集，**可与 MODEL-TABLE 并行** | —— |
-| **R3** `bench-dsp` | `tools/bench-dsp/src/main.rs` | —— | 排在 R1 之后 | —— |
-| **G6 / R5** 文档回填 | `docs/plans/S4-EMBEDDED-REFACTOR.md`、`docs/architecture/DIRECTIONS.md` | **本稿本身**（两份在途稿也在改 `DIRECTIONS.md` §10 的当前计划表） | 排在 OVERLAY-CAPTIONS 与 MODEL-TABLE 都落地之后 | 三个 docs 稿子改同一张表，**文档层最容易踩**，一律串到最后 |
+| **G1** | `crates/vox-core/src/gate.rs` | **`85324b9` 以来零改动**（`git log 85324b9..main -- crates/vox-core/src/gate.rs` 空） | 加 `HalfDuplex` + `GateConfig` 新格 + `mute_samples` + `process` 的分支 | 无 |
+| **G2** | `crates/vox-core/src/pipeline/chain.rs` | `85324b9`（B3）之后只被 `73e7c58`（MT-1）碰过一次 | 加在 `impl Chain` 末尾 | G1 |
+| **G3** | `crates/vox-core/src/pipeline/mod.rs` | `690efef` / `73e7c58` / `c2d525c` 三个 commit 都改过它（字幕喂入、协议方言、模型名） | 播放遥测段（`Worker::playback_queue_ms` → `sink_queue_ms`、`handle_server_event` 的 `AudioDelta` 臂）与 `tests::Rig::with_facts`——**与字幕段相距很远**，但 `#8` 仍要求不能并行 | G1 |
+| **G3** | `crates/vox-core/src/pipeline/speak.rs` | **`85324b9` 以来零改动** | `composition` 里 `ops` 段纯位移 + `audible` 判据 | G1 |
+| **G3** | `app/ui/src/types.ts` | `07ab9c9` / `c2c9b5b` / `690efef` / `7ca4333` 四个 commit 轮番改过（目标语言与地区、UI 重设计、`lines_per_track`、`aliyun_endpoint`） | `GateState` 联合类型加一行 `"playback_mute"` | G1 |
+| **G4** | `crates/vox-core/src/pipeline/golden.rs` + 新 `.txt` | **`85324b9` 以来零改动** | `SCENARIOS` 加一条 + 一个 `#[test]` + 一个 `verify!` | G3 |
+| **G5** | `app/ui/src/types.ts` | 同 G3 那一行 | 与 G3 的 `types.ts` 改动**同一个文件**⇒ 按 `#8`，**G5 与 G3 不许并行**，要么并进 G3，要么排在 G3 之后 | 无 |
+| **R1** | `crates/vox-dsp/src/{resample,ports}.rs` | **`85324b9` 以来零改动** | `ResampleQuality` / `Linear` 臂 / `cheap_upsampler` / `cheap_resample_factory` | 无 |
+| **R2** | `crates/vox-host/src/entry.rs` | `4694521`（S4-A W5）改过它；`7ca4333` 只在 `vox-host` 下加了 `models.rs`，**没动 `entry.rs`** | `HostPorts` 加 `resample` 字段 + `deps` 改一行 | R1 |
+| **R2** | `app/src-tauri/src/lib.rs` | `7ca4333`（MT-2 的 `list_models`）+ `c2d525c`（可覆盖连接地址）改过它 | 装配 `HostPorts` 的那一处加 `resample:` 一行 | R1 |
+| **R2** | `crates/vox-headless/src/headless.rs` | `4694521`（S4-A W5）改过它 | `host_ports()` 传工厂 | R1 |
+| **R2** | `crates/vox-headless/src/platform/linux.rs` | **`85324b9` 以来零改动** | `platform::platform` 的 `playback` 闭包选档 | R1 |
+| **R3** | `tools/bench-dsp/src/main.rs` | **`85324b9` 以来零改动** | 修守卫 + 补 44.1k→16k + 便宜档 + 固化用例 | R1 |
+| **G6 / R4** 文档回填 | `docs/plans/S4-EMBEDDED-REFACTOR.md`、`docs/architecture/DIRECTIONS.md` | **`85324b9` 以来两个文件都零改动**（`git log 85324b9..main --` 两个路径都是空）——`LANG.md` 落地时**没有**改 `DIRECTIONS.md` | 两张表都在 `docs/` 下，本稿与 AEC 稿将来都会动它们 ⇒ 一律串到最后 | G4 且 R3 |
+| **AEC**（**稿子还不存在**，见 §7.3 Q2） | `pipeline/mod.rs`（`AudioDelta` 分支）、`pipeline/chain.rs`（`Chain::push_playback_reference`）、`pipeline/speak.rs`（三档互斥的选档 `match`）、`composition.rs` / `capability.rs` | ——（**没有稿子，无 commit 可列**） | 与 G3 / G4 / G2 **同一个区域**：`push_playback_reference` 要插在 `sink.push` **之前**，`mark_playing` 在两次 push **之后**，是相邻两行 | **排在 G4 之后**（本稿的拍板，§7.3 Q2） |
 
-**给 Main 的一句话建议**：`G1` / `G2` / `R1` 三张零冲突，立即派；
-`G3` 排在 OVERLAY-CAPTIONS 之后；`G5` 排在 MODEL-TABLE 之后；`R2` / `R3` 与两张在途稿全不冲突，随时可派。
+**给 Main 的一句话建议**：**七张工单现在零外部阻塞**（两张在途稿的施工部分都已经在树上）：
+`G1` / `G2` / `R1` / `R2` / `R3` 可立即派；`G3` 只需等 `G1`；`G4` 等 `G3`；
+`G5` 那一行 `types.ts` **建议直接并进 G3**（同一文件、同一处联合类型，拆开只会多一次 rebase）。
+
+> ⚠️ 表里最后一行（AEC）**不是可派的工单**——它的稿子还不存在（§7.3 Q2）。列在这里只是把
+> "G 系列落完之后谁还会再动这几个文件"写清楚，免得施工的人以为 `pipeline/mod.rs` 从此就没人碰了。
 
 ### 4.6 工单
 
 | # | 名字 | owner | 独占文件 | 前置 | 排在谁之后 |
 | --- | --- | --- | --- | --- | --- |
 | **G1** | `gate.rs`：半双工数据结构 + 状态机 + 7 条单测 | core-dev | `crates/vox-core/src/gate.rs` | 无 | 无 |
-| **G2** | `chain.rs`：两个门控口 + 2 条单测 | core-dev | `crates/vox-core/src/pipeline/chain.rs` | 无（**G1 的 `set_mute_for_ms` 要在**）⇒ 实取前置 G1 | 无 |
-| **G3** | `Worker::mark_playing` + `Rig::with_facts` + `speak::composition` 的判据 + `types.ts` | core-dev | `pipeline/mod.rs`、`pipeline/speak.rs`、`src/lib.rs`、`app/ui/src/types.ts` | G1 | **OVERLAY-CAPTIONS**（`pipeline/mod.rs`）；`types.ts` 那行另等 **MODEL-TABLE** |
+| **G2** | `chain.rs`：两个门控口 + 2 条单测 | core-dev | `crates/vox-core/src/pipeline/chain.rs` | G1（`set_mute_for_ms` 要在） | 无 |
+| **G3** | `Worker::mark_playing` + `Rig::with_facts` + `speak::composition` 的判据 | core-dev | `pipeline/mod.rs`、`pipeline/speak.rs`、`src/lib.rs` | G1 | 无（`690efef` / `33927d3` 已在树上，见 §4.5） |
 | **G4** | 差分台：新场景 + 1 份金样 | core-dev | `pipeline/golden.rs`、`pipeline/golden/speak_48k_speaker_half_duplex.txt` | G3 | 无 |
-| **G5** | `app/ui`：`GateState` 加一行 | shell-dev | `app/ui/src/types.ts` | 无（可与 G3 拆开） | **MODEL-TABLE** |
+| **G5** | `app/ui`：`GateState` 加一行 | shell-dev | `app/ui/src/types.ts` | 无 | **与 G3 同一个文件 ⇒ 要么并进 G3，要么排在 G3 之后**（`#8`） |
 | **R1** | `vox-dsp` 便宜升采样档 + 新工厂 + 5 条单测 | core-dev | `crates/vox-dsp/src/{resample,ports}.rs` | 无 | 无 |
-| **R2** | `HostPorts` 加重采样工厂 + 无屏装便宜档 + 环境变量 + 启动日志 | shell-dev | `crates/vox-host/src/entry.rs`、`app/src-tauri/src/lib.rs`、`crates/vox-headless/src/{headless.rs,platform/linux.rs}` | R1 | 无（与两张在途稿零交集） |
-| **R3** | `bench-dsp`：修 `Linear` 越界 + 补 44.1k→16k + 加便宜档 | core-dev | `tools/bench-dsp/src/main.rs` | R1 | 无 |
-| **G6 / R4** | 文档回填（`S4-EMBEDDED-REFACTOR.md` §3 表这两行标"已落地"、`DIRECTIONS.md` §8 第 16/17 行旁注） | docs-scribe | `docs/plans/S4-EMBEDDED-REFACTOR.md`、`docs/architecture/DIRECTIONS.md` | G4 且 R3 | OVERLAY-CAPTIONS、MODEL-TABLE、本稿 |
+| **R2** | `HostPorts` 加重采样工厂 + 无屏装便宜档 + 环境变量 + 启动日志 | shell-dev | `crates/vox-host/src/entry.rs`、`app/src-tauri/src/lib.rs`、`crates/vox-headless/src/{headless.rs,platform/linux.rs}` | R1 | 无 |
+| **R3** | `bench-dsp`：修 `Linear` 越界守卫 + 补 44.1k→16k + 加便宜档 + 把扫块长的结果钉成用例 | core-dev | `tools/bench-dsp/src/main.rs` | R1 | 无 |
+| **G6 / R4** | 文档回填（`S4-EMBEDDED-REFACTOR.md` §3 表这两行标"已落地"、`DIRECTIONS.md` §8 第 16/17 行旁注） | docs-scribe | `docs/plans/S4-EMBEDDED-REFACTOR.md`、`docs/architecture/DIRECTIONS.md` | G4 且 R3 | `LANG.md` 之外的所有 docs 稿子 |
 
 依赖图：
 
 ```
 G1 ──▶ G2 ──┐
- │          ├──▶ G3 ──▶ G4 ──▶ G6
- └──▶ G3 ───┘                （G3 的 types.ts 一行另等 MODEL-TABLE）
+  │          ├──▶ G3 ──▶ G4 ──▶ G6
+  └──▶ G3 ───┘                （G5 的 types.ts 一行建议并进 G3）
 
  R1 ──▶ R2 ──▶ R4
   │
   └──▶ R3 ──▶ R4
 ```
 
-**工单间文件不重叠**（G1/G2/G3/G4/G5/R1/R2/R3 逐对零交集），符合 `RULES.md` #8；
-与在途工单的交集见 §4.5，**按那一节的"排在谁之后"列串行**。
+**工单间文件不重叠**（G1/G2/G3/G4/G5/R1/R2/R3 逐对零交集），符合 `RULES.md` #8
+——唯一的例外是 **G3 与 G5 都碰 `app/ui/src/types.ts`**，`#8` 要求它们串行，所以建议并轨。
+已合入的相邻稿子落在哪些文件上，见 §4.5。
 
 ---
 
@@ -1124,7 +1222,8 @@ cd app/ui && npm run verify                                        # G3 / G5 之
 
 ```bash
 # ① 15 份旧金样逐字不变（验收命令里**绝不含** VOX_GOLDEN_REGEN）
-cargo test -p vox-core pipeline::golden                            # 期望：16 passed（15 旧 + 1 新）
+cargo test -p vox-core pipeline::golden                            # 期望：16 passed（15 场景 + 1 确定性自检）
+                                                                    # G4 落地后：17 passed（多一条新场景）
 git status --porcelain crates/vox-core/src/pipeline/golden         # 期望：**空**（新 .txt 已在上一张工单提交）
 
 # ② 新金样自己是确定的
@@ -1133,8 +1232,8 @@ VOX_GOLDEN_REGEN=1 cargo test -p vox-core pipeline::golden
 git status --porcelain crates/vox-core/src/pipeline/golden         # 期望：空
 
 # ③ 跨调度稳定
-RUST_TEST_THREADS=1 cargo test -p vox-core pipeline::golden        # 期望：16 passed
-RUST_TEST_THREADS=8 cargo test -p vox-core pipeline::golden        # 期望：16 passed
+RUST_TEST_THREADS=1 cargo test -p vox-core pipeline::golden        # 期望：16 passed（G4 后 17）
+RUST_TEST_THREADS=8 cargo test -p vox-core pipeline::golden        # 期望：16 passed（G4 后 17）
 ```
 
 **可观察行为**（概要稿 §4 的原文「播放中上行为静音、播放结束 + 尾巴后恢复；去掉该逻辑即红」）怎么测：
@@ -1144,7 +1243,7 @@ RUST_TEST_THREADS=8 cargo test -p vox-core pipeline::golden        # 期望：16
 | 播放中上行**不出声**（`wire` 段没有新的 `audio_append`） | 新金样的 `wire` 段 |
 | 播放结束 + 尾巴之后恢复 | 同上（第 9 块起重新有帧，**块号逐字钉住**） |
 | 没装半双工的会话绝不被压住（r2 新增，来自 E1） | G1-⑤ + G1-⑦ 两条用例 |
-| 去掉该逻辑即红 | ① 删 `process` 里的压制分支 ⇒ G1-①②③④ + 新金样全红；② 把 `speak::composition` 里 `facts.host == LinuxHeadless` 去掉 ⇒ G3-⑩ 的第三条红；③ 把 `&& !passthrough` 去掉 ⇒ G3-⑩ 的第二条红；④ 把 `&& config.half_duplex.is_some()` 去掉 ⇒ G1-⑤ 红；⑤ 把 `skip_serializing_if` 去掉 ⇒ `composition.rs` 的两条既有 JSON 测试红 |
+| 去掉该逻辑即红 | ① 删 `process` 里的压制分支 ⇒ G1-①②③④ + 新金样全红；② 把 `speak::composition` 里 `facts.host == LinuxHeadless` 去掉 ⇒ G3-⑩ 的第三条红；③ 把 `&& !passthrough` 去掉 ⇒ G3-⑩ 的第二条红；④ 把 `&& config.half_duplex.is_some()` 去掉 ⇒ G1-⑤ 红；⑤ 把 `skip_serializing_if` 去掉 ⇒ `composition.rs::tests::the_manifests_match_the_design_documents_instances` 那**一条**测试红（它有两份期望值，两份都会红） |
 | 热路径零新增分配 | 代码论证（§2.7）+ G1-④ 的块数逐块可数；B3 已有的 `timings_are_monotonic_counters_with_no_allocation`（链层）与 G1 的用例（门层）合起来覆盖 |
 
 ### 5.3 R 专属
@@ -1153,11 +1252,12 @@ RUST_TEST_THREADS=8 cargo test -p vox-core pipeline::golden        # 期望：16
 # ① 便宜档只对升采样存在
 cargo test -p vox-dsp cheap_upsampler_exists_only_for_upsampling   # 期望：1 passed
 
-# ② 基准工程里能看见两档，且 44.1k→16k 跑得出来（r2 新增，来自 E2）
+# ② 基准工程里能看见两档，且越界守卫真的修好了（E2 / E15）
 cd tools/bench-dsp && cargo run --release                          # 期望：表格里出现
-                                                                     #   "线性插值 44.1k→16k（对照）"
-                                                                     #   "线性插值 24k→48k（便宜档）"
-                                                                     # 两行，且**进程不 panic**
+                                                                      #   "线性插值 44.1k→16k（对照）"
+                                                                      #   "线性插值 24k→48k（便宜档）"
+                                                                      #   两行，且**进程不 panic**
+                                                                      # （守卫没修时这一行必炸：§3.2.2 第 3 条）
 ```
 
 **可观察行为**：
@@ -1194,8 +1294,8 @@ cd tools/bench-dsp && cargo run --release                          # 期望：�
 
 | # | 风险 | 后果 | 处置 |
 | --- | --- | --- | --- |
-| **GR-1** | **`skip_serializing_if` 漏了** | `composition.rs::tests` 那两条逐字比 JSON 的既有测试当场红；违反"既有测试逐字未改" | §2.2.1 把两个 serde 属性写成必带；G3-⑪ 就是专门钉它的 |
-| **GR-2** | **`facts.host == LinuxHeadless` 这一条被评审当成"随便加的"删掉** | 桌面 Linux 无虚拟麦的用户**在没要求的情况下被切断说话** | §2.5.2 把三条判据的理由逐条写开；G3-⑩ 的第四条（Windows + Speaker → `None`）钉住它；`DIRECTIONS.md` §8 记一条"半双工只在无屏档自动开" |
+| **GR-1** | **`skip_serializing_if` 漏了** | `composition.rs::tests::the_manifests_match_the_design_documents_instances` 那**一条**逐字比 JSON 的既有测试当场红（它有两份期望值，两份一起红）；违反"既有测试逐字未改" | §2.2.1 把两个 serde 属性写成必带；G3-⑪ 就是专门钉它的 |
+| **GR-2** | **`facts.host == LinuxHeadless` 这一条被评审当成"随便加的"删掉** | 桌面 Linux 无虚拟麦的用户**在没要求的情况下被切断说话** | §2.5.2 把两条判据（外加「采集是麦克风」这条结构性前提）的理由逐条写开；G3-⑩ 的第四条（Windows + Speaker → `None`）钉住它；`DIRECTIONS.md` §8 记一条"半双工只在无屏档自动开" |
 | **GR-3** | **压制期间清空 preroll 的那条决策被改成"照常填"** | 重新开门第一件事就是把 100–200 ms 的**译音回声**上传，正是这一档要防的事 | §2.4.3 三个选项都列了；G1-③ 钉住"压制开始的这一拍 preroll 已被倒掉" |
 | **GR-4** | **尾巴 300 ms 是估算** | 太短 → 回声尾巴漏进上行；太长 → 面对面轮流说接不上话 | §2.3 写清来由与三条依据；新金样把"哪个块恢复"逐字钉住 ⇒ **改这个值必然要重录金样**，这就是它的护栏。等有板子时按 §7.3 Q1 实测 |
 | **GR-5** | **`stats().queued_samples` 是"推完之后那一刻"的快照** | 渲染线程随后卡住 ⇒ 压制提前结束，上行早开一点（反向：队列溢出只会让窗口偏长，保守安全） | §2.6 如实记；`mark_playing` 每一次 `AudioDelta` 都重新装满，只靠倒数的只有"最后一次 push 之后"那一段；`[未核实]` 见 Q5 |
@@ -1204,7 +1304,7 @@ cd tools/bench-dsp && cargo run --release                          # 期望：�
 | **RR-1** | **线性升采样的镜像在小喇叭上其实听得见**（廉价喇叭的 12–20 kHz 响应并不为零） | 译音发闷/发毛 | `[未核实]`（Q7）：真机上听 A/B。退路是把便宜档的适用范围收窄到"设备率 ≥ 2× 源率"（本轮不收窄，因为镜像的听感靠耳朵判断，靠数字判断不了） |
 | **RR-2** | **表二的 `Poly` 参考实现未调优，且该表不可复现**（r2 补） | 若有人据此说"多相 FIR 其实更便宜"，那是拿未调优的、且没人能重跑的实现比的 | §3.1 表二下加了"单一来源、不可复现"的标注，§3.1.1 的比值结论标 `[未核实]`（Q10）；§3.3 明确"不做"，理由不是"调不动"，而是"即使调得动也只值 0.5 ms/s，收益全在升采样那一侧" |
 | **RR-3** | **`VOX_RESAMPLE_QUALITY` 变成事实上的长期配置** | 无屏档多一条要长期维护的旋钮 | 它只在无屏入口读，缺省 `cheap`，非法值启动失败。要收进 `Settings` 时**删掉这个环境变量**，不许两条真源并存（`RULES.md` #3） |
-| **RR-4**（r2 新增） | **R3 只修了越界、没补 44.1k→16k 那一行** | §3.2 改成的那套说法（"`step > 2` 才是条件"）仍然只是纸上推导，没有可执行证据；下次谁动 `Linear` 又炸一次 | R3 的范围里把"补 44.1k→16k"列为**独立一条**，验收 §5.3-② 明确要求表格里出现这一行 |
+| **RR-4**（r2 新增，r3 升级） | **R3 只修了越界、没补 44.1k→16k 那一行** | "`step > 2` 才是条件"这条说法会**退回纸上推导**（r2 的状态）；下次谁动 `Linear` 又炸一次，而且没人知道为什么 | r3 已经把推导**实跑验证**（§3.2.2），但那次运行在 `/tmp` 里、不在仓库 ⇒ R3 的范围把"补 44.1k→16k"列为**独立一条**，并把"把扫块长的结果钉成 bench-dsp 用例"列为第四条（§4.2 / §3.6-④）；验收 §5.3-② 明确要求表格里出现这一行且不 panic |
 
 ### 7.2 有意接受的行为差异
 
@@ -1219,7 +1319,7 @@ cd tools/bench-dsp && cargo run --release                          # 期望：�
 | # | 事项 | 状态 |
 | --- | --- | --- |
 | **Q1** | **`HalfDuplex::DEFAULT_TAIL_MS = 300` 的实机值** | `[未核实]` 估算值，依据见 §2.3。有板子后：录一段"译音 → 立刻接话"的音频，测译音结束后多久麦克风上的自回声低于 −40 dB，取那个值再加 50 ms 余量 |
-| **Q2** | **AEC 落地时，半双工的判据与 AEC 的参考信号口怎么合** | `[未决]` **见 AEC 稿（另行合入）** —— [`S4-C-AEC.md`](S4-C-AEC.md)。⚠️ **截至 2026-10-09 该文件在 `docs/plans/` 下并不存在**（目录里只有 `S4-C-ALSA.md` 与本稿），所以下面这段是**本稿自己的形状**，等 AEC 稿合入后以那稿为准：AEC 的 `Chain::push_playback_reference` 插在 `mark_playing` 的**前一行**（都在 `AudioDelta` 分支），三档互斥的选档入口落在 `Composition::of` 的一处 `match` 上，并把 §2.5.2 的 `audible && host == LinuxHeadless` **整条替换**成位驱动。**G4 之后动 `pipeline/mod.rs` 的 AEC 工单必须与本稿串行** |
+| **Q2** | **AEC 落地时，半双工的判据与 AEC 的参考信号口怎么合** | `[未决]` **见 AEC 稿（另行合入）** —— [`S4-C-AEC.md`](S4-C-AEC.md)。⚠️ **截至 2026-10-10 该文件在 `docs/plans/` 下仍不存在**（目录里有 `S4-C-ALSA.md`、`OVERLAY-CAPTIONS.md`、`MODEL-TABLE.md`、`LANG.md`、`UI-REDESIGN.md` 与本稿，**没有 AEC 稿**），所以下面这段是**本稿自己的形状**，等 AEC 稿合入后以那稿为准：AEC 的 `Chain::push_playback_reference` 插在 `mark_playing` 的**前一行**（都在 `AudioDelta` 分支），三档互斥的选档入口落在 `Composition::of` 的一处 `match` 上，并把 §2.5.2 的 `audible && host == LinuxHeadless` **整条替换**成位驱动。**G4 之后动 `pipeline/mod.rs` 的 AEC 工单必须与本稿串行** |
 | **Q3** | **要不要给用户一个半双工开关** | `[未决]` §2.5.3 写了技术成本为零（`set_config` 已经能带），不做是**取舍**不是**做不到**。要做的完整清单：`Settings` 加一格 + `Runtime::gate_for` 一支 + 界面开关 + 三份 i18n + 一条新金样 |
 | **Q4** | **`ports::Resample::quality()` 要不要加** | `[未决]` §3.5 给了"没有消费者就不加"的判据。触发条件：`Snapshot` 要显示"本条链的重采样档"。**注意 B3 的自计时读取口已落地，但这一格今天仍然没有消费者** |
 | **Q5** | **渲染卡顿多久算一次事件** | `[未核实]` 影响 `GR-5` 的实际暴露面。有板子后用 `Chain::timings` 的 `max_ns` 观察（**读取口 `Runtime::op_timings` B3 已落地**，不再是"等它落地"） |
@@ -1227,7 +1327,7 @@ cd tools/bench-dsp && cargo run --release                          # 期望：�
 | **Q7** | **线性升采样的镜像在真机喇叭上听感如何** | `[未核实]` 见 `RR-1`。退路已写 |
 | **Q8** | **`ActivationGate::process_into`（S4-B 的 X3）落地后，半双工分支的形状要不要跟着改** | `[未决]` 本稿的压制分支是"要么发一块尾巴、要么发空"，`process_into` 化之后 `Vec` 变借用，**收尾边那块的分配会消失**。G1 若赶在 X3 之前，就要接受 X3 之后改一次。**建议 X3 在 G 之后**（X3 会改 `gate.rs` 的 5 条既有单测，越晚越省事） |
 | **Q9** | **A53 上的实际倍率** | `[未核实]` 本稿全部性能数字是 **x86** 口径。S4 的纪律是"没有板子之前不写任何'够用'的结论"，本稿照办：§3.1 的数字只用来**比较候选之间**，不用来推算 A53 的绝对性能。转换系数 `[未核实]` |
-| **Q10**（r2 新增） | **表二（`/tmp/resample-probe`）的数字能不能复现** | `[未核实]` 那个工程不在仓库里、不是 workspace 成员，**复核者没有复现它**。§3.1.1 的"降采样方向上线性会混叠"是结构性事实（线性插值没有低通），不依赖这张表；但"便宜 12.7×"与"多相 FIR 不划算"依赖它。**要长期依赖这个结论，就得把 `/tmp/resample-probe` 收进 `tools/`**（R3 的可选尾巴，本轮不排） |
+| **Q10**（r2 新增） | **表二（`/tmp/resample-probe`）的数字能不能复现** | `[未核实]` 那个工程不在仓库里、不是 workspace 成员，**复核者没有复现它**。§3.1.1 的"降采样方向上线性会混叠"是结构性事实（线性插值没有低通），不依赖这张表；但"便宜 12.7×"与"多相 FIR 不划算"依赖它。**要长期依赖这个结论，就得把 `/tmp/resample-probe` 收进 `tools/`**（R3 的可选尾巴，本轮不排）。⚠️ r3 注：`44.1k→16k` 那条**已从这一项里拆出去结案**（§3.2.2 实跑：会炸），本项只剩"表二的比值不可复现"这一件事 |
 | **Q11**（r2 新增） | **`Speaker::rendered` 到底要不要有 setter** | `[未决]` §1.6 核实了它"全仓库零写入、无 setter"，而 `Worker::poll_playback` 的 `first_playback` 遥测因此在差分台里永远不触发。它是 B3 之前就有的既存事实，**不是本稿造成的**，本稿不动它。要不要给测试替身补一个 setter，是 `pipeline/mod.rs` 夹具的独立改进，另立项 |
 
 ---
@@ -1239,25 +1339,31 @@ cd tools/bench-dsp && cargo run --release                          # 期望：�
 - 算子链（**已落地的代码，不是预想**）：[`S4-B-OP-CHAIN.md`](S4-B-OP-CHAIN.md) §2.2（契约 C1–C6）、§2.7（参考信号口）、§3.4（INV-1/INV-2）、§9.3 O-5（本稿给了答复）、§11 M1–M4。B3（逐节计量 + `Runtime::op_timings`）**已合入本稿核对的 `main`**
 - ALSA 后端：[`S4-C-ALSA.md`](S4-C-ALSA.md) §5.2（"能不重采样就不重采样"、三档率阶梯）、§12 M1–M6（**已合入**）
 - AEC：**[`S4-C-AEC.md`](S4-C-AEC.md)（另行合入；截至 2026-10-09 `docs/plans/` 下尚无此文件，见 Q2）**
-- 在途工单：[`OVERLAY-CAPTIONS.md`](OVERLAY-CAPTIONS.md)（碰 `pipeline/mod.rs` / `types.ts` 那一格）、[`MODEL-TABLE.md`](MODEL-TABLE.md)（碰 `cloud/**` / `settings.rs` / `catalog` / `types.ts`）—— 冲突表见 §4.5
+- **已合入的相邻稿子**（`main` @ `4bc6e8a`）：[`OVERLAY-CAPTIONS.md`](OVERLAY-CAPTIONS.md)（`690efef` / `33927d3`，改过 `pipeline/mod.rs` 的 `Worker::push_text`、`subtitle.rs`、`app/ui/src/types.ts`）、[`MODEL-TABLE.md`](MODEL-TABLE.md)（`73e7c58` / `6b91a9a` / `0a04e19` / `7ca4333`，改过 `cloud/**`、`settings.rs`、`catalog.rs`、`app/ui/src/types.ts`；**只剩 M7 `AliyunRegion::Hk` 未落**）、[`LANG.md`](LANG.md)（`4bc6e8a`）—— 逐张工单的落点见 §4.5
 - 清单由来：[`S0-COMPOSITION-MANIFEST.md`](S0-COMPOSITION-MANIFEST.md) §2.1（`Composition` / `Op`）、§2.7（`Plan` 的边界）
 - 性能事实：`tools/bench-dsp/`（**复核者实跑过**，§3.1 表一）、`AGENTS.md`「性能事实」一节（采集链 3.03 / 播放链 1.73 ms/s，与实测同量级）
 - 临时基准：`/tmp/resample-probe`（**不在仓库里、不可复现**，§3.1 表二、Q10）
-- 共享宿主层：[`S4-A-HOST-LAYER.md`](S4-A-HOST-LAYER.md)（`vox_host::entry::HostPorts` 那一格是 r2 新增的关键路径，§3.4）
+- 共享宿主层：[`S4-A-HOST-LAYER.md`](S4-A-HOST-LAYER.md)（`vox_host::entry::HostPorts` 加 `resample` 那一格是本稿结构性新增的一步，§3.4）
+- **本稿 r3 的实跑记录**：`/tmp/opencode/lin`（三个独立小程序，逐字复刻 `bench-dsp` 的 `Linear::process` 后扫块长）——**不在仓库里**，结果见 §3.2.2
 - 代码：`crates/vox-core/src/{gate,capability,composition,ports,runtime}.rs`、`crates/vox-core/src/pipeline/{mod,chain,speak,listen,golden}.rs`、`crates/vox-dsp/src/{resample,ports}.rs`、`crates/vox-audio-alsa/src/playback.rs`、`crates/vox-host/src/entry.rs`、`crates/vox-headless/src/{headless.rs,platform/linux.rs}`、`app/src-tauri/src/lib.rs`、`app/ui/src/types.ts`
 
 ---
 
-## 9. Main 拍板（2026-09-30 首次；2026-10-09 复核后追加第 6 条）
+## 9. Main 拍板（2026-09-30 首次；2026-10-09 复核后追加第 6 条；2026-10-10 r3 再追加第 7 条）
 
 - **Q1**：`HalfDuplex::DEFAULT_TAIL_MS = 300` 先用，实机校准后再改（改时新增金样，不改旧的）。
-- **Q2**：AEC（**见 AEC 稿 `docs/plans/S4-C-AEC.md`，另行合入**）与半双工 G 系列串行，G 先落。
+- **Q2**：AEC（**见 AEC 稿 `docs/plans/S4-C-AEC.md`，另行合入；截至 2026-10-10 该文件仍不存在，见 §7.3 Q2**）与半双工 G 系列串行，G 先落。
 - **Q3**：本轮**不**给用户半双工开关。
 - **Q8**：`ActivationGate::process_into`（S4-B X3）排在 G 系列之后。
 - **Q4/Q5/Q6/Q7/Q9**：记账，不在本轮。
 - **Q10**：`/tmp/resample-probe` **本轮不收进仓库**（记为后续）。
-- **排期（2026-10-09 按当前 `main` 与在途工单更新）**：
-  `G1` / `G2` / `R1` / `R2` / `R3` **零冲突，立即可派**；
-  `G3` 排在 **OVERLAY-CAPTIONS** 之后（`pipeline/mod.rs`）；
-  `G5` 排在 **MODEL-TABLE** 之后（`app/ui/src/types.ts`）；
-  `G4` 排在 `G3` 之后；`G6 / R4` 文档回填排在全部落地之后。
+- **E10–E15（r3 自查出的 6 条事实错误，2026-10-10）**：按 §0.3 的表逐条改。其中 **E14 推翻了上一行的排期**——
+  `OVERLAY-CAPTIONS` 与 `MODEL-TABLE` 的施工部分**已合入 `main`**，G / R 七张工单现在零外部阻塞，
+  **以 §4.5 / §4.6 为准，下面这段旧排期作废**：
+
+  ~~（2026-10-09 的旧排期，保留以说明改了什么）~~
+  ~~`G1` / `G2` / `R1` / `R2` / `R3` 零冲突立即可派；`G3` 排在 OVERLAY-CAPTIONS 之后；`G5` 排在 MODEL-TABLE 之后~~
+  ~~⇒ **错在"在途"这个前提**：那两张稿子的施工部分已经在树上（§4.5 的 commit 清单），不存在"排在谁之后"。~~
+
+  **r3 的新排期**：`G1` / `G2` / `R1` / `R2` / `R3` 可立即派；`G3` 等 `G1`；`G4` 等 `G3`；
+  `G5`（`types.ts` 那一行）**并进 G3** 或排在它之后；`G6 / R4` 文档回填排最后。
