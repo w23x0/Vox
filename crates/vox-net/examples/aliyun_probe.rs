@@ -89,9 +89,10 @@
 //!   --model qwen3.8-livetranslate-flash-realtime --listen 8
 //! ```
 //!
-//! **模型名一律原样进地址**，不过目录归一：`--model` 给了目录里没有的名字（3.5 就是），
-//! 探针照样照发，只额外打一行提醒——产品当前（`catalog::normalize_model`）会把它换成缺省模型，
-//! 所以那条线报出来的地址只有探针会发。归一发生在哪一步、地址长什么样，报告里一眼能看见。
+//! **模型名一律原样进地址**，不过目录归一：`--model` 给了目录里没有的名字
+//! （`gummy-realtime-v1` 就是）时，探针照样照发，只额外打一行提醒——产品会把它换成
+//! 缺省模型，所以那条线报出来的地址只有探针会发。归一发生在哪一步、地址长什么样，
+//! 报告里一眼能看见。
 //!
 //! ### 问题 4：这一族到底有哪些模型、哪些还在服务
 //!
@@ -100,6 +101,10 @@
 //! `capabilities=Realtime-Audio-Translate`、`page_size=100`，按 `page_no` 翻到
 //! `output.total` 取完。每个模型一行：
 //! `model | name | published_time | equivalent_snapshot | offline_time | capabilities | request→response modality`。
+//!
+//! 字段名 2026-10-09 真连核过一遍（国内站密钥，`output.models[]`）：
+//! 模态在 `inference_metadata.request_modality` / `response_modality`（**单数**），
+//! 下线时间在 `inference_offline_info.offline_time`（可以是 `null`）。
 //!
 //! ```bash
 //! # 国内站；--dry-run 只打将要请求的 URL（不带密钥），不连
@@ -112,9 +117,8 @@
 //! cargo run -p vox-net --example aliyun_probe -- --list-models --all-capabilities
 //! ```
 //!
-//! **响应字段名没有一手文档可核**（写这一档时没联网核实），所以解析器写得宽容：
-//! 常见几种拼法都认，认不出的那一格打 `—`，整页结构对不上就把（去密钥后的）原文摊开。
-//! 第一次真跑完请核一眼列名对不对，对不上就照着原文改 `parse_models_page`。
+//! **响应结构对不上就报错**：整页结构认不出来时把（去密钥后的）原文摊开，照着改
+//! `parse_models_page`；个别字段认不出打 `—`（当"服务端没给"）。
 //!
 //! ## 退出码
 //!
@@ -137,6 +141,7 @@ use vox_core::cloud::protocol::{
     self, ClientEvent, Decoder, ServerEvent, SessionParams, INPUT_SAMPLE_RATE,
 };
 use vox_core::cloud::{ConnectRequest, Incoming, Transport};
+use vox_core::settings::ModelProvider;
 use vox_net::WsTransport;
 
 /// 音频分片的毫秒数。**探针自己的节奏选择**：协议只规定"一段 PCM16 append 上去"，
@@ -254,6 +259,8 @@ struct Args {
     listen: Duration,
     keyring: bool,
     dry_run: bool,
+    /// 不经 tungstenite 解帧，直接摊开服务端发来的原始字节（诊断“控制帧过大”之类解码层先炸的问题）。
+    raw: bool,
     help: bool,
     // ── `--list-models` 那一档 ────────────────────────────────────────────
     /// 查阿里云官方的模型列表，不连 realtime。
@@ -295,6 +302,7 @@ impl Args {
             listen: Duration::from_secs(8),
             keyring: false,
             dry_run: false,
+            raw: false,
             help: false,
             list_models: false,
             list_base: None,
@@ -341,6 +349,7 @@ impl Args {
                 }
                 "--keyring" => args.keyring = true,
                 "--dry-run" => args.dry_run = true,
+                "--raw" => args.raw = true,
                 "--list-models" => args.list_models = true,
                 "--list-base" => args.list_base = Some(value("--list-base")?),
                 "--service-site" => args.service_site = Some(value("--service-site")?),
@@ -498,12 +507,13 @@ fn main() -> ExitCode {
             );
         }
     }
-    if catalog::normalize_model(&args.model) != args.model {
+    let product_model = catalog::normalize_model_for(ModelProvider::Aliyun, &args.model);
+    if product_model != args.model {
         println!(
-            "注意：模型 {:?} 不在 catalog 里。产品（`catalog::normalize_model`）会把它换成 {:?}，\
-             上面这条地址只有探针会发——要的就是这个（3.5 之类还没进维护表）。",
-            args.model,
-            catalog::normalize_model(&args.model)
+            "注意：模型 {:?} 匹配不到方言。产品（`catalog::normalize_model_for`）会把它换成 \
+             {product_model:?}，上面这条地址只有探针会发——要的就是这个（gummy / qwen3 之类\
+             不在维护表里）。",
+            args.model
         );
     }
     for note in &draft.notes {
@@ -548,6 +558,9 @@ fn run(
     api_key: &str,
     audio: Option<Vec<f32>>,
 ) -> ExitCode {
+    if args.raw {
+        return run_raw(args, url, session_update, api_key);
+    }
     let mut transport = match WsTransport::standalone() {
         Ok(transport) => transport,
         Err(e) => {
@@ -649,6 +662,152 @@ fn run(
     } else {
         exit::TIMEOUT
     })
+}
+
+/// `--raw`：自己做 TLS，把服务端发来的**未解帧字节**逐段摊开，再交给 tungstenite 解析。
+///
+/// 为什么要有：tungstenite 遇到超过 125 字节的控制帧会直接报 `Control frame too big`，
+/// 帧里到底是什么永远看不到。这条腿在 TLS 之上垫一层只读旁路（只看服务端→客户端方向，
+/// 我们发出的字节——含鉴权头——不经过旁路），所以密钥不会出现在输出里；输出另外过一遍 `redact`。
+fn run_raw(args: &Args, url: &str, session_update: &str, api_key: &str) -> ExitCode {
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::task::{Context, Poll};
+
+    use futures_util::{SinkExt, StreamExt};
+    use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    struct Spy<S> {
+        inner: S,
+        secret: String,
+    }
+    impl<S: AsyncRead + Unpin> AsyncRead for Spy<S> {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            let before = buf.filled().len();
+            let polled = Pin::new(&mut self.inner).poll_read(cx, buf);
+            if let Poll::Ready(Ok(())) = &polled {
+                let fresh = &buf.filled()[before..];
+                if !fresh.is_empty() {
+                    let shown: String = fresh
+                        .iter()
+                        .map(|b| {
+                            if b.is_ascii_graphic() || *b == b' ' {
+                                *b as char
+                            } else {
+                                '.'
+                            }
+                        })
+                        .collect();
+                    let head: Vec<String> =
+                        fresh.iter().take(12).map(|b| format!("{b:02x}")).collect();
+                    println!(
+                        "RAW <- {} 字节，前 12 字节 {}：{}",
+                        fresh.len(),
+                        head.join(" "),
+                        redact(&shown, &self.secret)
+                    );
+                }
+            }
+            polled
+        }
+    }
+    impl<S: AsyncWrite + Unpin> AsyncWrite for Spy<S> {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            data: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            Pin::new(&mut self.inner).poll_write(cx, data)
+        }
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.inner).poll_flush(cx)
+        }
+        fn poll_shutdown(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.inner).poll_shutdown(cx)
+        }
+    }
+
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("起不了运行时：{e}");
+            return ExitCode::from(exit::NO_CONNECTION);
+        }
+    };
+    let listen = args.listen;
+    let outcome: Result<(), String> = runtime.block_on(async {
+        let mut request = url
+            .into_client_request()
+            .map_err(|e| format!("地址不合法：{e}"))?;
+        let host = request.uri().host().ok_or("地址没有主机名")?.to_string();
+        request.headers_mut().insert(
+            "Authorization",
+            protocol::auth_header_value(api_key)
+                .parse()
+                .map_err(|_| "鉴权头不合法".to_string())?,
+        );
+        let mut roots = rustls::RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let config = rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let tcp = tokio::net::TcpStream::connect((host.as_str(), 443))
+            .await
+            .map_err(|e| format!("TCP 连不上：{e}"))?;
+        let tls = tokio_rustls::TlsConnector::from(Arc::new(config))
+            .connect(
+                host.clone()
+                    .try_into()
+                    .map_err(|e| format!("主机名不合法：{e}"))?,
+                tcp,
+            )
+            .await
+            .map_err(|e| format!("TLS 失败：{e}"))?;
+        let spy = Spy {
+            inner: tls,
+            secret: api_key.to_string(),
+        };
+        let (mut ws, _) = tokio_tungstenite::client_async(request, spy)
+            .await
+            .map_err(|e| format!("握手失败：{e}"))?;
+        println!("握手成功（--raw），接下来听 {:.3} 秒", listen.as_secs_f32());
+        ws.send(tokio_tungstenite::tungstenite::Message::text(
+            session_update,
+        ))
+        .await
+        .map_err(|e| format!("session.update 发不出去：{e}"))?;
+        let deadline = Instant::now() + listen;
+        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+            match tokio::time::timeout(left, ws.next()).await {
+                Ok(Some(Ok(message))) => {
+                    println!("解帧后：{}", redact(&format!("{message:?}"), api_key))
+                }
+                Ok(Some(Err(e))) => return Err(format!("解帧失败：{e}")),
+                Ok(None) => return Err("服务端关闭了连接".to_string()),
+                Err(_) => break,
+            }
+        }
+        Ok(())
+    });
+    match outcome {
+        Ok(()) => ExitCode::from(exit::OK),
+        Err(message) => {
+            println!("{message}");
+            ExitCode::from(exit::NO_CONNECTION)
+        }
+    }
 }
 
 /// 把音频的 `delta` 折成一句长度提示。翻译文本原样留——那是这轮要看的正事。
@@ -1228,13 +1387,21 @@ fn parse_models_page(body: &str) -> Result<ModelPage, String> {
                 name: first_text(entry, &["name", "display_name", "label"]),
                 published_time: first_text(entry, &["published_time", "release_time"]),
                 equivalent_snapshot: first_text(entry, &["equivalent_snapshot", "snapshot"]),
-                offline_time: first_text(entry, &["offline_time", "deprecate_time"]),
+                // 下线时间在 `inference_offline_info.offline_time`（2026-10-09 真连核实）。
+                offline_time: nested_text(entry, &["inference_offline_info", "offline_time"])
+                    .or_else(|| first_nonempty(entry, &["offline_time", "deprecate_time"]))
+                    .unwrap_or_default(),
                 capabilities: first_text(entry, &["capabilities", "capability"]),
-                request_modalities: first_text(entry, &["request_modalities", "request_modality"]),
-                response_modalities: first_text(
+                // 模态在 `inference_metadata` 下面，而且是**单数**（同上）。
+                request_modalities: nested_text(entry, &["inference_metadata", "request_modality"])
+                    .or_else(|| first_nonempty(entry, &["request_modalities", "request_modality"]))
+                    .unwrap_or_default(),
+                response_modalities: nested_text(
                     entry,
-                    &["response_modalities", "response_modality"],
-                ),
+                    &["inference_metadata", "response_modality"],
+                )
+                .or_else(|| first_nonempty(entry, &["response_modalities", "response_modality"]))
+                .unwrap_or_default(),
             })
         })
         .collect();
@@ -1269,10 +1436,30 @@ fn find_u64(value: &Value, path: &[&str]) -> Option<u64> {
 /// 取第一个非空的字符串字段。`capabilities` 那几格可能是数组，也可能是逗号串，
 /// 两种都要收下——所以先按字符串取，取不到再按数组拼。
 fn first_text(entry: &serde_json::Map<String, Value>, keys: &[&str]) -> String {
-    for key in keys {
-        let Some(field) = entry.get(*key) else {
-            continue;
-        };
+    text_of(keys.iter().filter_map(|key| entry.get(*key)))
+}
+
+/// 兜底用的老拼法：`first_nonempty(...)` 是"依次试几个键，都取不到才给空"，
+/// `nested_text(...)` 是"顺着路径找"，两者取第一个有值的。
+fn first_nonempty(entry: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<String> {
+    let found = first_text(entry, keys);
+    (!found.is_empty()).then_some(found)
+}
+
+/// 顺着 `a.b.c` 找一格文本（`inference_metadata.request_modality` 这类）。
+fn nested_text(entry: &serde_json::Map<String, Value>, path: &[&str]) -> Option<String> {
+    let (first, rest) = path.split_first()?;
+    let value = entry.get(*first)?;
+    let mut cursor = value;
+    for key in rest {
+        cursor = cursor.as_object()?.get(*key)?;
+    }
+    let text = text_of(std::iter::once(cursor));
+    (!text.is_empty()).then_some(text)
+}
+
+fn text_of<'a>(fields: impl Iterator<Item = &'a Value>) -> String {
+    for field in fields {
         match field {
             Value::String(s) if !s.is_empty() => return s.clone(),
             Value::Array(items) => {
@@ -1544,6 +1731,7 @@ fn usage() {
          --listen <秒>         音频发完后听多久（缺省 8）\n  \
          --keyring             没有 DASHSCOPE_API_KEY 时从 Secret Service 读（需 probe-keyring feature）\n  \
          --dry-run             只打印地址与 session.update，不连、不取密钥\n  \
+         --raw                 自己做 TLS，摊开服务端发来的未解帧字节（诊断 Control frame too big 这类解帧层先炸的问题）\n  \
          --help                这一屏\n\
          \n\
          查阿里云官方的模型列表（不连实时翻译；这一档只认下面这几个开关，\
@@ -1569,6 +1757,10 @@ fn usage() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 产品维护表里的两条阿里云模型。探针的"产品那条路"报文按它们分方言，
+    /// 测试里也得用真模型名（编一个假名会被当成"认不出方言"走最小报文）。
+    const LIVE38: &str = "qwen3.8-livetranslate-flash-realtime";
 
     /// 造一段 WAV 头 + PCM16，给读文件的路径当输入，也给"格式对不上要报错"当反例。
     fn wav(rate: u32, channels: u16, bits: u16, samples: &[f32]) -> Vec<u8> {
@@ -1608,6 +1800,7 @@ mod tests {
             listen: Duration::from_secs(8),
             keyring: false,
             dry_run: false,
+            raw: false,
             help: false,
             list_models: false,
             list_base: None,
@@ -1658,19 +1851,28 @@ mod tests {
         );
     }
 
-    /// 模型名原样照发，**不**过 `normalize_model`：探针的全部意义就是能问产品还不会用的模型。
-    /// 这条要是哪天被"顺手改成走产品逻辑"，3.5 的结论会全部变成 3.8 的结论。
+    /// 模型名原样照发，**不**过归一：探针的全部意义就是能问产品还不会用的模型。
+    /// 这条要是哪天被"顺手改成走产品逻辑"，下线模型的结论会全部变成推荐模型的结论。
     #[test]
     fn model_name_is_not_normalized_away() {
-        let unknown = "qwen3.5-livetranslate-flash-realtime";
+        let unknown = "gummy-realtime-v1";
         assert_ne!(
-            catalog::normalize_model(unknown),
+            catalog::normalize_model_for(ModelProvider::Aliyun, unknown),
             unknown,
-            "前提：3.5 不在 catalog 里（不然这条没测到东西）"
+            "前提：gummy 不在维护表里（不然这条没测到东西）"
         );
         assert!(build_endpoint(&args_with(None, ProbeRegion::Cn, unknown))
             .unwrap()
             .ends_with(&format!("?model={unknown}")));
+        // 进了表的模型（含带日期后缀的快照）产品会原样保留，探针与产品一致。
+        let snapshot = "qwen3.5-livetranslate-flash-realtime-2026-05-19";
+        assert_eq!(
+            catalog::normalize_model_for(ModelProvider::Aliyun, snapshot),
+            snapshot
+        );
+        assert!(build_endpoint(&args_with(None, ProbeRegion::Cn, snapshot))
+            .unwrap()
+            .ends_with(&format!("?model={snapshot}")));
     }
 
     /// 地址里带凭据一律拒绝。探针把地址原样打给人看，贴错一个带 key 的地址
@@ -1881,7 +2083,7 @@ mod tests {
     /// **假阴性**：看着像"服务端不收"，其实是探针压根没发。所以必须当场报错。
     #[test]
     fn audio_on_refuses_a_target_language_that_cannot_speak() {
-        let mut args = args_with(None, ProbeRegion::Cn, "m");
+        let mut args = args_with(None, ProbeRegion::Cn, LIVE38);
         args.target_lang = Some("yue".into());
         args.voice = Some("Tina".into());
         let err = build_session_object(&args).unwrap_err();
@@ -1893,7 +2095,7 @@ mod tests {
         // 前提钉死：产品那边确实是静默丢的（不是探针自己瞎报）。
         // 这条要是哪天产品改成报错，`supports_audio_output` 的语义就变了，本条的立论要重写。
         let params = SessionParams {
-            model_name: "m".into(),
+            model_name: LIVE38.into(),
             target_language: "yue".into(),
             voice: Some("Tina".into()),
             clone_frequency: None,
@@ -2051,8 +2253,10 @@ mod tests {
         );
     }
 
-    /// 一段手写样例响应的解析。字段名没有一手文档可核（见 `parse_models_page` 的注释），
-    /// 所以这条既是"解析没写坏"的钉子，也是"列名对不对"的对照表。
+    /// 一段**真连拿到的**响应（2026-10-09 国内站，字段名照抄官方返回）。
+    /// 这条既是"解析没写坏"的钉子，也是"列名对不对"的对照表——
+    /// `inference_metadata.request_modality`（单数）与
+    /// `inference_offline_info.offline_time` 都是 2026-10-09 核出来的，猜错过一次。
     #[test]
     fn a_hand_written_page_of_models_parses_into_table_rows() {
         let body = r#"{
@@ -2065,20 +2269,28 @@ mod tests {
               {
                 "model": "qwen3.8-livetranslate-flash-realtime",
                 "name": "Qwen3.8 实时语音翻译",
+                "provider": "qwen",
                 "capabilities": ["Realtime-Audio-Translate"],
-                "request_modalities": ["audio"],
-                "response_modalities": ["audio", "text"],
-                "published_time": "2026-03-01T00:00:00Z",
-                "equivalent_snapshot": "qwen3.8-livetranslate-flash-realtime-2026-03-01",
-                "offline_time": null
+                "inference_metadata": {
+                  "request_modality": ["audio"],
+                  "response_modality": ["audio", "text"]
+                },
+                "published_time": "2026-09-11 18:02:53",
+                "equivalent_snapshot": null,
+                "inference_offline_info": null,
+                "model_info": { "context_window": 32768 }
               },
               {
-                "model": "qwen3.5-livetranslate-flash-realtime",
-                "name": "Qwen3.5 实时语音翻译",
+                "model": "qwen3-livetranslate-flash-realtime",
+                "name": "Qwen3 实时语音翻译",
                 "capabilities": "Realtime-Audio-Translate",
-                "published_time": "2025-11-01T00:00:00Z",
-                "equivalent_snapshot": "",
-                "offline_time": "2026-06-30T00:00:00Z"
+                "inference_metadata": {
+                  "request_modality": ["audio"],
+                  "response_modality": ["audio", "text"]
+                },
+                "published_time": "2025-09-01 00:00:00",
+                "equivalent_snapshot": null,
+                "inference_offline_info": { "offline_time": "2026-10-10 00:00:00" }
               }
             ]
           }
@@ -2091,22 +2303,25 @@ mod tests {
         assert_eq!(first.model, "qwen3.8-livetranslate-flash-realtime");
         assert_eq!(first.capabilities, "Realtime-Audio-Translate");
         assert_eq!(first.modality_cell(), "audio→audio,text");
+        assert_eq!(
+            first.offline_time, "",
+            "`inference_offline_info: null` = 没有下线时间"
+        );
 
         // 整行的列一个不多一个不少，缺的打成 `—` 而不是空串——空串会被读成"忘了查"。
         let line = model_line(first);
         assert_eq!(
             line,
-            "qwen3.8-livetranslate-flash-realtime | Qwen3.8 实时语音翻译 | 2026-03-01T00:00:00Z \
-             | qwen3.8-livetranslate-flash-realtime-2026-03-01 | — | Realtime-Audio-Translate \
-             | audio→audio,text"
+            "qwen3.8-livetranslate-flash-realtime | Qwen3.8 实时语音翻译 | 2026-09-11 18:02:53 \
+             | — | — | Realtime-Audio-Translate | audio→audio,text"
         );
 
-        // `null` 与空串都算"没有"，`offline_time` 有值的那条要照打出来。
+        // 下线时间在 `inference_offline_info.offline_time`（不是顶层 `offline_time`）。
         let second = &page.models[1];
-        assert_eq!(second.offline_time, "2026-06-30T00:00:00Z");
-        assert_eq!(second.equivalent_snapshot, "", "空串按没有算");
+        assert_eq!(second.offline_time, "2026-10-10 00:00:00");
+        assert_eq!(second.equivalent_snapshot, "", "null 按没有算");
         assert!(model_line(second)
-            .contains(" | — | 2026-06-30T00:00:00Z | Realtime-Audio-Translate | —→—"));
+            .contains(" | — | 2026-10-10 00:00:00 | Realtime-Audio-Translate | audio→audio,text"));
 
         // 结构对不上时报错，并且把原文带上去让人照着改解析器。
         let broken = parse_models_page(r#"{"output":{"unexpected":true}}"#).unwrap_err();

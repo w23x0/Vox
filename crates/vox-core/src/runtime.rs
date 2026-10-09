@@ -62,6 +62,9 @@ pub struct SessionConfig {
     /// 源语言；`None` = 服务端自动识别。只有听人说话用。
     pub source_language: Option<String>,
     pub denoise: bool,
+    /// 阿里云接入点（地区 + 自定义）。只有阿里云会读它；`VOX_ALIYUN_ENDPOINT`
+    /// 环境变量的优先级更高，但那层在建连处才看。
+    pub aliyun_endpoint: crate::cloud::AliyunEndpoint,
 }
 
 /// 发给流水线的命令。
@@ -251,7 +254,6 @@ impl Runtime {
     pub fn new(settings: Settings, clock: Arc<dyn Clock>) -> Self {
         let mut settings = settings;
         settings.normalize();
-        crate::cloud::protocol::set_region(settings.aliyun_region);
         let mut pipelines = BTreeMap::new();
         for p in [Pipeline::Speak, Pipeline::Listen] {
             pipelines.insert(p, PipelineStatus::default());
@@ -563,8 +565,6 @@ impl Runtime {
             if new == old {
                 return new;
             }
-            // 地区只影响下一次建连；已在跑的会话不动。
-            crate::cloud::protocol::set_region(new.aliyun_region);
 
             // 字幕时序变了立刻生效。
             if new.subtitle.char_ttl_ms != old.subtitle.char_ttl_ms
@@ -818,6 +818,10 @@ impl Runtime {
         api_key: String,
         mic_active: bool,
     ) -> SessionConfig {
+        let aliyun_endpoint = crate::cloud::AliyunEndpoint {
+            region: settings.aliyun_region,
+            custom: settings.aliyun_endpoint.clone(),
+        };
         match pipeline {
             Pipeline::Speak => SessionConfig {
                 session_id,
@@ -842,6 +846,7 @@ impl Runtime {
                 loopback_target: None,
                 denoise: settings.speak.denoise,
                 source_language: None,
+                aliyun_endpoint: aliyun_endpoint.clone(),
             },
             Pipeline::Listen => SessionConfig {
                 session_id,
@@ -871,6 +876,7 @@ impl Runtime {
                 denoise: false,
                 // 源语言；None = 服务端自动识别。
                 source_language: settings.listen.source_language.clone(),
+                aliyun_endpoint,
             },
         }
     }
@@ -1414,6 +1420,34 @@ mod tests {
             Runtime::session_config_for(&rt.settings(), Pipeline::Speak),
             from_ledger
         );
+    }
+
+    /// 接入点必须走**整条配置链**：`Settings` → `SessionConfig` → `Session::connect_request`。
+    /// 以前它是进程级的一个全局量（`set_region`），换个窗口/换个会话会串；这里钉住
+    /// "设里填的地址真的出现在建连 URL 上"。
+    #[test]
+    fn the_aliyun_endpoint_travels_from_settings_to_the_connect_url() {
+        let (rt, _rec) = fixture();
+        let custom = "wss://ws1.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime";
+        rt.update_settings(|settings| {
+            settings.aliyun_region = crate::settings::AliyunRegion::Intl;
+            settings.aliyun_endpoint = custom.to_string();
+        });
+
+        let config = rt.session_config(Pipeline::Speak);
+        assert_eq!(config.aliyun_endpoint.custom, custom);
+        assert_eq!(
+            config.aliyun_endpoint.region,
+            crate::settings::AliyunRegion::Intl
+        );
+
+        let session = crate::cloud::Session::new_for(
+            config.provider,
+            config.api_key.clone(),
+            crate::cloud::SessionParams::text_only(&config.model_name, "ja"),
+            config.aliyun_endpoint.clone(),
+        );
+        assert!(session.connect_request().url.starts_with(custom));
     }
 
     /// 建一个已填密钥、已注入控制面的账本。

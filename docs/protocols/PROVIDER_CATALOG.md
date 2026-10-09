@@ -1,25 +1,34 @@
 # 服务商能力表维护说明
 
-Vox 只做实时语音翻译。当前启用三个服务商，各固定一个专用模型：
+Vox 只做实时语音翻译。当前启用三个服务商，各自的模型登记在 `catalog/*.json` 的
+`models[]` 里（每家恰好一条 `recommended`，就是缺省模型）：
 
-- 阿里云百炼：`qwen3.5-livetranslate-flash-realtime`
+- 阿里云百炼：`qwen3.8-livetranslate-flash-realtime`（推荐）、`qwen3.5-livetranslate-flash-realtime`
 - Google Gemini：`gemini-3.5-live-translate-preview`
 - OpenAI GPT：`gpt-realtime-translate`
 
 模型、语言、音色、API 元数据的唯一维护入口是：
 
-`catalog/aliyun.json` 和 `catalog/gemini.json`
+`catalog/aliyun.json`、`catalog/gemini.json`、`catalog/gpt.json`
 
-前端直接导入两份 JSON；`vox-core` 的构建脚本会读取并校验同一份数据，再生成 Rust 常量。
+前端直接导入这三份 JSON；`vox-core` 的构建脚本会读取并校验同一份数据，再生成 Rust 常量。
 不要在 TypeScript 或 Rust 文件里另抄一份表。
 
-## 当前目录包含什么
+## 目录结构（`catalog/*.json`，schema_version 3）
 
-- 官方推荐的稳定模型 ID 与当前稳定快照。
+- `models[]`：模型 ID、点名哪个方言、是不是推荐模型、多语 label。
+  **表里只放官方模型列表接口给不了的东西**——发布时间、下线时间、价格一律不进这里。
+- `dialects{}`：协议方言。`session_shape` 决定 `session.update` 的报文形状
+  （`qwen_nested_audio` = qwen3.8 的 `audio.output.voice`；
+  `qwen_flat_audio` = qwen3.5 的平铺 `voice` + `input_audio_format`/`output_audio_format`）；
+  `match_prefixes` 用来把官方列表里带发布日期后缀的同族模型（`…-2026-05-19`）
+  认成同一条方言；`transcription_model` 为空 = 不显式发识别模型（用服务端缺省）。
+  语言表、音色表、能力位**在服务商级**（下面），因为它们被 `Settings`、界面与能力位
+  报告在没有方言上下文的地方读。
 - WebSocket 旧公共地址和分地域业务空间地址模板。
 - 60 种可识别/可翻译语言。
 - 其中 29 种支持“音频+文本”输出，31 种仅支持文本。
-- Qwen3.5 LiveTranslate 当前官方音色及中文说明。
+- Qwen3.8 LiveTranslate 当前官方音色及中文说明。
 - 已移除旧音色 ID，仅用于把老用户配置安全迁移到 Tina，不会出现在界面选项里。
 - 官方文档地址与最后核对日期。
 - Gemini Live Translation 的模型、WebSocket、音频规格和能力摘要。

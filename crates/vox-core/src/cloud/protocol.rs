@@ -13,15 +13,19 @@
 //!    socket，由上层重启会话。
 //! 6. 输入 16 kHz、输出 24 kHz，都是 PCM16LE 单声道。
 //!
+//! **方言**：`session.update` 的报文按方言分派（`qwen38_session_object` /
+//! `qwen35_session_object`），方言由模型名经 `catalog::dialect_by_prefix` 定。
+//! **事件解码不分方言**：两条方言的事件名逐字相同（真连核实过 3.8，3.5 的官方
+//! 文档也用同一套 `response.*` / `input_audio_buffer.*`），拆成两份只会让两条
+//! 分支各自漂移。真出现差异时，这里才拆。
+//!
 //! 这里只做纯粹的编解码，不碰网络、不碰线程，好在平台无关的内核里做单测。
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
-use crate::catalog;
+use crate::catalog::{self, SessionShape};
 use crate::settings::AliyunRegion;
 use crate::usage::TurnUsage;
 
@@ -32,15 +36,18 @@ pub const OUTPUT_SAMPLE_RATE: u32 = 24_000;
 
 /// 覆盖连接地址的环境变量：填百炼控制台给的工作空间专属地址
 /// （`wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime`）。
+///
+/// 优先级最高，但只是**调试用的后门**——正常路径是设置里的
+/// `aliyun_endpoint`，它又优先于 `aliyun_region` 的缺省地址。
 pub const ENDPOINT_ENV: &str = "VOX_ALIYUN_ENDPOINT";
 
-/// 当前地区：`false` = 国内站，`true` = 国际站。由 `Runtime` 在设置落地时写入
-/// （[`set_region`]）。放进程级是为了不把一个接入点参数穿过整条流水线的配置链。
-static INTL_REGION: AtomicBool = AtomicBool::new(false);
-
-/// 设置里的地区落到连接地址上。`Runtime::new` / `update_settings` 调。
-pub fn set_region(region: AliyunRegion) {
-    INTL_REGION.store(region == AliyunRegion::Intl, Ordering::Relaxed);
+/// 阿里云接入点：地区缺省 + 用户自定义。跟着 `Settings` 一路走到建连处。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct AliyunEndpoint {
+    pub region: AliyunRegion,
+    /// 自定义接入点；空 = 按 `region` 缺省。
+    pub custom: String,
 }
 
 fn region_base(region: AliyunRegion) -> &'static str {
@@ -50,27 +57,38 @@ fn region_base(region: AliyunRegion) -> &'static str {
     }
 }
 
-/// 拼出连接地址。模型名走 query 参数。环境变量覆盖优先于设置里的地区。
-pub fn endpoint_url(model_name: &str) -> String {
-    let region = if INTL_REGION.load(Ordering::Relaxed) {
-        AliyunRegion::Intl
-    } else {
-        AliyunRegion::Cn
-    };
-    let base = std::env::var(ENDPOINT_ENV).ok();
-    endpoint_url_with(base.as_deref(), region, model_name)
+/// 拼出连接地址。模型名走 query 参数。
+///
+/// 三级优先级：环境变量 > 设置里的自定义接入点 > 地区的缺省地址。
+pub fn endpoint_url(model_name: &str, endpoint: &AliyunEndpoint) -> String {
+    let env = std::env::var(ENDPOINT_ENV).ok();
+    endpoint_url_with(env.as_deref(), endpoint, model_name)
 }
 
-/// `base` 是用户给的覆盖地址；空、不是 `wss://`/`ws://` 开头就退回该地区的缺省。
-/// 用户贴来的地址可能自带 `?model=...`，query 一律去掉再按当前模型重拼。
-fn endpoint_url_with(base: Option<&str>, region: AliyunRegion, model_name: &str) -> String {
-    let base = base
-        .map(|b| b.trim())
-        .filter(|b| b.starts_with("wss://") || b.starts_with("ws://"))
-        .map(|b| b.split('?').next().unwrap_or(b).trim_end_matches('/'))
-        .filter(|b| !b.is_empty())
-        .unwrap_or(region_base(region));
-    format!("{}?model={}", base, catalog::normalize_model(model_name))
+fn endpoint_url_with(env: Option<&str>, endpoint: &AliyunEndpoint, model_name: &str) -> String {
+    // 环境变量 → 设置里的自定义地址 → 地区缺省。**按优先级取第一个用得上的**：
+    // 环境变量留了个空值不该把用户的自定义地址一起顶掉。
+    let base = [env, Some(endpoint.custom.as_str())]
+        .into_iter()
+        .flatten()
+        .filter_map(usable_base)
+        .next()
+        .unwrap_or_else(|| region_base(endpoint.region).to_string());
+    let model = catalog::normalize_model_for(crate::settings::ModelProvider::Aliyun, model_name);
+    format!("{base}?model={model}")
+}
+
+/// 挑出一个能用作接入点的地址：必须是 `ws(s)://`。用户贴来的地址可能自带
+/// `?model=...`，query 一律去掉——它要按当前模型重拼。
+fn usable_base(candidate: &str) -> Option<String> {
+    let trimmed = candidate
+        .trim()
+        .split('?')
+        .next()
+        .unwrap_or(candidate)
+        .trim()
+        .trim_end_matches('/');
+    (trimmed.starts_with("wss://") || trimmed.starts_with("ws://")).then(|| trimmed.to_string())
 }
 
 /// 鉴权头的值（`Authorization: Bearer sk-...`）。
@@ -153,64 +171,121 @@ impl SessionParams {
         }
     }
 
-    /// `session.update` 里那个 `session` 对象。
-    ///
-    /// 按 qwen3.8 的会话形状拼：输出模态叫 `output_modalities`，音频格式与音色收在
-    /// `audio.input` / `audio.output` 下（跟 `session.created` 回显的形状一致）；
-    /// 不发 `turn_detection`，用服务端缺省（`speaker_detection`）。3.8 的 ASR 恒开；
-    /// 文档没写 3.8 的源语种字段，手动选了源语言时沿用 `input_audio_transcription.language`
-    /// （缺省自动识别时不发，报文与官方 3.8 示例一致）。
+    /// `session.update` 里那个 `session` 对象。**按方言拼**——方言由模型名定
+    /// （`catalog::dialect_by_prefix`），换模型就是换形状，所以这条链路上
+    /// 不另存一份"当前方言"（存两份迟早会打架）。
     pub fn to_session_object(&self) -> Value {
-        let audio = self.audio_enabled();
-        let mut session = Map::new();
-        session.insert(
-            "output_modalities".into(),
-            if audio {
-                json!(["text", "audio"])
-            } else {
-                json!(["text"])
-            },
-        );
-
-        let mut output = Map::new();
-        output.insert(
-            "format".into(),
-            json!({ "type": "pcm", "sample_rate": OUTPUT_SAMPLE_RATE }),
-        );
-        if let Some(voice) = self.effective_voice() {
-            output.insert("voice".into(), json!(voice));
+        match catalog::dialect_by_prefix(&self.model_name).and_then(|dialect| dialect.shape) {
+            // 认不出的模型不该走到建连（设置阶段就归一过）；万一到了这里，
+            // 退回最保守的形状：只发翻译语言，不碰任何音频参数。
+            None => minimal_session_object(&self.target_language),
+            Some(SessionShape::QwenNestedAudio) => qwen38_session_object(self),
+            Some(SessionShape::QwenFlatAudio) => qwen35_session_object(self),
         }
-        session.insert(
-            "audio".into(),
-            json!({
-                "input": { "format": { "type": "pcm", "sample_rate": INPUT_SAMPLE_RATE } },
-                "output": Value::Object(output),
-            }),
-        );
-
-        session.insert(
-            "translation".into(),
-            json!({ "language": self.target_language }),
-        );
-        if let Some(lang) = &self.source_language {
-            session.insert(
-                "input_audio_transcription".into(),
-                json!({ "language": lang }),
-            );
-        }
-
-        if audio {
-            if let Some(freq) = self.clone_frequency {
-                session.insert("enable_voice_clone".into(), json!(true));
-                session.insert(
-                    "voice_clone_options".into(),
-                    json!({ "frequency": freq.as_str() }),
-                );
-            }
-        }
-
-        Value::Object(session)
     }
+
+    /// 方言表里登记的识别模型（`None` = 不显式发，用服务端缺省）。
+    fn transcription_model(&self) -> Option<&'static str> {
+        catalog::dialect_by_prefix(&self.model_name).and_then(|dialect| dialect.transcription_model)
+    }
+
+    /// `input_audio_transcription` 对象：源语言与识别模型**都**没配就不发这个字段。
+    fn transcription_object(&self) -> Option<Value> {
+        let mut object = Map::new();
+        if let Some(language) = &self.source_language {
+            object.insert("language".into(), json!(language));
+        }
+        if let Some(model) = self.transcription_model() {
+            object.insert("model".into(), json!(model));
+        }
+        (!object.is_empty()).then_some(Value::Object(object))
+    }
+
+    /// 复刻那两格（`enable_voice_clone` / `voice_clone_options`）。
+    /// 两条阿里云方言在这点上一样，放一处；没出语音就不发。
+    fn insert_voice_clone(&self, session: &mut Map<String, Value>) {
+        let Some(frequency) = self.clone_frequency else {
+            return;
+        };
+        if !self.audio_enabled() {
+            return;
+        }
+        session.insert("enable_voice_clone".into(), json!(true));
+        session.insert(
+            "voice_clone_options".into(),
+            json!({ "frequency": frequency.as_str() }),
+        );
+    }
+}
+
+/// 认不出方言时的兜底：只说翻译语言，其余一律不碰。
+fn minimal_session_object(target_language: &str) -> Value {
+    json!({ "translation": { "language": target_language } })
+}
+
+/// **qwen3.8** 的会话形状：输出模态叫 `output_modalities`，音频格式与音色收在
+/// `audio.input` / `audio.output` 下（跟 `session.created` 回显的形状一致）；
+/// 不发 `turn_detection`，用服务端缺省（`speaker_detection`）。
+/// ASR 恒开；官方文档没写 3.8 的源语种字段，手动选了源语言时沿用
+/// `input_audio_transcription.language`（缺省自动识别时不发，报文与官方 3.8 示例一致）。
+fn qwen38_session_object(params: &SessionParams) -> Value {
+    let audio = params.audio_enabled();
+    let mut session = Map::new();
+    session.insert(
+        "output_modalities".into(),
+        if audio {
+            json!(["text", "audio"])
+        } else {
+            json!(["text"])
+        },
+    );
+
+    let mut output = Map::new();
+    output.insert(
+        "format".into(),
+        json!({ "type": "pcm", "sample_rate": OUTPUT_SAMPLE_RATE }),
+    );
+    if let Some(voice) = params.effective_voice() {
+        output.insert("voice".into(), json!(voice));
+    }
+    session.insert(
+        "audio".into(),
+        json!({
+            "input": { "format": { "type": "pcm", "sample_rate": INPUT_SAMPLE_RATE } },
+            "output": Value::Object(output),
+        }),
+    );
+
+    session.insert(
+        "translation".into(),
+        json!({ "language": params.target_language }),
+    );
+    if let Some(transcription) = params.transcription_object() {
+        session.insert("input_audio_transcription".into(), transcription);
+    }
+    params.insert_voice_clone(&mut session);
+    Value::Object(session)
+}
+
+/// **qwen3.5** 的会话形状：音色**平铺**，音频格式是 `pcm` 字符串
+/// （16 kHz 上行 / 24 kHz 下行由服务端缺省），模态与格式都不再收在 `audio` 下面。
+fn qwen35_session_object(params: &SessionParams) -> Value {
+    let mut session = Map::new();
+    if let Some(voice) = params.effective_voice() {
+        session.insert("voice".into(), json!(voice));
+    }
+    session.insert("input_audio_format".into(), json!("pcm"));
+    session.insert("output_audio_format".into(), json!("pcm"));
+
+    session.insert(
+        "translation".into(),
+        json!({ "language": params.target_language }),
+    );
+    if let Some(transcription) = params.transcription_object() {
+        session.insert("input_audio_transcription".into(), transcription);
+    }
+    params.insert_voice_clone(&mut session);
+    Value::Object(session)
 }
 
 /// 事件 id。服务端只要求唯一，用毫秒时间戳 + 递增号；时钟由外壳传进来。
@@ -543,6 +618,14 @@ mod tests {
     use super::*;
 
     const LIVE: &str = "qwen3.8-livetranslate-flash-realtime";
+    const LIVE35: &str = "qwen3.5-livetranslate-flash-realtime";
+
+    fn cn() -> AliyunEndpoint {
+        AliyunEndpoint {
+            region: AliyunRegion::Cn,
+            custom: String::new(),
+        }
+    }
 
     fn speak_params() -> SessionParams {
         SessionParams {
@@ -554,47 +637,98 @@ mod tests {
         }
     }
 
+    fn speak_params_for(model: &str) -> SessionParams {
+        SessionParams {
+            model_name: model.to_string(),
+            ..speak_params()
+        }
+    }
+
     #[test]
     fn endpoint_carries_the_model_and_normalizes_junk() {
         assert_eq!(
-            endpoint_url(LIVE),
+            endpoint_url(LIVE, &cn()),
             format!("{}?model={LIVE}", catalog::API_BASE)
         );
-        // 认不出的模型名要归一到默认模型，不能原样拼进 URL。
-        assert!(endpoint_url("不存在的模型").ends_with(catalog::DEFAULT_MODEL_NAME));
+        // 认不出的模型名要归一到推荐模型，不能原样拼进 URL。
+        assert!(endpoint_url("不存在的模型", &cn()).ends_with(catalog::DEFAULT_MODEL_NAME));
+        // 认得出的（含快照后缀）要原样带上。
+        let snapshot = "qwen3.5-livetranslate-flash-realtime-2026-05-19";
+        assert!(endpoint_url(snapshot, &cn()).ends_with(snapshot));
+    }
+
+    /// 接入点的三级优先级：环境变量 > 设置里的自定义 > 地区缺省。
+    #[test]
+    fn endpoint_priority_is_env_then_setting_then_region() {
+        let custom = "wss://ws-abc.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime";
+        let from_env = "wss://env.example.com/api-ws/v1/realtime";
+        let setting = AliyunEndpoint {
+            region: AliyunRegion::Intl,
+            custom: custom.to_string(),
+        };
+
+        // 环境变量赢：连地区和自定义一起压过去。
+        assert_eq!(
+            endpoint_url_with(Some(from_env), &setting, LIVE),
+            format!("{from_env}?model={LIVE}")
+        );
+        // 没有环境变量才轮到设置里的自定义地址。
+        assert_eq!(
+            endpoint_url_with(None, &setting, LIVE),
+            format!("{custom}?model={LIVE}")
+        );
+        // 自定义为空 / 不合法：落到地区缺省（国际站的 Key 连北京会被拒，
+        // 所以地区必须真的换掉主机，而不是只换个名字）。
+        for junk in ["", "  ", "https://example.com", "?model=x"] {
+            assert_eq!(
+                endpoint_url_with(
+                    None,
+                    &AliyunEndpoint {
+                        region: AliyunRegion::Intl,
+                        custom: junk.into()
+                    },
+                    LIVE
+                ),
+                format!("{}?model={LIVE}", catalog::API_BASE_INTL),
+                "{junk:?}"
+            );
+        }
+        // 环境变量本身不合法时不该把垃圾拼进 URL，要落到设置这一级。
+        assert_eq!(
+            endpoint_url_with(Some("  "), &setting, LIVE),
+            format!("{custom}?model={LIVE}")
+        );
     }
 
     #[test]
     fn endpoint_override_takes_the_workspace_url_and_rebuilds_the_query() {
         let ws = "wss://ws-abc.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime";
         // 控制台贴来的地址自带 `?model=`（甚至是别的模型）：去掉重拼，不能拼出两个 `?`。
+        let setting = AliyunEndpoint {
+            region: AliyunRegion::Intl,
+            custom: format!(" {ws}/?model=old "),
+        };
         assert_eq!(
-            endpoint_url_with(
-                Some(&format!(" {ws}/?model=old ")),
-                AliyunRegion::Intl,
-                LIVE
-            ),
+            endpoint_url_with(None, &setting, LIVE),
             format!("{ws}?model={LIVE}")
         );
-        // 空串 / 不是 ws(s) 地址：退回缺省，别把垃圾拼进 URL。
-        for junk in ["", "  ", "https://example.com", "?model=x"] {
-            assert_eq!(
-                endpoint_url_with(Some(junk), AliyunRegion::Cn, LIVE),
-                format!("{}?model={LIVE}", catalog::API_BASE),
-                "{junk:?}"
-            );
-        }
     }
 
     #[test]
     fn region_picks_the_matching_default_endpoint() {
-        // 国际站的 Key 连北京会被拒：地区必须真的换掉主机，而不是只换个名字。
         assert_eq!(
-            endpoint_url_with(None, AliyunRegion::Intl, LIVE),
+            endpoint_url_with(
+                None,
+                &AliyunEndpoint {
+                    region: AliyunRegion::Intl,
+                    custom: String::new()
+                },
+                LIVE
+            ),
             format!("{}?model={LIVE}", catalog::API_BASE_INTL)
         );
         assert_eq!(
-            endpoint_url_with(None, AliyunRegion::Cn, LIVE),
+            endpoint_url_with(None, &cn(), LIVE),
             format!("{}?model={LIVE}", catalog::API_BASE)
         );
         assert_ne!(catalog::API_BASE, catalog::API_BASE_INTL);
@@ -635,12 +769,54 @@ mod tests {
         assert!(session.get("instructions").is_none());
     }
 
+    /// 3.5 的形状与 3.8 **逐字不同**：音色平铺、音频格式是 `pcm` 字符串。
+    /// 这一条防的是"方言没分派、两条模型发同一份报文"。
+    #[test]
+    fn qwen35_uses_the_flat_audio_shape() {
+        let session = speak_params_for(LIVE35).to_session_object();
+        assert_eq!(session["voice"], "Tina");
+        assert_eq!(session["input_audio_format"], "pcm");
+        assert_eq!(session["output_audio_format"], "pcm");
+        assert_eq!(session["translation"]["language"], "ja");
+        // 3.8 那些收在 audio 下的字段在 3.5 里不认，一个都不能出现。
+        for nested in ["audio", "output_modalities", "modalities", "turn_detection"] {
+            assert!(session.get(nested).is_none(), "3.5 不该发 {nested}");
+        }
+    }
+
+    /// 快照模型也得走它自己的方言：3.5 的快照不能被当成 3.8 发出去。
+    #[test]
+    fn dated_snapshots_pick_their_own_dialect() {
+        let session =
+            speak_params_for("qwen3.5-livetranslate-flash-realtime-2026-05-19").to_session_object();
+        assert_eq!(session["voice"], "Tina");
+        assert!(session.get("audio").is_none());
+    }
+
+    /// 认不出的模型不发任何音频参数——宁可少发，也不要发一条服务端不认的字段。
+    #[test]
+    fn an_unmatched_model_only_asks_for_the_translation() {
+        let session = speak_params_for("gummy-realtime-v1").to_session_object();
+        assert_eq!(
+            session,
+            json!({ "translation": { "language": "ja" } }),
+            "认不出的模型只能发最保守的一格"
+        );
+    }
+
     #[test]
     fn livetranslate_sends_source_language_when_opted_in() {
         let mut params = speak_params();
         params.source_language = Some("en".to_string());
         let session = params.to_session_object();
         assert_eq!(session["input_audio_transcription"]["language"], "en");
+        // 两条方言都用同一个字段名，3.5 也不例外。
+        let mut params35 = speak_params_for(LIVE35);
+        params35.source_language = Some("en".to_string());
+        assert_eq!(
+            params35.to_session_object()["input_audio_transcription"]["language"],
+            "en"
+        );
     }
 
     #[test]

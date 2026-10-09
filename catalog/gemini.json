@@ -9,12 +9,28 @@
     },
     "console_url": "https://aistudio.google.com/apikey"
   },
-  "model": {
-    "id": "gemini-3.5-live-translate-preview",
-    "label": {
-      "zh": "Gemini 3.5 Live Translate",
-      "en": "Gemini 3.5 Live Translate",
-      "ja": "Gemini 3.5 Live Translate"
+  "models": [
+    {
+      "id": "gemini-3.5-live-translate-preview",
+      "dialect": "gemini-3.5-live",
+      "recommended": true,
+      "label": {
+        "zh": "Gemini 3.5 Live Translate",
+        "en": "Gemini 3.5 Live Translate",
+        "ja": "Gemini 3.5 Live Translate"
+      }
+    }
+  ],
+  "dialects": {
+    "gemini-3.5-live": {
+      "label": {
+        "zh": "Gemini 3.5 Live 会话方言",
+        "en": "Gemini 3.5 Live session dialect",
+        "ja": "Gemini 3.5 Live セッション方言"
+      },
+      "match_prefixes": [
+        "gemini-3.5-live-translate-preview"
+      ]
     }
   },
   "api": {
@@ -34,5 +50,5 @@
     "live_translation": "https://ai.google.dev/gemini-api/docs/live-api/live-translate",
     "rate_limits": "https://ai.google.dev/gemini-api/docs/rate-limits"
   },
-  "schema_version": 2
+  "schema_version": 3
 }

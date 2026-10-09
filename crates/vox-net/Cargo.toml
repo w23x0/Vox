@@ -38,6 +38,9 @@ vox-host = { path = "../vox-host" }
 # 同样只挂 dev 边：`cargo tree -p vox-headless` 一个包都不多。
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
+tokio-rustls = "0.26"
+webpki-roots = "0.26"
+
 [features]
 default = []
 # 探针从 Secret Service 读密钥的那一条腿。关着的时候 vox-host 的

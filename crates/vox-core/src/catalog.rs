@@ -1,8 +1,13 @@
 //! 静态目录数据：语言、模型、音色、按键。
 //!
-//! 服务商元数据来自仓库根目录 `catalog/*.json`。构建脚本会校验 Aliyun 的
-//! 语言/音色表以及 Gemini 的模型/端点，再生成下面 include 的常量。前端直接
-//! 导入同一份 JSON，避免两边各抄一份后悄悄漂移。
+//! 服务商元数据来自仓库根目录 `catalog/*.json`。构建脚本校验三家的方言表/模型表
+//! 以及 Aliyun 的语言/音色表，再生成下面 include 的常量。前端直接导入同一份 JSON，
+//! 避免两边各抄一份后悄悄漂移。
+//!
+//! **模型 → 方言**：每个模型在 `models[]` 里点名自己的方言；方言另外带一组
+//! `match_prefixes`，用来把官方列表里带发布日期快照后缀的同族模型
+//! （`…-2026-05-19`）也认成同一个方言。匹配得到方言的模型 ID 一律**保留**
+//! （连快照后缀一起），匹配不到才回这家的推荐模型。
 
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +20,40 @@ use crate::settings::ModelProvider;
 pub struct ModelInfo {
     pub name: &'static str,
     pub label: &'static str,
+    pub provider: &'static str,
+    /// 这个模型用哪个方言（`DIALECTS` 里的 id）。
+    pub dialect: &'static str,
+    /// 这家**当前推荐**的模型（每家恰好一个，构建期钉死）。
+    pub recommended: bool,
+}
+
+/// 一条协议方言：同一族模型的会话长什么样。
+///
+/// 语言表、音色表、能力位**不在这里**：那三样是服务商级别的（`Settings`、界面、
+/// 能力位报告都在没有方言的上下文里读它们），两条阿里云方言今天也完全一致。
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct DialectInfo {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub provider: &'static str,
+    /// 会话形状。只有阿里云有（它们的帧由 `cloud::protocol` 拼）；Gemini / GPT
+    /// 的帧在各自模块里造，没有"换形状"这回事，所以是 `None`。
+    pub shape: Option<SessionShape>,
+    /// 模型 ID 前缀。用来把带发布日期后缀的快照模型认成同一条方言。
+    pub match_prefixes: &'static [&'static str],
+    /// 显式指定源文识别模型。`None` = 不发这个字段（服务端用缺省）。
+    pub transcription_model: Option<&'static str>,
+}
+
+/// 阿里云两条方言的 `session.update` 形状。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionShape {
+    /// qwen3.8：音频格式与音色收在 `audio.input` / `audio.output` 下，模态叫
+    /// `output_modalities`。
+    QwenNestedAudio,
+    /// qwen3.5：音色平铺，音频格式是 `input_audio_format` / `output_audio_format`。
+    QwenFlatAudio,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -37,20 +76,66 @@ pub struct ProviderInfo {
 
 include!(concat!(env!("OUT_DIR"), "/aliyun_catalog.rs"));
 
-pub fn normalize_model_for(provider: crate::settings::ModelProvider, name: &str) -> &'static str {
+/// 模型名收敛：能匹配到方言就**原样保留**（含快照后缀），匹配不到回这家的推荐模型。
+///
+/// 收窄这一步以前是"只认表里那一个模型"，现在表里有好几条、而且官方列表里还有
+/// 带发布日期后缀的同族模型，一律归到缺省等于把用户选的模型悄悄换掉。
+pub fn normalize_model_for(provider: ModelProvider, name: &str) -> String {
     let info = provider_info(provider);
-    if MODELS.iter().any(|model| model.name == info.default_model) {
-        normalize_model(name)
-    } else {
-        info.default_model
+    match dialect_for_model(provider, name) {
+        Some(_) => name.to_string(),
+        None => info.default_model.to_string(),
     }
 }
 
-pub fn provider_info(provider: crate::settings::ModelProvider) -> &'static ProviderInfo {
+pub fn provider_info(provider: ModelProvider) -> &'static ProviderInfo {
     PROVIDER_INFOS
         .iter()
         .find(|info| info.id == provider.as_id())
         .unwrap_or_else(|| panic!("catalog is missing provider {}", provider.as_id()))
+}
+
+/// 这家登记在册的模型（`catalog/*.json` 的 `models[]`）。
+pub fn provider_models(provider: ModelProvider) -> impl Iterator<Item = &'static ModelInfo> {
+    let id = provider.as_id();
+    MODELS.iter().filter(move |model| model.provider == id)
+}
+
+/// 模型 ID → 方言。先按 `models[]` 的显式 id 查，再退回方言的 `match_prefixes`
+/// （官方列表里带发布日期后缀的快照模型靠这条路认）。
+pub fn dialect_for_model(
+    provider: ModelProvider,
+    model_name: &str,
+) -> Option<&'static DialectInfo> {
+    let provider_id = provider.as_id();
+    // 先按 `models[]` 的显式 id，再按方言的前缀（官方列表里带发布日期后缀的
+    // 快照模型表里没有，只能靠前缀认）。
+    let id = MODELS
+        .iter()
+        .find(|model| model.provider == provider_id && model.name == model_name)
+        .map(|model| model.dialect)
+        .or_else(|| {
+            DIALECTS
+                .iter()
+                .find(|dialect| dialect.provider == provider_id && claims(dialect, model_name))
+                .map(|dialect| dialect.id)
+        })?;
+    DIALECTS
+        .iter()
+        .find(|dialect| dialect.id == id && dialect.provider == provider_id)
+}
+
+fn claims(dialect: &DialectInfo, model_name: &str) -> bool {
+    dialect
+        .match_prefixes
+        .iter()
+        .any(|prefix| model_name.starts_with(prefix))
+}
+
+/// 同一个模型名**跨方言**地找（不看 provider）。只给 `cloud::protocol` 用：
+/// 阿里云的两种方言同属一家，模型名已经足够定位。
+pub fn dialect_by_prefix(model_name: &str) -> Option<&'static DialectInfo> {
+    DIALECTS.iter().find(|dialect| claims(dialect, model_name))
 }
 
 pub fn provider_by_id(id: &str) -> Option<crate::settings::ModelProvider> {
@@ -110,16 +195,6 @@ impl ActivationMode {
 
 pub fn supports_audio_output(language: &str) -> bool {
     AUDIO_OUTPUT_LANGUAGES.contains(&language)
-}
-
-/// 按名字找模型。只有 [`normalize_model`] 用，不对外暴露。
-fn find_model(name: &str) -> Option<&'static ModelInfo> {
-    MODELS.iter().find(|m| m.name == name)
-}
-
-/// 把名字收敛成已知模型，不认识就退回默认。
-pub fn normalize_model(name: &str) -> &'static str {
-    find_model(name).map_or(DEFAULT_MODEL_NAME, |m| m.name)
 }
 
 pub fn language_label(code: &str) -> Option<&'static str> {
@@ -280,10 +355,111 @@ mod tests {
     }
 
     #[test]
+    fn every_model_points_at_a_dialect_that_claims_it() {
+        for provider in ModelProvider::ALL {
+            let models: Vec<_> = provider_models(provider).collect();
+            assert!(!models.is_empty(), "{provider:?} 一个模型都没登记");
+            assert_eq!(
+                models.iter().filter(|m| m.recommended).count(),
+                1,
+                "{provider:?} 必须有且只有一个推荐模型"
+            );
+            for model in models {
+                let dialect = dialect_for_model(provider, model.name)
+                    .unwrap_or_else(|| panic!("{} 匹配不到方言", model.name));
+                assert_eq!(dialect.provider, provider.as_id());
+                assert!(
+                    dialect
+                        .match_prefixes
+                        .iter()
+                        .any(|prefix| model.name.starts_with(prefix)),
+                    "{} 的前缀匹配不上它自己的方言",
+                    model.name
+                );
+            }
+        }
+    }
+
+    /// 官方列表里的快照模型（`-YYYY-MM-DD` 后缀）要认成同一条方言，
+    /// 并且**原样保留**整个模型 ID。
+    #[test]
+    fn dated_snapshots_resolve_to_their_dialect_and_are_kept() {
+        let snapshot = "qwen3.5-livetranslate-flash-realtime-2026-05-19";
+        let dialect = dialect_for_model(ModelProvider::Aliyun, snapshot)
+            .expect("带日期后缀的同族模型要认得出来");
+        assert_eq!(dialect.id, "qwen3.5");
+        assert_eq!(
+            dialect.shape,
+            Some(SessionShape::QwenFlatAudio),
+            "3.5 走平铺音频格式那条形状"
+        );
+        assert_eq!(
+            normalize_model_for(ModelProvider::Aliyun, snapshot),
+            snapshot
+        );
+    }
+
+    #[test]
     fn model_normalization_falls_back() {
-        assert_eq!(normalize_model("nope"), DEFAULT_MODEL_NAME);
-        assert_eq!(normalize_model(DEFAULT_MODEL_NAME), DEFAULT_MODEL_NAME);
-        assert_eq!(MODELS.len(), 1, "产品只暴露一个专用实时翻译模型");
+        let default = provider_info(ModelProvider::Aliyun).default_model;
+        for junk in [
+            "gummy-realtime-v1",
+            "qwen3-livetranslate-flash-realtime",
+            "qwen3-livetranslate-flash-realtime-2025-09-22",
+            "nope",
+            "",
+        ] {
+            assert_eq!(
+                normalize_model_for(ModelProvider::Aliyun, junk),
+                default,
+                "{junk:?} 匹配不到方言，要回推荐模型"
+            );
+        }
+        assert_eq!(
+            normalize_model_for(ModelProvider::Gpt, "qwen3.8-livetranslate-flash-realtime"),
+            crate::catalog::GPT_MODEL_NAME,
+            "别家的模型名不能留在阿里的配置里"
+        );
+    }
+
+    /// M8：明天下线的 gummy / qwen3 **不进维护表**。进了表它们就会一直被当成可选模型，
+    /// 而它们的方言也匹配不上（那两个前缀不在任何方言的 match_prefixes 里）。
+    #[test]
+    fn retired_models_are_kept_out_of_the_catalog() {
+        assert!(provider_models(ModelProvider::Aliyun)
+            .all(|model| !model.name.starts_with("gummy")
+                && !model.name.starts_with("qwen3-livetranslate")));
+        assert!(dialect_by_prefix("gummy-realtime-v1").is_none());
+        assert!(dialect_by_prefix("qwen3-livetranslate-flash-realtime").is_none());
+    }
+
+    #[test]
+    fn dialect_prefix_lookup_is_shared_by_the_two_aliyun_dialects() {
+        assert_eq!(
+            dialect_by_prefix("qwen3.8-livetranslate-flash-realtime").and_then(|d| d.shape),
+            Some(SessionShape::QwenNestedAudio)
+        );
+        assert_eq!(
+            dialect_by_prefix("qwen3.5-livetranslate-flash-realtime-2026-05-19")
+                .and_then(|d| d.shape),
+            Some(SessionShape::QwenFlatAudio)
+        );
+        assert!(dialect_by_prefix("gummy-realtime-v1").is_none());
+        // 3.8 的识别模型留了字段但今天不发（2026-10-09 真连结论）。
+        let qwen38 = dialect_by_prefix("qwen3.8-livetranslate-flash-realtime").unwrap();
+        assert_eq!(qwen38.transcription_model, None);
+    }
+
+    #[test]
+    fn model_normalization_keeps_every_adapted_aliyun_model() {
+        for model in provider_models(ModelProvider::Aliyun) {
+            assert_eq!(
+                normalize_model_for(ModelProvider::Aliyun, model.name),
+                model.name,
+                "表里登记的模型不该被归一掉"
+            );
+        }
+        assert_eq!(provider_models(ModelProvider::Aliyun).count(), 2);
     }
 
     #[test]

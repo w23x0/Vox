@@ -41,6 +41,9 @@ pub struct SettingsDto {
     /// **起没起**是另一回事——那在 `SnapshotDto.control` 里（观察值，不是设置）。
     pub control: ControlSettings,
     pub aliyun_region: AliyunRegion,
+    /// 自定义接入点；空串 = 按地区缺省。前端 `types.ts` 的同名字段（那里是可选的，
+    /// 因为浏览器 mock 未必有这一格）。
+    pub aliyun_endpoint: String,
 }
 
 impl From<Settings> for SettingsDto {
@@ -55,6 +58,7 @@ impl From<Settings> for SettingsDto {
             ui_language: s.ui_language,
             control: s.control,
             aliyun_region: s.aliyun_region,
+            aliyun_endpoint: s.aliyun_endpoint,
         }
     }
 }
@@ -349,6 +353,22 @@ mod tests {
                 Value::String(vox_core::catalog::DEFAULT_MODEL_NAME.to_string())
             );
         }
+    }
+
+    /// 接入点要出现在设置快照里——前端模型页读写的就是这一格，缺字段它读到 `undefined`。
+    #[test]
+    fn snapshot_settings_carries_the_aliyun_endpoint() {
+        let mut dto = make_dto(true, None);
+        dto.settings.aliyun_endpoint =
+            "wss://ws1.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime".to_string();
+        let json = serde_json::to_value(&dto).unwrap();
+        assert_eq!(
+            json["settings"]["aliyun_endpoint"],
+            "wss://ws1.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime"
+        );
+        // 没填时是显式空串，不是字段消失。
+        let empty = serde_json::to_value(make_dto(true, None)).unwrap();
+        assert_eq!(empty["settings"]["aliyun_endpoint"], "");
     }
 
     #[test]

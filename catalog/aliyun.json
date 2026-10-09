@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "verified_at": "2026-10-09",
   "expected_counts": {
     "languages": 60,
@@ -15,15 +15,52 @@
     },
     "console_url": "https://bailian.console.aliyun.com/?apiKey=1"
   },
-  "model": {
-    "id": "qwen3.8-livetranslate-flash-realtime",
-    "label": {
-      "zh": "Qwen3.8 LiveTranslate Flash",
-      "en": "Qwen3.8 LiveTranslate Flash",
-      "ja": "Qwen3.8 LiveTranslate Flash"
+  "models": [
+    {
+      "id": "qwen3.8-livetranslate-flash-realtime",
+      "dialect": "qwen3.8",
+      "recommended": true,
+      "label": {
+        "zh": "Qwen3.8 LiveTranslate Flash",
+        "en": "Qwen3.8 LiveTranslate Flash",
+        "ja": "Qwen3.8 LiveTranslate Flash"
+      }
     },
-    "kind": "realtime_translation",
-    "stable_snapshot": "qwen3.8-livetranslate-flash-realtime"
+    {
+      "id": "qwen3.5-livetranslate-flash-realtime",
+      "dialect": "qwen3.5",
+      "recommended": false,
+      "label": {
+        "zh": "Qwen3.5 LiveTranslate Flash",
+        "en": "Qwen3.5 LiveTranslate Flash",
+        "ja": "Qwen3.5 LiveTranslate Flash"
+      }
+    }
+  ],
+  "dialects": {
+    "qwen3.8": {
+      "label": {
+        "zh": "Qwen3.8 会话方言",
+        "en": "Qwen3.8 session dialect",
+        "ja": "Qwen3.8 セッション方言"
+      },
+      "session_shape": "qwen_nested_audio",
+      "match_prefixes": [
+        "qwen3.8-livetranslate-flash-realtime"
+      ],
+      "transcription_model": ""
+    },
+    "qwen3.5": {
+      "label": {
+        "zh": "Qwen3.5 会话方言",
+        "en": "Qwen3.5 session dialect",
+        "ja": "Qwen3.5 セッション方言"
+      },
+      "session_shape": "qwen_flat_audio",
+      "match_prefixes": [
+        "qwen3.5-livetranslate-flash-realtime"
+      ]
+    }
   },
   "api": {
     "transport": "websocket",

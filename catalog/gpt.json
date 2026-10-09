@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "verified_at": "2026-08-22",
   "provider": {
     "id": "gpt",
@@ -10,12 +10,28 @@
     },
     "console_url": "https://platform.openai.com/api-keys"
   },
-  "model": {
-    "id": "gpt-realtime-translate",
-    "label": {
-      "zh": "GPT Realtime Translate",
-      "en": "GPT Realtime Translate",
-      "ja": "GPT Realtime Translate"
+  "models": [
+    {
+      "id": "gpt-realtime-translate",
+      "dialect": "gpt-realtime-translate",
+      "recommended": true,
+      "label": {
+        "zh": "GPT Realtime Translate",
+        "en": "GPT Realtime Translate",
+        "ja": "GPT Realtime Translate"
+      }
+    }
+  ],
+  "dialects": {
+    "gpt-realtime-translate": {
+      "label": {
+        "zh": "GPT Realtime 会话方言",
+        "en": "GPT Realtime session dialect",
+        "ja": "GPT Realtime セッション方言"
+      },
+      "match_prefixes": [
+        "gpt-realtime-translate"
+      ]
     }
   },
   "api": {

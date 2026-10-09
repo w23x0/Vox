@@ -90,6 +90,10 @@ pub struct Settings {
     pub control: ControlSettings,
     /// 阿里云百炼走哪个地区的接入点。老配置没有这一格，读出来是国内站（行为不变）。
     pub aliyun_region: AliyunRegion,
+    /// 自定义接入点（工作空间专属 `wss://…`）。空 = 按 `aliyun_region` 缺省。
+    /// 环境变量 `VOX_ALIYUN_ENDPOINT` 优先级更高，但那是调试后门。
+    #[serde(default)]
+    pub aliyun_endpoint: String,
 }
 
 impl Default for Settings {
@@ -105,6 +109,7 @@ impl Default for Settings {
             ui_language: DEFAULT_UI_LANGUAGE.to_string(),
             control: ControlSettings::default(),
             aliyun_region: AliyunRegion::default(),
+            aliyun_endpoint: String::new(),
         }
     }
 }
@@ -395,6 +400,10 @@ impl Settings {
         if !UI_LANGUAGES.contains(&self.ui_language.as_str()) {
             self.ui_language = DEFAULT_UI_LANGUAGE.to_string();
         }
+
+        // 接入点只裁空白：合法性交给建连处（那里认不出 ws(s):// 就退回地区缺省），
+        // 设置这边不替用户改地址，只是不让纯空白被当成"用户填过"。
+        self.aliyun_endpoint = self.aliyun_endpoint.trim().to_string();
 
         // 对外说话
         let speak = &mut self.speak;
@@ -788,6 +797,34 @@ mod tests {
         original.control.transcript_notify_ms = 500;
         original.normalize();
         assert_eq!(Settings::from_json(&original.to_json()), original);
+    }
+
+    /// 接入点走设置这一格：老配置没有它（读出来是空 = 按地区缺省），空白不算"填过"。
+    #[test]
+    fn custom_endpoint_is_optional_and_whitespace_is_not_a_value() {
+        assert_eq!(Settings::default().aliyun_endpoint, "");
+        let legacy = Settings::from_json(r#"{"version":2,"speak":{"enabled":true}}"#);
+        assert_eq!(legacy.aliyun_endpoint, "", "老配置读出来要能连上");
+
+        let mut s = Settings {
+            aliyun_endpoint: "  wss://ws1.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime \n"
+                .to_string(),
+            ..Settings::default()
+        };
+        s.normalize();
+        assert_eq!(
+            s.aliyun_endpoint,
+            "wss://ws1.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime"
+        );
+        assert_eq!(
+            Settings::from_json(&s.to_json()).aliyun_endpoint,
+            s.aliyun_endpoint,
+            "接入点要能原样存回去"
+        );
+
+        s.aliyun_endpoint = "   ".into();
+        s.normalize();
+        assert_eq!(s.aliyun_endpoint, "", "纯空白当没填");
     }
 
     #[test]

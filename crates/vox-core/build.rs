@@ -17,13 +17,40 @@ struct Catalog {
     verified_at: String,
     expected_counts: ExpectedCounts,
     provider: Provider,
-    model: Model,
+    dialects: std::collections::BTreeMap<String, Dialect>,
+    models: Vec<CatalogModel>,
     api: Api,
     capabilities: Capabilities,
     defaults: Defaults,
     legacy_removed_voice_ids: Vec<String>,
     languages: Vec<Language>,
     voices: Vec<Voice>,
+}
+
+/// `catalog/*.json` 里的一个方言。
+///
+/// `session_shape` / `transcription_model` 只有阿里云用得到（它们的会话由
+/// `cloud::protocol` 拼），Gemini / GPT 的帧在自己的模块里造，所以是可选的。
+#[derive(Deserialize)]
+struct Dialect {
+    label: L10n,
+    #[serde(default)]
+    session_shape: Option<String>,
+    #[serde(default)]
+    match_prefixes: Vec<String>,
+    #[serde(default)]
+    transcription_model: Option<String>,
+}
+
+/// `catalog/*.json` `models[]` 里的一条。**表里只放官方接口给不了的东西**：
+/// 发布/下线时间、价格一律不进这里（那些走官方模型列表接口）。
+#[derive(Deserialize)]
+struct CatalogModel {
+    id: String,
+    dialect: String,
+    #[serde(default)]
+    recommended: bool,
+    label: L10n,
 }
 
 #[derive(Deserialize)]
@@ -38,13 +65,6 @@ struct Provider {
     id: String,
     label: L10n,
     console_url: String,
-}
-
-#[derive(Deserialize)]
-struct Model {
-    id: String,
-    label: L10n,
-    stable_snapshot: String,
 }
 
 #[derive(Deserialize)]
@@ -88,15 +108,10 @@ struct MiniCatalog {
     schema_version: i64,
     verified_at: String,
     provider: Provider,
-    model: MiniModel,
+    dialects: std::collections::BTreeMap<String, Dialect>,
+    models: Vec<CatalogModel>,
     api: MiniApi,
     capabilities: Capabilities,
-}
-
-#[derive(Deserialize)]
-struct MiniModel {
-    id: String,
-    label: L10n,
 }
 
 #[derive(Deserialize)]
@@ -166,18 +181,64 @@ fn main() {
         );
     }
     assert!(!catalog.provider.label.zh.is_empty(), "provider.label 空值");
-    assert!(!catalog.model.label.zh.is_empty(), "model.label 空值");
     assert_eq!(
         gemini.provider.id, "gemini",
         "Gemini 目录 provider.id 必须是 gemini"
     );
     assert_eq!(gpt.provider.id, "gpt", "GPT 目录 provider.id 必须是 gpt");
+
+    // 方言表 / 模型表：三家同构。每条模型必须指到一个存在的方言，方言的匹配前缀
+    // 必须能匹配上**它自己**那条模型（否则那个前缀永远匹配不到东西，是死数据）。
+    for (path, dialects, models) in [
+        ("catalog/aliyun.json", &catalog.dialects, &catalog.models),
+        ("catalog/gemini.json", &gemini.dialects, &gemini.models),
+        ("catalog/gpt.json", &gpt.dialects, &gpt.models),
+    ] {
+        assert!(!models.is_empty(), "{path} 的 models[] 是空的");
+        for model in models {
+            let dialect = dialects.get(&model.dialect).unwrap_or_else(|| {
+                panic!(
+                    "{path}：模型 {} 指向的方言 {:?} 不存在",
+                    model.id, model.dialect
+                )
+            });
+            assert!(
+                l10n_filled(&model.label),
+                "{path}：模型 {} 的多语 label 有空值",
+                model.id
+            );
+            assert!(
+                dialect
+                    .match_prefixes
+                    .iter()
+                    .any(|p| model.id.starts_with(p.as_str())),
+                "{path}：模型 {} 的 id 不匹配它自己的方言 {:?} 的任何 match_prefixes",
+                model.id,
+                model.dialect
+            );
+            if let Some(shape) = &dialect.session_shape {
+                assert!(
+                    matches!(shape.as_str(), "qwen_nested_audio" | "qwen_flat_audio"),
+                    "{path}：未知的 session_shape {shape:?}"
+                );
+            }
+        }
+        assert_eq!(
+            models.iter().filter(|m| m.recommended).count(),
+            1,
+            "{path}：必须有且只有一个 recommended 模型"
+        );
+    }
+
+    let aliyun_default = recommended(catalog.models.iter(), "catalog/aliyun.json");
+    let gemini_default = recommended(gemini.models.iter(), "catalog/gemini.json");
+    let gpt_default = recommended(gpt.models.iter(), "catalog/gpt.json");
     assert_eq!(
-        gemini.model.id, "gemini-3.5-live-translate-preview",
+        gemini_default.id, "gemini-3.5-live-translate-preview",
         "Gemini Live Translation 模型 ID 发生变化时必须同步协议测试"
     );
     assert_eq!(
-        gpt.model.id, "gpt-realtime-translate",
+        gpt_default.id, "gpt-realtime-translate",
         "GPT 目录模型 ID 必须是 gpt-realtime-translate"
     );
     assert_eq!(
@@ -284,8 +345,8 @@ fn main() {
         lit(&gemini.provider.label.zh),
         lit(&gemini.provider.console_url),
         lit(&gemini.verified_at),
-        lit(&gemini.model.id),
-        lit(&gemini.model.label.zh),
+        lit(&gemini_default.id),
+        lit(&gemini_default.label.zh),
         lit(&gemini.api.websocket_endpoint)
     ));
     out.push_str(&format!(
@@ -294,18 +355,17 @@ fn main() {
         lit(&gpt.provider.label.zh),
         lit(&gpt.provider.console_url),
         lit(&gpt.verified_at),
-        lit(&gpt.model.id),
-        lit(&gpt.model.label.zh),
+        lit(&gpt_default.id),
+        lit(&gpt_default.label.zh),
         lit(&gpt.api.websocket_endpoint),
         gpt.api.input_sample_rate.unwrap_or(24_000),
         gpt.api.output_sample_rate.unwrap_or(24_000),
     ));
     out.push_str(&format!(
-        "pub const CATALOG_VERIFIED_AT: &str = {};\npub const DEFAULT_MODEL_NAME: &str = {};\npub const DEFAULT_MODEL_LABEL: &str = {};\npub const STABLE_MODEL_SNAPSHOT: &str = {};\npub const API_BASE: &str = {};\npub const API_BASE_INTL: &str = {};\n",
+        "pub const CATALOG_VERIFIED_AT: &str = {};\npub const DEFAULT_MODEL_NAME: &str = {};\npub const DEFAULT_MODEL_LABEL: &str = {};\npub const API_BASE: &str = {};\npub const API_BASE_INTL: &str = {};\n",
         lit(&catalog.verified_at),
-        lit(&catalog.model.id),
-        lit(&catalog.model.label.zh),
-        lit(&catalog.model.stable_snapshot),
+        lit(&aliyun_default.id),
+        lit(&aliyun_default.label.zh),
         lit(&catalog.api.legacy_endpoint),
         lit(&catalog.api.intl_endpoint)
     ));
@@ -320,27 +380,77 @@ fn main() {
     push_provider_info(
         &mut out,
         &catalog.provider,
-        &catalog.model.id,
-        &catalog.model.label.zh,
+        &aliyun_default.id,
+        &aliyun_default.label.zh,
         &catalog.capabilities,
     );
     push_provider_info(
         &mut out,
         &gemini.provider,
-        &gemini.model.id,
-        &gemini.model.label.zh,
+        &gemini_default.id,
+        &gemini_default.label.zh,
         &gemini.capabilities,
     );
     push_provider_info(
         &mut out,
         &gpt.provider,
-        &gpt.model.id,
-        &gpt.model.label.zh,
+        &gpt_default.id,
+        &gpt_default.label.zh,
         &gpt.capabilities,
     );
     out.push_str("];\n");
 
-    out.push_str("pub const MODELS: &[ModelInfo] = &[ModelInfo { name: DEFAULT_MODEL_NAME, label: DEFAULT_MODEL_LABEL }];\n");
+    out.push_str("pub const MODELS: &[ModelInfo] = &[\n");
+    for (provider_id, models) in [
+        (catalog.provider.id.as_str(), &catalog.models),
+        (gemini.provider.id.as_str(), &gemini.models),
+        (gpt.provider.id.as_str(), &gpt.models),
+    ] {
+        for model in models {
+            out.push_str(&format!(
+                "    ModelInfo {{ name: {}, label: {}, provider: {}, dialect: {}, recommended: {} }},\n",
+                lit(&model.id),
+                lit(&model.label.zh),
+                lit(provider_id),
+                lit(&model.dialect),
+                model.recommended
+            ));
+        }
+    }
+    out.push_str("];\n");
+
+    out.push_str("pub const DIALECTS: &[DialectInfo] = &[\n");
+    for (provider_id, dialects) in [
+        (catalog.provider.id.as_str(), &catalog.dialects),
+        (gemini.provider.id.as_str(), &gemini.dialects),
+        (gpt.provider.id.as_str(), &gpt.dialects),
+    ] {
+        for (id, dialect) in dialects {
+            out.push_str(&format!(
+                "    DialectInfo {{ id: {}, label: {}, provider: {}, shape: {}, match_prefixes: &[{}], transcription_model: {} }},\n",
+                lit(id),
+                lit(&dialect.label.zh),
+                lit(provider_id),
+                dialect
+                    .session_shape
+                    .as_deref()
+                    .map(shape_variant)
+                    .unwrap_or("None"),
+                dialect
+                    .match_prefixes
+                    .iter()
+                    .map(|p| lit(p))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                dialect
+                    .transcription_model
+                    .as_deref()
+                    .filter(|model| !model.trim().is_empty())
+                    .map_or_else(|| "None".to_string(), lit)
+            ));
+        }
+    }
+    out.push_str("];\n");
     out.push_str("pub const LANGUAGE_LABELS: &[(&str, &str)] = &[\n");
     for language in &catalog.languages {
         out.push_str(&format!(
@@ -393,4 +503,26 @@ fn push_provider_info(
         capabilities.source_language,
         capabilities.hot_update_language,
     ));
+}
+
+/// 这家唯一的推荐模型。构建期就钉死"必须有一个"，所以运行时拿到的一定是它。
+fn recommended<'a>(models: impl Iterator<Item = &'a CatalogModel>, path: &str) -> &'a CatalogModel {
+    let mut recommended = models.filter(|model| model.recommended);
+    let first = recommended
+        .next()
+        .unwrap_or_else(|| panic!("{path} 没有任何 recommended 模型"));
+    assert!(
+        recommended.next().is_none(),
+        "{path} 有多个 recommended 模型"
+    );
+    first
+}
+
+/// `catalog/*.json` 的 `session_shape` 字符串 → 生成代码里的枚举变体。
+fn shape_variant(shape: &str) -> &'static str {
+    match shape {
+        "qwen_nested_audio" => "Some(SessionShape::QwenNestedAudio)",
+        "qwen_flat_audio" => "Some(SessionShape::QwenFlatAudio)",
+        other => panic!("未知的 session_shape {other:?}"),
+    }
 }

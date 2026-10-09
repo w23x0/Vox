@@ -691,8 +691,12 @@ impl Worker {
         config: SessionConfig,
         plan: Plan,
     ) -> Self {
-        let session =
-            Session::new_for(config.provider, config.api_key.clone(), plan.params.clone());
+        let session = Session::new_for(
+            config.provider,
+            config.api_key.clone(),
+            plan.params.clone(),
+            config.aliyun_endpoint.clone(),
+        );
         let input_sample_rate = session.input_sample_rate();
         Self {
             runtime,
@@ -1055,6 +1059,12 @@ impl Worker {
                 Ok(Some(Incoming::Text(text))) => self.handle_message(&text),
                 Ok(Some(Incoming::Closed(reason))) => {
                     tracing::info!(reason = %reason, "对端关了连接");
+                    // 额度用尽、密钥这类 close 重连一万次也是这个结果：说清楚
+                    // 去哪儿改，然后封口，不然用户只看到它反复重连。
+                    if let Some(explained) = cloud::explain_close(&reason) {
+                        self.fail(explained);
+                        return false;
+                    }
                     return false;
                 }
                 // 超时了但连接还在：这一拍就是正常的安静。
@@ -2115,6 +2125,7 @@ pub(crate) mod tests {
             loopback_target: None,
             denoise: true,
             source_language: None,
+            aliyun_endpoint: crate::cloud::AliyunEndpoint::default(),
         }
     }
 
@@ -2142,6 +2153,7 @@ pub(crate) mod tests {
             }),
             denoise: false,
             source_language: None,
+            aliyun_endpoint: crate::cloud::AliyunEndpoint::default(),
         }
     }
 

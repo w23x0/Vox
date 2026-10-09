@@ -14,7 +14,7 @@ pub mod gpt;
 pub mod protocol;
 
 pub use protocol::{
-    ClientEvent, CloneFrequency, Decoder, ParsedEvent, ServerEvent, SessionParams,
+    AliyunEndpoint, ClientEvent, CloneFrequency, Decoder, ParsedEvent, ServerEvent, SessionParams,
     INPUT_SAMPLE_RATE, OUTPUT_SAMPLE_RATE,
 };
 
@@ -105,6 +105,8 @@ pub struct Session {
     provider: ModelProvider,
     params: SessionParams,
     api_key: String,
+    /// 阿里云接入点（地区 + 自定义）。只有阿里云会读它，另外两家原样带着。
+    aliyun_endpoint: AliyunEndpoint,
     decoder: SessionDecoder,
     seq: u64,
     /// 握手发出去了没。没握手就不该上传音频。
@@ -138,18 +140,25 @@ impl SessionDecoder {
 
 impl Session {
     pub fn new(api_key: impl Into<String>, params: SessionParams) -> Self {
-        Self::new_for(ModelProvider::Aliyun, api_key, params)
+        Self::new_for(
+            ModelProvider::Aliyun,
+            api_key,
+            params,
+            AliyunEndpoint::default(),
+        )
     }
 
     pub fn new_for(
         provider: ModelProvider,
         api_key: impl Into<String>,
         params: SessionParams,
+        aliyun_endpoint: AliyunEndpoint,
     ) -> Self {
         Self {
             provider,
             params,
             api_key: api_key.into(),
+            aliyun_endpoint,
             decoder: match provider {
                 ModelProvider::Aliyun => SessionDecoder::Aliyun(Decoder::new()),
                 ModelProvider::Gemini => SessionDecoder::Gemini(gemini::Decoder::new()),
@@ -180,7 +189,7 @@ impl Session {
     pub fn connect_request(&self) -> ConnectRequest {
         match self.provider {
             ModelProvider::Aliyun => ConnectRequest {
-                url: protocol::endpoint_url(&self.params.model_name),
+                url: protocol::endpoint_url(&self.params.model_name, &self.aliyun_endpoint),
                 auth_header: protocol::auth_header_value(&self.api_key),
             },
             ModelProvider::Gemini => ConnectRequest {
@@ -411,6 +420,35 @@ pub fn explain_error(code: Option<&str>, message: &str) -> String {
     }
 }
 
+/// 服务端主动 close 的原因里，哪些是**重连也没用的**（额度用完、密钥错）。
+/// 命中时返回一句给用户看的话——顺带把原文带在里面，服务商给的原因往往比
+/// 我们的翻译更具体。
+///
+/// 认得出的那几类（`free tier` / `quota` / `arrearage` / 余额不足）是真连踩到的：
+/// 百炼在额度用尽时用 close 帧回一条超长的说明（见 `MODEL-TABLE.md` §1.3），
+/// 不接住它用户只看到一个看不懂的协议错误。
+pub fn explain_close(reason: &str) -> Option<String> {
+    let lower = reason.to_ascii_lowercase();
+    let quota = [
+        "free tier",
+        "quota",
+        "arrearage",
+        "余额不足",
+        "insufficient balance",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+    if quota {
+        return Some(format!(
+            "该模型的额度已用完，请到服务商控制台检查额度或关闭『仅使用免费额度』。服务端原话：{reason}"
+        ));
+    }
+    if is_fatal_error(None, reason) {
+        return Some(format!("翻译服务拒绝了这次连接：{reason}"));
+    }
+    None
+}
+
 /// 服务端错误 → 外壳能往上抛的失败。非错误事件返回 `None`。
 pub fn error_to_port_error(event: &ServerEvent) -> Option<PortError> {
     match event {
@@ -464,6 +502,7 @@ mod tests {
                 clone_frequency: None,
                 source_language: None,
             },
+            AliyunEndpoint::default(),
         )
     }
 
@@ -478,6 +517,7 @@ mod tests {
                 clone_frequency: None,
                 source_language: None,
             },
+            AliyunEndpoint::default(),
         )
     }
 
@@ -859,5 +899,34 @@ mod tests {
             t.recv(250).unwrap(),
             Some(Incoming::Closed("对端关了".into()))
         );
+    }
+
+    /// 百炼额度用尽时 close 帧里的原话（2026-10-09 真连抓到，182 字节）。
+    const QUOTA_CLOSE: &str = "The free tier of the model has been exhausted. If you wish to \
+        continue access the model on a paid basis, please disable the \"use free tier only\" \
+        mode in the management console.";
+
+    /// 额度类 close 要说清楚"去哪儿改"，并附上服务端原话——只把协议错误
+    /// 转述给用户等于没修。
+    #[test]
+    fn an_exhausted_quota_close_is_explained_with_its_own_words() {
+        let explained = explain_close(QUOTA_CLOSE).expect("额度用尽要给友好提示");
+        assert!(explained.contains("额度"), "{explained}");
+        assert!(explained.contains("控制台"), "{explained}");
+        assert!(explained.contains("仅使用免费额度"), "{explained}");
+        assert!(
+            explained.contains(QUOTA_CLOSE),
+            "服务端原话要原样附上：{explained}"
+        );
+    }
+
+    /// 普通断开（没有额度/密钥字样）不该被判成致命错误——那是重连的信号。
+    #[test]
+    fn ordinary_closes_are_left_to_the_reconnect_logic() {
+        assert!(explain_close("服务端关闭连接（1000）：再见").is_none());
+        assert!(explain_close("连接意外断开（读循环已退出）").is_none());
+        assert!(explain_close("connection reset by peer").is_none());
+        // 密钥类仍然要拦：重连一万次也是这个结果。
+        assert!(explain_close("Invalid API-key provided.").is_some());
     }
 }

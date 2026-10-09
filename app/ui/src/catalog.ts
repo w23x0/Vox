@@ -65,10 +65,21 @@ export interface ProviderCatalog {
   capabilities: ProviderCapabilities;
 }
 
+/** `catalog/*.json` 的 `models[]` 里的一条（表里只放官方接口给不了的东西）。 */
+export interface CatalogModelRaw {
+  id: string;
+  dialect: string;
+  recommended: boolean;
+  label: CatalogLabel;
+}
+
 /** 目录 JSON 的顶层形状。只声明前端要读的字段，协议常量等 extra 字段宽松忽略。 */
 interface ProviderRaw {
   provider: { id: string; label: CatalogLabel; console_url: string };
-  model: { id: string; label: CatalogLabel };
+  /** 多模型维护表；`recommended: true` 的那一条是"当前推荐模型"。 */
+  models?: CatalogModelRaw[];
+  /** 方言表（协议形状 + 匹配前缀）。前端这轮只用它的存在与否，不读内容。 */
+  dialects?: Record<string, unknown>;
   api: { api_key_placeholder?: string };
   capabilities: ProviderCapabilities;
   languages?: { code: string; label: CatalogLabel; audio_output?: boolean }[];
@@ -78,6 +89,12 @@ interface ProviderRaw {
   legacy_removed_voice_ids?: string[];
 }
 
+/** 这家的推荐模型。目录必须给出恰好一条 `recommended`，否则这一层退回首条。 */
+function recommended_model(raw: ProviderRaw): CatalogModelRaw {
+  const models = raw.models ?? [];
+  return models.find((model) => model.recommended) ?? models[0] ?? { id: "", dialect: "", recommended: true, label: { zh: "", en: "", ja: "" } };
+}
+
 /** 内置 JSON（编译期打进二进制）解析成 registry 结构。 */
 function parse_data(raw: ProviderRaw): RegistryEntry {
   const languages = (raw.languages ?? []).map((l) => ({
@@ -85,14 +102,15 @@ function parse_data(raw: ProviderRaw): RegistryEntry {
     label: l.label,
     audio_output: l.audio_output ?? false,
   }));
+  const recommended = recommended_model(raw);
   return {
     provider: {
       id: raw.provider.id as ModelProvider,
       label: raw.provider.label,
       console_url: raw.provider.console_url,
       api_key_placeholder: raw.api.api_key_placeholder ?? "",
-      model_name: raw.model.id,
-      model_label: raw.model.label,
+      model_name: recommended.id,
+      model_label: recommended.label,
       capabilities: {
         languages: raw.capabilities.languages,
         voice_selection: raw.capabilities.voice_selection ?? false,
@@ -101,6 +119,7 @@ function parse_data(raw: ProviderRaw): RegistryEntry {
         hot_update_language: raw.capabilities.hot_update_language ?? false,
       },
     },
+    models: raw.models ?? [],
     languages,
     voices: raw.voices ?? [],
     defaults: raw.defaults ?? {
@@ -114,6 +133,8 @@ function parse_data(raw: ProviderRaw): RegistryEntry {
 
 interface RegistryEntry {
   provider: ProviderCatalog;
+  /** 这家登记在册的模型（维护表里的，不是官方列表接口拉回来的）。 */
+  models: CatalogModelRaw[];
   languages: { code: string; label: CatalogLabel; audio_output: boolean }[];
   voices: { id: string; name: CatalogLabel; description: CatalogLabel }[];
   defaults: { target_language: string; listen_target_language: string; voice: string };
@@ -324,12 +345,17 @@ export function defaultVoiceForProvider(_provider: ModelProvider = "aliyun"): st
 
 export function findModel(name: string): ModelInfo | undefined {
   for (const id of PROVIDER_IDS) {
-    const row = get(id);
-    if (row?.provider.model_name === name) {
-      return { name, label: row.provider.model_label };
+    const model = get(id)?.models.find((candidate) => candidate.id === name);
+    if (model) {
+      return { name, label: model.label };
     }
   }
   return undefined;
+}
+
+/** 这家登记在册的模型（内置维护表，不是官方列表）。 */
+export function catalogModels(provider: ModelProvider): CatalogModelRaw[] {
+  return get(provider)?.models ?? [];
 }
 
 export function modelLabel(name: string, uiLang: UiLang): string {
@@ -376,7 +402,7 @@ export function providerLanguageSummary(provider: ModelProvider): string | null 
 
 /** 阿里云默认目标语言。界面上听的固定翻成中文。 */
 export const DEFAULT_TARGET_LANGUAGE = aliyun.defaults.target_language;
-/** 首次兜底的模型名。 */
-export const DEFAULT_MODEL_NAME = aliyun.model.id;
+/** 首次兜底的模型名（阿里云那张表的推荐模型）。 */
+export const DEFAULT_MODEL_NAME = recommended_model(aliyun as unknown as ProviderRaw).id;
 /** 首次兜底的音色 id。 */
 export const DEFAULT_VOICE = aliyun.defaults.voice;
