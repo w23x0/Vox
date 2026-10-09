@@ -36,7 +36,8 @@ fn render(settings: &SubtitleSettings, dpi: u32, frame: &SubtitleFrame) -> Canva
             frame,
             settings,
             client_width: WIDTH,
-            client_height: 0,
+            client_height: None,
+            now: std::time::Instant::now(),
             dpi,
         },
     );
@@ -76,8 +77,9 @@ fn check(lines: &[(Track, &str)], font_size: u32, dpi: u32) -> Vec<String> {
         }
     }
     let mut problems = Vec::new();
-    if bands.len() != lines.len() {
-        problems.push(format!("底衬数 {} != 行数 {}", bands.len(), lines.len()));
+    // 一段字可能折成好几个视觉行（大字号 / 高 DPI 时），所以底衬数只会 >= 段数。
+    if bands.len() < lines.len() {
+        problems.push(format!("底衬数 {} < 段数 {}", bands.len(), lines.len()));
         return problems;
     }
     // 墨迹像素：两张画布不同。归入垂直中心最近的底衬带。

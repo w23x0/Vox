@@ -8,3 +8,4 @@ license.workspace = true
 [dependencies]
 vox-core.workspace = true
 tracing.workspace = true
+unicode-linebreak.workspace = true

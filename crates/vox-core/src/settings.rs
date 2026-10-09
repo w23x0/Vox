@@ -289,10 +289,14 @@ pub struct SubtitleSettings {
     pub listen_color: String,
     /// 底衬透明度 0..255。
     pub background_alpha: u8,
-    /// 一句字幕在最近一次更新后保持可读的时长。
+    /// 一条轨的区域在最后一次更新后保持可读的时长（静默多久之后开始淡出）。
     pub char_ttl_ms: u32,
-    /// 整句字幕的淡出时长。
+    /// 整块字幕的淡出时长。
     pub char_fade_ms: u32,
+    /// 每条轨的区域放几行（1–4）。窗口高度 = 区域数 × 行数 × 行距，
+    /// 不随内容变；只随在跑轨数、字号或这一个设置变。
+    #[serde(default = "default_lines_per_track")]
+    pub lines_per_track: u32,
     /// 0 类字（纯噪声/填充词/无意义发音）Lifetime 结束后永久淡到浅灰而非消失：
     /// Lifetime 到了之后用一段比 `char_fade_ms` 更短的淡出压到 `dim_alpha`，位置保留。
     #[serde(default)]
@@ -316,6 +320,7 @@ impl Default for SubtitleSettings {
             background_alpha: 165,
             char_ttl_ms: 2600,
             char_fade_ms: 900,
+            lines_per_track: 2,
             dim_zeros: false,
             dim_alpha: default_dim_alpha(),
             geometry: None,
@@ -349,6 +354,10 @@ fn default_dim_alpha() -> f32 {
     0.3
 }
 
+fn default_lines_per_track() -> u32 {
+    2
+}
+
 // --- 校验与迁移 ------------------------------------------------------------
 
 /// 阈值允许的范围。上限留 0.2，再高就等于永远闭闸了。
@@ -357,6 +366,8 @@ pub const FONT_SIZE_RANGE: (u32, u32) = (12, 96);
 pub const CHAR_TTL_RANGE: (u32, u32) = (500, 20_000);
 pub const CHAR_FADE_RANGE: (u32, u32) = (0, 5_000);
 pub const DIM_ALPHA_RANGE: (f32, f32) = (0.05, 1.0);
+/// 每条轨放几行。1 行 = 只留最新的一句；4 行 = 长引文也读得完。
+pub const LINES_PER_TRACK_RANGE: (u32, u32) = (1, 4);
 
 /// 控制面端口的合法下界：`0`（每次启动随机）或 ≥ 它（非特权端口）。特权端口（< 1024）
 /// 绑不上，也不该由配置文件随手指定；上界就是 `u16` 的 65535。
@@ -472,6 +483,10 @@ impl Settings {
             .char_fade_ms
             .clamp(CHAR_FADE_RANGE.0, CHAR_FADE_RANGE.1)
             .min(sub.char_ttl_ms);
+        // 0 是老配置里没有这一项时 serde 兜出来的值，夹回合法区间。
+        sub.lines_per_track = sub
+            .lines_per_track
+            .clamp(LINES_PER_TRACK_RANGE.0, LINES_PER_TRACK_RANGE.1);
         if !sub.dim_alpha.is_finite() {
             sub.dim_alpha = SubtitleSettings::default().dim_alpha;
         }

@@ -30,7 +30,7 @@ use crate::ports::{
     AudioApp, Clock, DeviceInfo, HotkeyBindings, HotkeyEvent, HotkeyHost, PortResult, SecretStore,
 };
 use crate::settings::{ModelProvider, Settings};
-use crate::subtitle::{Subtitles, Track};
+use crate::subtitle::{confirmed_char_count, Subtitles, Track};
 use crate::usage::{TurnUsage, UsageLedger};
 
 /// 一条流水线启动时下发的完整配置。
@@ -223,6 +223,43 @@ impl State {
             .get_mut(&p)
             .expect("两条流水线都在初始化时建好")
     }
+
+    /// 一条轨保留多少个**已定稿句的字**才允许丢掉更早的定稿句。
+    ///
+    /// 区域只有 `lines_per_track` 行，放得下几个字取决于窗口宽度和字宽——芯里量不到。
+    /// 这里取一个**偏大**的估计：拿窗口宽度除以"最小可能的字宽"（字号的 1/4 em，
+    /// 比任何真实字形都窄），算出最坏情况下区域放得下的字数，再乘 4 倍余量。
+    /// 宁可多留（多留只是慢一点），也不能删掉还看得见的字——那会破坏"已封口的行不变"。
+    ///
+    /// 没有几何信息（还没落过窗口位置）就返回 0 = 不丢。
+    fn sealed_trim_budget(&self) -> usize {
+        let sub = &self.settings.subtitle;
+        let Some(geo) = sub.geometry else {
+            return 0;
+        };
+        if geo.width == 0 || sub.font_size == 0 {
+            return 0;
+        }
+        let min_advance = (sub.font_size / 4).max(1);
+        let per_line = (geo.width / min_advance) as usize;
+        sub.lines_per_track as usize * per_line * 4
+    }
+}
+
+/// 一次字幕更新里**不是整句**的那几样：确认前缀、是否定稿，以及原样发给外层的
+/// 事件字段（`delta` / `replace`，语义同 `Event::SubtitleDelta`）。
+#[derive(Debug, Clone, Copy)]
+pub struct SubtitleUpdate<'a> {
+    pub confirmed: Option<&'a str>,
+    pub done: bool,
+    pub delta: &'a str,
+    pub replace: bool,
+}
+
+/// 字幕喂入的两种形态：整句，或只带新字的增量。
+enum SubtitleFeed<'a> {
+    Full(&'a str),
+    Delta(&'a str),
 }
 
 /// 用 `Arc` 而不是 `Box`：发事件前先把监听器列表快照出来，这样监听器回调里再注册
@@ -1098,9 +1135,27 @@ impl Runtime {
             .clone()
     }
 
-    /// 模型吐字幕。`done` = 这一段说完了；`replace` = 服务端整句重写，字幕要整行替换。
-    /// `confirmed` = 不再会变的那段完整句（已确认前缀/done 终稿），给外层（如 VRChat
-    /// ChatBox）做整行替换推进用；`None` = 没有可用确认前缀。
+    /// 模型吐字幕（整句入口）。`full` 是**到目前为止的整句**（服务端 delta 的原样，不是
+    /// 增量）；`confirmed` 是不再会变的那段完整句（已确认前缀/done 终稿），给外层（如
+    /// VRChat ChatBox）做整行替换推进用，也是字幕轨判断"哪些字不会再变"的依据；
+    /// `None` = 没有可用确认前缀（整句按已确认处理）。
+    ///
+    /// `delta` / `replace` 只用来**发事件**：`Event::SubtitleDelta` 的字段语义跟从前
+    /// 逐字一致（VRChat ChatBox、MCP 资源都在按它推进），字幕轨自己不吃这两个字段——
+    /// 它按整句做公共前缀 diff，改译只影响分歧点之后的部分。
+    pub fn on_subtitle_sentence(
+        &self,
+        pipeline: Pipeline,
+        session_id: u64,
+        full: &str,
+        update: SubtitleUpdate<'_>,
+    ) {
+        self.feed_subtitle(pipeline, session_id, SubtitleFeed::Full(full), update);
+    }
+
+    /// 模型吐字幕（增量入口）：`text` 是这一条事件带的新字，`replace` = 整句重写。
+    /// 宿主与 MCP 测试走这条；整句由字幕轨记着的进行中句原文拼出来，之后与整句入口
+    /// 完全同一条路。
     pub fn on_subtitle_delta(
         &self,
         pipeline: Pipeline,
@@ -1110,6 +1165,28 @@ impl Runtime {
         replace: bool,
         confirmed: Option<&str>,
     ) {
+        let update = SubtitleUpdate {
+            confirmed,
+            done,
+            delta: text,
+            replace,
+        };
+        self.feed_subtitle(pipeline, session_id, SubtitleFeed::Delta(text), update);
+    }
+
+    fn feed_subtitle(
+        &self,
+        pipeline: Pipeline,
+        session_id: u64,
+        feed: SubtitleFeed<'_>,
+        update: SubtitleUpdate<'_>,
+    ) {
+        let SubtitleUpdate {
+            confirmed,
+            done,
+            delta,
+            replace,
+        } = update;
         let track = pipeline.track();
         {
             let mut s = self.inner.state.write();
@@ -1125,17 +1202,24 @@ impl Runtime {
             }
             let now = self.inner.clock.now_ms();
             let slot = s.subtitles.track_mut(track);
-            if !text.is_empty() {
-                if replace {
-                    slot.replace_text(text, now);
-                } else {
-                    slot.push_text(text, now);
+            let joined;
+            let full = match feed {
+                SubtitleFeed::Full(full) => full,
+                SubtitleFeed::Delta(text) if replace => text,
+                SubtitleFeed::Delta(text) => {
+                    joined = format!("{}{}", slot.open_source(), text);
+                    joined.as_str()
                 }
+            };
+            if done {
+                slot.finish_sentence(full, now);
+            } else if !full.is_empty() {
+                slot.update_sentence(full, confirmed_char_count(full, confirmed), now);
             }
         }
         self.emit(vec![Event::SubtitleDelta {
             track,
-            text: text.to_string(),
+            text: delta.to_string(),
             done,
             replace,
             confirmed: confirmed.map(str::to_string),
@@ -1154,10 +1238,16 @@ impl Runtime {
         self.emit(vec![Event::SourceDetected { track, language }]);
     }
 
-    /// 掐掉过期的字幕字。悬浮窗每帧调一次。
+    /// 推进字幕：静默够久的整块清空，并把早该移出区域的定稿句丢掉。悬浮窗每帧调一次。
     pub fn prune_subtitles(&self) {
         let now = self.inner.clock.now_ms();
-        self.inner.state.write().subtitles.prune(now);
+        let mut s = self.inner.state.write();
+        s.subtitles.prune(now);
+        let keep = s.sealed_trim_budget();
+        if keep > 0 {
+            s.subtitles.speak.trim_sealed(keep);
+            s.subtitles.listen.trim_sealed(keep);
+        }
     }
 
     // -- 用量 ---------------------------------------------------------------

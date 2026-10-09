@@ -7,6 +7,7 @@ import {
   BACKGROUND_ALPHA_RANGE,
   CHAR_FADE_RANGE,
   CHAR_TTL_RANGE,
+  LINES_PER_TRACK_RANGE,
   clamp,
   CONTROL_PORT_MIN,
   DIM_ALPHA_RANGE,
@@ -110,6 +111,9 @@ export function normalizeSettings(settings: Settings): Settings {
   );
   s.subtitle.char_fade_ms = Math.round(
     clamp(s.subtitle.char_fade_ms, CHAR_FADE_RANGE.min, CHAR_FADE_RANGE.max),
+  );
+  s.subtitle.lines_per_track = Math.round(
+    clamp(s.subtitle.lines_per_track, LINES_PER_TRACK_RANGE.min, LINES_PER_TRACK_RANGE.max),
   );
   if (s.subtitle.char_fade_ms > s.subtitle.char_ttl_ms) {
     s.subtitle.char_fade_ms = s.subtitle.char_ttl_ms;

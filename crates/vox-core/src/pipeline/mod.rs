@@ -47,7 +47,7 @@ use crate::ports::{
     AudioChunk, CaptureSource, CaptureTarget, Denoise, PlaybackSink, PortError, PortResult,
     Resample,
 };
-use crate::runtime::{PipelineCommand, PipelineControl, Runtime, SessionConfig};
+use crate::runtime::{PipelineCommand, PipelineControl, Runtime, SessionConfig, SubtitleUpdate};
 
 use chain::{Chain, ChainScratch, DenoiseSkip};
 
@@ -1399,18 +1399,19 @@ impl Worker {
 
     /// 把文字推给字幕轨。
     ///
-    /// 服务端的 delta 带的是**到目前为止的整句**，而 `SubtitleTrack::push_text`
-    /// 是往后追加的，所以这里得自己算增量，不然屏幕上会一句话叠一句话。
+    /// 服务端的 delta 带的是**到目前为止的整句**。字幕轨现在也吃整句：它按**字**
+    /// 求新旧整句的公共前缀，前缀里的字保留身份，改译只影响分歧点之后的部分
+    /// （`SubtitleTrack::update_sentence`）。所以这里不需要把整句拆成增量。
     ///
-    /// `confirmed` 是不再会变的那段（已确认前缀；delta 类型累积的整句就是它）。
-    /// 它单独透传出去：字幕轨只需要增量 `delta`，但外层订阅（如 VRChat ChatBox）
-    /// 要做**整行替换**推进，需要的是完整已确认句，不是增量后缀。
+    /// `delta` / `replace` 仍然要算——它们只用来**发事件**：外层订阅（如 VRChat
+    /// ChatBox）做的是"整行替换推进"，按旧语义吃这两个字段。`confirmed`（不再会变的
+    /// 那段完整句）也照旧单独透传，字幕轨拿它判断哪些字可以画成全不透明。
     fn push_text(&mut self, full: &str, done: bool, confirmed: Option<&str>) {
         let (delta, replace) = match full.strip_prefix(self.sent_text.as_str()) {
-            // 前缀延续：只发新增的后缀，字幕按它爬动。
+            // 前缀延续：只发新增的后缀，外层按增量推进。
             Some(rest) => (rest.to_string(), false),
             // 服务端把句子重写了（改译、纠错）：整句重发一遍。
-            // `replace=true` 让字幕层**整行替换**，前面的让它自己淡出——
+            // `replace=true` 让外层**整行替换**，前面的让它自己淡出——
             // 不替换的话前端 append 会把新句叠在旧句上，屏幕上叠出一坨字。
             None => (full.to_string(), true),
         };
@@ -1420,13 +1421,16 @@ impl Worker {
         }
         // 给外部逐字推进的完整句：确认前缀优先；done 时回落到整句终稿。
         let for_external = confirmed.or_else(|| done.then_some(full));
-        self.runtime.on_subtitle_delta(
+        self.runtime.on_subtitle_sentence(
             self.pipeline(),
             self.session_id(),
-            &delta,
-            done,
-            replace,
-            for_external,
+            full,
+            SubtitleUpdate {
+                confirmed: for_external,
+                done,
+                delta: &delta,
+                replace,
+            },
         );
     }
 

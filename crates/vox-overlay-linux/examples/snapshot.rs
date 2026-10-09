@@ -1,22 +1,22 @@
 //! 离屏自检：不开窗口，用跟真窗口**完全相同**的 `Renderer` + `Canvas` 画出像素，
-//! 合成到刻意刁难的背景上落盘，然后人眼过一遍。
+//! 合成到刻意刁难的背景上落成 PNG，然后人眼过一遍。
 //!
-//! 跟 Windows 侧的 `snapshot` 例子同源，两点不同：
-//! - 字形来自 `swash`（Linux 侧光栅器），不是 GDI —— 这一步就是在验它；
-//! - 落盘写 **BMP**（30 行、零依赖、任何看图软件都认）。Windows 那边写 PNG 是因为
-//!   它已经有那个 helper；为了看一眼图给 crate 拉个 `png` 依赖不值当。
+//! 这一版驱动的是**真的字幕模型**（`Subtitles::update_sentence` / `finish_sentence`）加
+//! **真的渲染器**，按时间轴一帧一帧推进，在指定时刻截图：改译、上浮动画的中间帧、
+//! 两条轨同时在跑，都是时间轴上的几个截图点，不是手写一串 alpha。
 //!
-//! 跑法：`cargo run -p vox-overlay-linux --example snapshot`
-//! 产物：`target/overlay-snapshots-linux/*.bmp`
+//! 跑法：`cargo run -p vox-overlay-linux --example snapshot [输出目录]`
+//! 缺省输出目录：`/tmp/claude-1000/overlay-captions/`
 //!
 //! 为什么要合成到背景上：分层窗的像素是预乘 BGRA，单看 RGB 通道偏黑，跟屏幕上
 //! 的样子不是一回事。只有按 `dst = src + dst * (1 - a)` 混一遍，看到的才是真效果。
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use vox_core::ports::{SubtitleFrame, SubtitleLine};
 use vox_core::settings::SubtitleSettings;
-use vox_core::subtitle::{RenderedChar, Track};
+use vox_core::subtitle::{confirmed_char_count, SubtitleTiming, Subtitles, Track};
 use vox_overlay_core::canvas::Canvas;
 use vox_overlay_core::render::{FrameInput, Renderer};
 use vox_overlay_linux::font_factory;
@@ -24,72 +24,114 @@ use vox_overlay_linux::font_factory;
 const WIDTH: i32 = 880;
 const DPI: u32 = 96;
 const CHECKER: i32 = 12;
+/// 时间轴步长（约 60 fps）。
+const TICK_MS: u64 = 16;
+
+/// 时间轴上的一个事件。
+enum Event {
+    /// 服务端推来"到目前为止的整句"，`confirmed` 是其中已确认的前缀。
+    Update(Track, &'static str, &'static str),
+    /// 这一句说完了，定稿。
+    Finish(Track, &'static str),
+}
 
 struct Scene {
     name: &'static str,
     what: &'static str,
-    frame: SubtitleFrame,
+    events: Vec<(u64, Event)>,
+    /// 截图时刻（毫秒）。
+    shot_at: u64,
 }
 
 fn main() {
-    let dir = out_dir();
+    let dir = std::env::args()
+        .nth(1)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp/claude-1000/overlay-captions"));
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("建输出目录 {} 失败: {e}", dir.display());
         std::process::exit(1);
     }
 
-    let settings = SubtitleSettings::default();
-    let mut renderer = match Renderer::new(&settings, DPI, font_factory()) {
-        Ok(renderer) => renderer,
-        Err(e) => {
-            eprintln!("建字体失败: {}", e.message);
-            std::process::exit(1);
-        }
-    };
-    let mut canvas = Canvas::new(WIDTH, 1);
     let mut problems: Vec<String> = Vec::new();
-
     println!("输出目录: {}", dir.display());
     for scene in scenes() {
-        let input = FrameInput {
-            frame: &scene.frame,
-            settings: &settings,
-            client_width: WIDTH,
-            client_height: 0,
-            dpi: DPI,
+        let settings = SubtitleSettings::default();
+        let mut renderer = match Renderer::new(&settings, DPI, font_factory()) {
+            Ok(renderer) => renderer,
+            Err(e) => {
+                eprintln!("建字体失败: {}", e.message);
+                std::process::exit(1);
+            }
         };
-        let out = renderer.draw(&mut canvas, &input);
-        if out.client_height != canvas.height() {
-            problems.push(format!("{}: 输出高度和画布高度不一致", scene.name));
+        let mut canvas = Canvas::new(WIDTH, 1);
+        let timing = SubtitleTiming {
+            char_ttl_ms: 60_000,
+            char_fade_ms: 900,
+            dim_zeros: false,
+            dim_alpha: 0.3,
+        };
+        let mut subs = Subtitles::new(timing);
+        let epoch = Instant::now();
+        let mut next = 0usize;
+        let mut now = 0u64;
+        loop {
+            while let Some((at, event)) = scene.events.get(next) {
+                if *at > now {
+                    break;
+                }
+                match event {
+                    Event::Update(track, full, confirmed) => {
+                        let n = confirmed_char_count(full, Some(confirmed));
+                        subs.track_mut(*track).update_sentence(full, n, now);
+                    }
+                    Event::Finish(track, text) => subs.track_mut(*track).finish_sentence(text, now),
+                }
+                next += 1;
+            }
+            let frame = frame_at(&subs, now);
+            let input = FrameInput {
+                frame: &frame,
+                settings: &settings,
+                client_width: WIDTH,
+                client_height: None,
+                dpi: DPI,
+                now: epoch + Duration::from_millis(now),
+            };
+            // 每个节拍都画：上浮动画靠一帧一帧推进，跳着画就没有中间帧了。
+            renderer.draw(&mut canvas, &input);
+            if now >= scene.shot_at {
+                break;
+            }
+            now += TICK_MS;
         }
+
         if let Some(pixel) = canvas.find_invalid_pixel() {
             problems.push(format!("{}: 画布里有非法像素 {pixel:?}", scene.name));
         }
-        if scene.frame.lines.iter().any(|line| !line.chars.is_empty()) {
-            let ink = canvas.bytes().iter().filter(|&&b| b != 0).count();
-            if ink == 0 {
-                problems.push(format!("{}: 一帧有字的画面却是全透明", scene.name));
-            }
+        let ink = canvas.bytes().iter().filter(|&&b| b != 0).count();
+        if ink == 0 {
+            problems.push(format!("{}: 一帧有字的画面却是全透明", scene.name));
         }
-
         let backdrop = backdrop(canvas.width(), canvas.height());
         let composed = composite(&canvas, &backdrop);
-        let path = dir.join(format!("{}.bmp", scene.name));
-        if let Err(e) = write_bmp(&path, canvas.width(), canvas.height(), &composed) {
-            problems.push(format!("{}: 写 BMP 失败 {e}", scene.name));
+        let path = dir.join(format!("{}.png", scene.name));
+        if let Err(e) = write_png(&path, canvas.width(), canvas.height(), &composed) {
+            problems.push(format!("{}: 写 PNG 失败 {e}", scene.name));
             continue;
         }
         println!(
-            "  {:<14} {:>4}x{:<4} 该看: {}",
+            "  {:<22} {:>4}x{:<4} 动画中: {:<5} 该看: {}",
             scene.name,
             canvas.width(),
             canvas.height(),
+            renderer.is_animating(),
             scene.what
         );
     }
 
     if problems.is_empty() {
-        println!("全部通过。用看图软件打开上面目录里的 BMP 再肉眼过一遍。");
+        println!("全部通过。用看图软件打开上面目录里的 PNG 再肉眼过一遍。");
     } else {
         for problem in &problems {
             eprintln!("问题: {problem}");
@@ -98,79 +140,103 @@ fn main() {
     }
 }
 
-fn out_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/overlay-snapshots-linux")
-}
-
-fn line(track: Track, text: &str, color: &str, alpha: f32) -> SubtitleLine {
-    SubtitleLine {
-        track,
-        chars: text.chars().map(|ch| RenderedChar { ch, alpha }).collect(),
-        color: color.into(),
+fn frame_at(subs: &Subtitles, now: u64) -> SubtitleFrame {
+    let mut lines = Vec::new();
+    for (track, color) in [(Track::Listen, "#eef6ff"), (Track::Speak, "#fff4de")] {
+        let chars: Vec<_> = subs
+            .track(track)
+            .render(now)
+            .into_iter()
+            .filter(|c| c.alpha > 0.0)
+            .collect();
+        if !chars.is_empty() {
+            lines.push(SubtitleLine {
+                track,
+                chars,
+                color: color.into(),
+            });
+        }
     }
+    SubtitleFrame { lines }
 }
 
-/// 造几条有代表性的字幕：双行分色、纯中文、中英混排、逐字淡出中途、全透明。
+const LONG: &str = "The quick brown fox jumps over the lazy dog, 然后它又跳过了第二只更懒的狗，\
+                    and then something unexpected happened 就在那一刻字幕必须折行而且不能乱跳。";
+
 fn scenes() -> Vec<Scene> {
+    use Event::{Finish, Update};
+    use Track::{Listen, Speak};
     vec![
         Scene {
-            name: "two-rows",
-            what: "听人（冷白）在上、对外（暖白）在下，行间距均匀",
-            frame: SubtitleFrame {
-                lines: vec![
-                    line(Track::Listen, "こんにちは、はじめまして。", "#eef6ff", 1.0),
-                    line(Track::Speak, "你好，很高兴认识你。", "#fff4de", 1.0),
-                ],
-            },
+            name: "1-mixed",
+            what: "中英混排：英文按词换行不拦腰截断；末尾未确认的字更暗；字都在底衬里",
+            events: vec![(0, Update(Listen, LONG, "The quick brown fox jumps over the lazy dog, 然后它又"))],
+            shot_at: 600,
         },
         Scene {
-            name: "cjk-only",
-            what: "汉字笔画多，边缘不该有黑边或彩边",
-            frame: SubtitleFrame {
-                lines: vec![line(
-                    Track::Listen,
-                    "字幕是给眼睛看的，不是给机器看的。",
-                    "#eef6ff",
-                    1.0,
-                )],
-            },
+            name: "2a-before-rewrite",
+            what: "第一句已定稿，第二句正在说",
+            events: vec![
+                (0, Finish(Listen, "第一句话已经说完了。")),
+                (100, Update(Listen, "今天天气不错，我们出去散步吧", "今天天气不")),
+            ],
+            shot_at: 600,
         },
         Scene {
-            name: "mixed",
-            what: "中英数字混排，标点与半角字符的宽度是否协调",
-            frame: SubtitleFrame {
-                lines: vec![line(
-                    Track::Speak,
-                    "Vox 0.1.4 · 实时语音翻译 (Tauri + Rust)",
-                    "#fff4de",
-                    1.0,
-                )],
-            },
+            name: "2b-after-rewrite",
+            what: "改译中段：「今天天气」没动，第一句没动，只有分歧点之后换了",
+            events: vec![
+                (0, Finish(Listen, "第一句话已经说完了。")),
+                (100, Update(Listen, "今天天气不错，我们出去散步吧", "今天天气不")),
+                (300, Update(Listen, "今天天气很好，我们一起去公园玩吧", "今天天气很")),
+            ],
+            shot_at: 900,
         },
         Scene {
-            name: "fading",
-            what: "逐字淡出中途：靠后的字更淡，且没有硬边",
-            frame: SubtitleFrame {
-                lines: vec![line(Track::Listen, "淡出中的这一行文字", "#eef6ff", 0.35)],
-            },
+            name: "3a-scroll-start",
+            what: "新的一行刚冒出来：整块即将上浮，此刻旧字还在原位",
+            events: vec![
+                (0, Update(Speak, "This is the first line of a long caption and it fills the row nicely, and", "")),
+                (400, Update(Speak, "This is the first line of a long caption and it fills the row nicely, and then the second line starts here and goes on and on until it also fills up the whole row and more", "")),
+            ],
+            shot_at: 416,
         },
         Scene {
-            name: "listen-overflow",
-            what: "超长行（听人轨）从左边滚掉最老的字，最新的字留在可见范围里",
-            frame: SubtitleFrame {
-                lines: vec![line(
-                    Track::Listen,
-                    "这一行故意写得非常长，长到超过窗口宽度，用来验证左侧会不会把最老的字滚掉，\
-                     而最新说出来的这几个字必须始终留在可见范围里。",
-                    "#eef6ff",
-                    1.0,
-                )],
-            },
+            name: "3b-scroll-mid",
+            what: "上浮动画中间帧：所有行同步平移，没有横向位移，顶行半透明",
+            events: vec![
+                (0, Update(Speak, "This is the first line of a long caption and it fills the row nicely, and", "")),
+                (400, Update(Speak, "This is the first line of a long caption and it fills the row nicely, and then the second line starts here and goes on and on until it also fills up the whole row and more", "")),
+            ],
+            shot_at: 500,
         },
         Scene {
-            name: "empty",
-            what: "空帧：整块应当全透明（只剩背景棋盘格）",
-            frame: SubtitleFrame { lines: Vec::new() },
+            name: "3c-scroll-done",
+            what: "动画结束：停稳在目标位置",
+            events: vec![
+                (0, Update(Speak, "This is the first line of a long caption and it fills the row nicely, and", "")),
+                (400, Update(Speak, "This is the first line of a long caption and it fills the row nicely, and then the second line starts here and goes on and on until it also fills up the whole row and more", "")),
+            ],
+            shot_at: 900,
+        },
+        Scene {
+            name: "4a-two-tracks",
+            what: "两条轨同时在跑：听在上、说在下，各占一个区域",
+            events: vec![
+                (0, Update(Listen, "こんにちは、今日はいい天気ですね。", "")),
+                (0, Update(Speak, "你好，很高兴认识你。", "")),
+            ],
+            shot_at: 600,
+        },
+        Scene {
+            name: "4b-two-tracks-grown",
+            what: "听那条轨长出新行并上浮时，说那条轨的位置一点没动",
+            events: vec![
+                (0, Update(Listen, "こんにちは、今日はいい天気ですね。", "")),
+                (0, Update(Speak, "你好，很高兴认识你。", "")),
+                (300, Update(Listen, LONG, "")),
+            ],
+            shot_at: 900,
         },
     ]
 }
@@ -215,40 +281,57 @@ fn composite(canvas: &Canvas, backdrop: &[u8]) -> Vec<u8> {
     out
 }
 
-/// 写一张 24 位 BMP（BGR 顺序、行按 4 字节对齐）。零依赖，任何看图软件都认。
-fn write_bmp(path: &Path, w: i32, h: i32, rgba: &[u8]) -> std::io::Result<()> {
-    let row_bytes = w * 3;
-    let padding = (4 - row_bytes % 4) % 4;
-    let image_size = (row_bytes + padding) * h;
-    let file_size = 54 + image_size;
-
-    let mut out = Vec::with_capacity(file_size as usize);
-    out.extend_from_slice(b"BM");
-    out.extend_from_slice(&(file_size as u32).to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
-    out.extend_from_slice(&54u32.to_le_bytes());
-    out.extend_from_slice(&40u32.to_le_bytes());
-    out.extend_from_slice(&w.to_le_bytes());
-    out.extend_from_slice(&h.to_le_bytes());
-    out.extend_from_slice(&1u16.to_le_bytes());
-    out.extend_from_slice(&24u16.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
-    out.extend_from_slice(&(image_size as u32).to_le_bytes());
-    out.extend_from_slice(&2835u32.to_le_bytes());
-    out.extend_from_slice(&2835u32.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
-
-    // BMP 的行是自下而上存的。
-    for y in (0..h).rev() {
+/// 写 PNG：未压缩的 deflate（stored 块）+ CRC32 + Adler32，零依赖。
+fn write_png(path: &Path, w: i32, h: i32, rgba: &[u8]) -> std::io::Result<()> {
+    let mut raw = Vec::with_capacity(((w * 3 + 1) * h) as usize);
+    for y in 0..h {
+        raw.push(0u8);
         for x in 0..w {
             let idx = ((y * w + x) * 4) as usize;
-            out.push(rgba[idx + 2]);
-            out.push(rgba[idx + 1]);
-            out.push(rgba[idx]);
+            raw.extend_from_slice(&rgba[idx..idx + 3]);
         }
-        out.extend(std::iter::repeat_n(0u8, padding as usize));
     }
+    let mut z = vec![0x78, 0x01];
+    let mut chunks = raw.chunks(65535).peekable();
+    while let Some(chunk) = chunks.next() {
+        z.push(u8::from(chunks.peek().is_none()));
+        z.extend_from_slice(&(chunk.len() as u16).to_le_bytes());
+        z.extend_from_slice(&(!(chunk.len() as u16)).to_le_bytes());
+        z.extend_from_slice(chunk);
+    }
+    let (mut a, mut b) = (1u32, 0u32);
+    for &v in &raw {
+        a = (a + v as u32) % 65521;
+        b = (b + a) % 65521;
+    }
+    z.extend_from_slice(&((b << 16) | a).to_be_bytes());
 
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&(w as u32).to_be_bytes());
+    ihdr.extend_from_slice(&(h as u32).to_be_bytes());
+    ihdr.extend_from_slice(&[8, 2, 0, 0, 0]);
+    push_chunk(&mut out, b"IHDR", &ihdr);
+    push_chunk(&mut out, b"IDAT", &z);
+    push_chunk(&mut out, b"IEND", &[]);
     std::fs::write(path, out)
+}
+
+fn push_chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    let start = out.len();
+    out.extend_from_slice(kind);
+    out.extend_from_slice(data);
+    let mut crc = 0xFFFF_FFFFu32;
+    for &byte in &out[start..] {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                0xEDB8_8320 ^ (crc >> 1)
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    out.extend_from_slice(&(!crc).to_be_bytes());
 }

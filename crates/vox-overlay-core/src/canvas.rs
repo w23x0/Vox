@@ -25,6 +25,9 @@ pub struct Canvas {
     width: i32,
     height: i32,
     pixels: Vec<u8>,
+    /// 纵向裁剪带（`[顶, 底)` 行闭区间）。每条字幕区域画自己的那一段，
+    /// 正在上浮/下落的那一行因此不会画到隔壁区域上去。
+    clip: Vec<(i32, i32)>,
 }
 
 impl Canvas {
@@ -36,7 +39,32 @@ impl Canvas {
             width,
             height,
             pixels: vec![0u8; len],
+            clip: Vec::new(),
         }
+    }
+
+    /// 把绘制限制在 `[top, bottom)` 这几行里，直到 [`Canvas::pop_clip`]。
+    ///
+    /// 与已有的裁剪带求交，所以嵌套调用只会越来越窄。
+    pub fn push_clip(&mut self, top: i32, bottom: i32) {
+        let (top, bottom) = (top.max(0), bottom.min(self.height));
+        let narrowed = match self.clip.last() {
+            Some(&(old_top, old_bottom)) => (top.max(old_top), bottom.min(old_bottom)),
+            None => (top, bottom),
+        };
+        self.clip.push(narrowed);
+    }
+
+    /// 弹出最近一层裁剪带。
+    pub fn pop_clip(&mut self) {
+        self.clip.pop();
+    }
+
+    /// 这一行现在画不画。
+    fn row_visible(&self, y: i32) -> bool {
+        self.clip
+            .last()
+            .is_none_or(|&(top, bottom)| y >= top && y < bottom)
     }
 
     pub fn width(&self) -> i32 {
@@ -52,7 +80,7 @@ impl Canvas {
         &self.pixels
     }
 
-    /// 尺寸变了就重开一块；没变只清空。窗口高度随字幕行数伸缩，这条路很常走。
+    /// 尺寸变了就重开一块；没变只清空。窗口高度随字幕区域数伸缩，这条路很常走。
     pub fn resize(&mut self, width: i32, height: i32) {
         let (width, height) = (width.max(0), height.max(0));
         if width == self.width && height == self.height {
@@ -115,6 +143,9 @@ impl Canvas {
         }
         let src = Bgra::premultiplied(color, alpha);
         for y in rect.y..rect.bottom() {
+            if !self.row_visible(y) {
+                continue;
+            }
             for x in rect.x..rect.right() {
                 self.blend_pixel(x, y, src);
             }
@@ -164,6 +195,9 @@ impl Canvas {
         let y1 = rect.bottom() + pad;
 
         for y in y0..y1 {
+            if !self.row_visible(y) {
+                continue;
+            }
             for x in x0..x1 {
                 // 取像素中心算距离，边界上就得到 0.5 的覆盖率。
                 let d = round_rect_sdf(
@@ -200,6 +234,9 @@ impl Canvas {
         }
         let (ox, oy) = origin;
         for my in 0..mask.h {
+            if !self.row_visible(oy + my) {
+                continue;
+            }
             let row = (my as usize) * (mask.w as usize);
             for mx in 0..mask.w {
                 let coverage = match mask.cov.get(row + mx as usize) {
@@ -412,5 +449,51 @@ mod tests {
         assert!(round_rect_sdf(0.0, 0.0, 10.0, 10.0, 4.0) < 0.0);
         assert!(round_rect_sdf(20.0, 0.0, 10.0, 10.0, 4.0) > 0.0);
         assert!(round_rect_sdf(10.0, 0.0, 10.0, 10.0, 4.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn clip_keeps_drawing_inside_the_band_only() {
+        let mut c = Canvas::new(8, 8);
+        c.push_clip(2, 5);
+        c.fill_rect(RectI::new(0, 0, 8, 8), Rgb::WHITE, 255);
+        c.pop_clip();
+        assert_eq!(c.pixel(0, 1).a, 0, "带子上方不画");
+        assert_eq!(c.pixel(0, 3).a, 255, "带子里照画");
+        assert_eq!(c.pixel(0, 5).a, 0, "带子下方不画");
+    }
+
+    #[test]
+    fn nested_clips_intersect() {
+        let mut c = Canvas::new(4, 10);
+        c.push_clip(0, 10);
+        c.push_clip(3, 6);
+        c.fill_rect(RectI::new(0, 0, 4, 10), Rgb::WHITE, 255);
+        c.pop_clip();
+        c.pop_clip();
+        assert_eq!(c.pixel(0, 2).a, 0);
+        assert_eq!(c.pixel(0, 4).a, 255);
+        assert_eq!(c.pixel(0, 7).a, 0);
+    }
+
+    #[test]
+    fn clip_also_covers_masks_and_rounded_plates() {
+        let mut c = Canvas::new(4, 8);
+        c.push_clip(4, 8);
+        c.fill_round_rect(RectI::new(0, 0, 4, 8), 2.0, Rgb::WHITE, 255);
+        c.blend_mask(
+            (0, 0),
+            Mask {
+                w: 4,
+                h: 8,
+                cov: &[255; 32],
+            },
+            Rgb::WHITE,
+            255,
+        );
+        c.pop_clip();
+        for y in 0..4 {
+            assert_eq!(c.pixel(1, y).a, 0, "第 {y} 行在带子外，底衬和字都不该出现");
+        }
+        assert_eq!(c.pixel(1, 6).a, 255);
     }
 }

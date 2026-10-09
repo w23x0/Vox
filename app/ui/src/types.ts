@@ -110,9 +110,11 @@ export interface SubtitleSettings {
   background_alpha: number;
   char_ttl_ms: number;
   char_fade_ms: number;
-  /** 0 类字（纯噪声/填充词/无意义发音）Lifetime 结束后永久淡到浅灰而非消失。 */
+  /** 每条轨的区域放几行（1–4）。 */
+  lines_per_track: number;
+  /** 0 类字（纯噪声/填充词/无意义发音）始终以 `dim_alpha` 淡显，随整块一起淡出清空。 */
   dim_zeros: boolean;
-  /** 0 类字永久淡化的目标 alpha（0..1），越小越淡。 */
+  /** 0 类字的显示 alpha（0..1），越小越淡。 */
   dim_alpha: number;
   geometry: Geometry | null;
 }

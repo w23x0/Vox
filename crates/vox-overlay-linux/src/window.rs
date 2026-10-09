@@ -236,19 +236,27 @@ impl Inner {
             return;
         };
 
-        // 视口就是**窗口当前尺寸**：窗口高度由用户设置（`subtitle.geometry`）决定，
-        // 不跟着内容变——这条跟 Windows 侧一致（那边也只有用户拖动才会改 `rect.h`）。
-        // 内容超长时由画布裁剪/左侧滚动处理，见 `vox-overlay-core::layout`。
+        // 内容贴窗口底边画。窗口高度由用户设置（`subtitle.geometry`）起步，不够高
+        // （区域数 × 行数 × 行距）时下面会往上长；见 `vox-overlay-core::layout`。
         let width = self.area.allocated_width().max(1);
         let height = self.area.allocated_height().max(1);
         let input = FrameInput {
             frame: &frame,
             settings: &settings,
             client_width: width,
-            client_height: height,
+            client_height: Some(height),
+            now: std::time::Instant::now(),
             dpi: self.dpi,
         };
-        self.renderer.draw(&mut self.canvas, &input);
+        let out = self.renderer.draw(&mut self.canvas, &input);
+        // 窗口矮于内容需要的高度（区域数 × 行数 × 行距）就往上长高，底边不动：
+        // 否则最上面一块区域会被裁掉。只长不缩——多出来的是透明且鼠标穿透的。
+        if out.client_height > height {
+            let (x, y) = self.window.position();
+            self.area.set_size_request(width, out.client_height);
+            self.window.move_(x, y - (out.client_height - height));
+            self.area.queue_draw();
+        }
 
         // 像素直接借给 cairo：`create_for_data_unsafe` 不接管所有权，
         // 而 surface 在函数结束前就 drop，`self.pixels` 活得比它久——安全。

@@ -13,6 +13,7 @@ export const GATE_THRESHOLD_RANGE = { min: 0, max: 0.2 } as const;
 export const FONT_SIZE_RANGE = { min: 12, max: 96 } as const;
 export const CHAR_TTL_RANGE = { min: 500, max: 20000 } as const;
 export const CHAR_FADE_RANGE = { min: 0, max: 5000 } as const;
+export const LINES_PER_TRACK_RANGE = { min: 1, max: 4 } as const;
 export const BACKGROUND_ALPHA_RANGE = { min: 0, max: 255 } as const;
 export const DIM_ALPHA_RANGE = { min: 0.05, max: 1 } as const;
 /** Rust: `CONTROL_PORT_MIN`——小于它的端口一律归 0（内核保留段，`Settings::normalize`）。 */
@@ -64,6 +65,7 @@ export const DEFAULT_SETTINGS: Settings = {
     background_alpha: 165,
     char_ttl_ms: 2600,
     char_fade_ms: 900,
+    lines_per_track: 2,
     dim_zeros: false,
     dim_alpha: 0.3,
     geometry: null,

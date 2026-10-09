@@ -74,7 +74,9 @@ pub fn main() {
             if in_round < at {
                 break;
             }
-            subs.track_mut(track).push_text(text, now);
+            let slot = subs.track_mut(track);
+            let full = format!("{}{}", slot.open_source(), text);
+            slot.update_sentence(&full, full.chars().count(), now);
             fed += 1;
         }
 

@@ -415,16 +415,25 @@ impl WindowState {
         }
     }
 
-    /// 画一帧并上屏。窗口尺寸是用户控制的固定视口，内容只在视口内换行和滚动。
+    /// 画一帧并上屏。内容贴窗口底边画；窗口不够高时先往上长高再画。
     fn redraw(&mut self) {
         let input = FrameInput {
             frame: &self.frame,
             settings: &self.settings,
             client_width: self.rect.w.max(1),
-            client_height: self.rect.h.max(1),
+            client_height: Some(self.rect.h.max(1)),
+            now: std::time::Instant::now(),
             dpi: self.dpi,
         };
-        self.renderer.draw(&mut self.canvas, &input);
+        let out = self.renderer.draw(&mut self.canvas, &input);
+        // 窗口矮于内容需要的高度（区域数 × 行数 × 行距）就往上长高，底边不动：
+        // 否则最上面一块区域会被裁掉。只长不缩——多出来的是透明的，不挡人。
+        if out.client_height > self.rect.h {
+            self.rect.y -= out.client_height - self.rect.h;
+            self.rect.h = out.client_height;
+            self.redraw();
+            return;
+        }
         self.update_animation_timer();
 
         if let Err(e) = self

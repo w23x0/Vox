@@ -277,7 +277,8 @@ mod gdi_render_tests {
                 frame: &frame,
                 settings: &settings,
                 client_width: 880,
-                client_height: 170,
+                client_height: None,
+                now: std::time::Instant::now(),
                 dpi: 96,
             },
         );
@@ -311,7 +312,8 @@ mod gdi_render_tests {
                 frame: &frame,
                 settings: &settings,
                 client_width: 880,
-                client_height: 170,
+                client_height: None,
+                now: std::time::Instant::now(),
                 dpi: 96,
             },
         );

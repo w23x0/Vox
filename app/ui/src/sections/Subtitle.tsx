@@ -6,6 +6,7 @@ import {
   BACKGROUND_ALPHA_RANGE,
   CHAR_FADE_RANGE,
   CHAR_TTL_RANGE,
+  LINES_PER_TRACK_RANGE,
   DIM_ALPHA_RANGE,
   FONT_SIZE_RANGE,
   clamp,
@@ -225,6 +226,23 @@ export function SubtitlePage() {
                   : t("subtitle.secSuffix", { v: (v / 1000).toFixed(1) })
               }
               onChange={(char_fade_ms) => patch({ subtitle: { char_fade_ms } })}
+            />
+          }
+        />
+        <SettingsItem
+          wide
+          title={t("subtitle.linesPerTrack")}
+          desc={t("subtitle.linesPerTrackDesc")}
+          control={
+            <Slider
+              value={sub.lines_per_track}
+              min={LINES_PER_TRACK_RANGE.min}
+              max={LINES_PER_TRACK_RANGE.max}
+              step={1}
+              disabled={loading}
+              label={t("subtitle.linesPerTrack")}
+              format={(v) => t("subtitle.linesSuffix", { v })}
+              onChange={(lines_per_track) => patch({ subtitle: { lines_per_track } })}
             />
           }
         />

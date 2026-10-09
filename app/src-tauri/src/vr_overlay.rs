@@ -204,7 +204,8 @@ fn run(runtime: Runtime) {
             frame: &frame,
             settings: &settings,
             client_width: WIDTH,
-            client_height: HEIGHT,
+            client_height: Some(HEIGHT),
+            now: std::time::Instant::now(),
             dpi: DPI,
         };
         renderer_ref.draw(&mut canvas, &input);

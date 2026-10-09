@@ -62,7 +62,8 @@ pub fn main() {
             frame: &scene.frame,
             settings: &settings,
             client_width: WIDTH,
-            client_height: 0,
+            client_height: None,
+            now: std::time::Instant::now(),
             dpi: DPI,
         };
         let out = renderer.draw(&mut canvas, &input);
@@ -111,18 +112,18 @@ fn scenes() -> Vec<Scene> {
     vec![
         Scene {
             name: "1-passthrough",
-            what: "两行分色（上冷白下暖白）+ 左侧逐字淡出；四角必须透，底衬能透出棋盘格",
+            what: "两行分色（上冷白下暖白）+ 右侧未确认的尾巴（0.7 倍不透明度）；四角必须透，底衬能透出棋盘格",
             frame: SubtitleFrame {
                 lines: vec![
                     line(
                         Track::Listen,
                         "#eef6ff",
-                        faded("你好，这是听人说话那一行的字幕。", 90, 2400),
+                        tail_dimmed("你好，这是听人说话那一行的字幕。", 8),
                     ),
                     line(
                         Track::Speak,
                         "#fff4de",
-                        faded("Hello VRChat, my mic is live 24/7.", 70, 2200),
+                        tail_dimmed("Hello VRChat, my mic is live 24/7.", 18),
                     ),
                 ],
             },
@@ -199,19 +200,15 @@ fn opaque(text: &str) -> Vec<RenderedChar> {
         .collect()
 }
 
-/// 逐字 alpha 走**内核真正的字幕模型**，而不是手写一串数。
-///
-/// 这样快照才能证明"字按 TTL 逐个淡出"这条链路是通的：每个字隔 `step_ms` 流入，
-/// 在 `now_ms` 这一刻拍照，越老的字越淡，老过 TTL 的直接不画。
-fn faded(text: &str, step_ms: u64, now_ms: u64) -> Vec<RenderedChar> {
+/// 走**内核真正的字幕模型**：前 `confirmed` 个字已确认（全不透明），其后是还会变的
+/// 尾巴（0.7 倍不透明度）。这样快照证明"未确认尾巴更暗"这条链路是通的。
+fn tail_dimmed(text: &str, confirmed: usize) -> Vec<RenderedChar> {
     let mut track = SubtitleTrack::new(SubtitleTiming::default());
-    for (i, ch) in text.chars().enumerate() {
-        track.push_text(ch.encode_utf8(&mut [0u8; 4]), i as u64 * step_ms);
-    }
-    track.render(now_ms)
+    track.update_sentence(text, confirmed, 0);
+    track.render(0)
 }
 
-/// 机检能机检的那一半：预乘不变式、四角透明、半透明像素存在、逐字淡出真的落到
+/// 机检能机检的那一半：预乘不变式、四角透明、半透明像素存在、未确认尾巴的暗度真的落到
 /// 了像素上。
 ///
 /// "字清不清晰、有没有豆腐块"机器判不了，那部分留给 PNG 和眼睛。
@@ -281,7 +278,7 @@ fn inspect(scene: &Scene, canvas: &Canvas) -> Vec<String> {
         .map(|(i, _)| i)
         .collect();
 
-    // 这一帧本来就有淡出的字，那左边的峰值就必须比右边低——否则说明逐字 alpha
+    // 这一帧本来就有未确认的尾巴，那右边的峰值就必须比左边低——否则说明逐字 alpha
     // 在某一层被抹平成了"整行一个透明度"。
     let fading = scene
         .frame
@@ -300,9 +297,9 @@ fn inspect(scene: &Scene, canvas: &Canvas) -> Vec<String> {
             let peak = |cols: &[usize]| cols.iter().map(|&i| col_max[i]).max().unwrap_or(0);
             let left = peak(&text_cols[..edge]);
             let right = peak(&text_cols[text_cols.len() - edge..]);
-            if left >= right {
+            if right >= left {
                 out.push(format!(
-                    "{name}: 左侧峰值 alpha {left} 不低于右侧 {right}，逐字淡出没落到像素上"
+                    "{name}: 右侧峰值 alpha {right} 不低于左侧 {left}，未确认尾巴的暗度没落到像素上"
                 ));
             }
         }

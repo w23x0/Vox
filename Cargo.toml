@@ -47,6 +47,9 @@ vox-host = { path = "crates/vox-host" }
 # 三个 Windows crate 共用同一个版本，避免同时链两份 windows。
 windows = "0.62"
 rubato = "0.16"
+# UAX #14 断行：悬浮字幕折行要按 Unicode 的行断规则走，不能逐字贪心
+# （英文单词被拦腰截断、中文行首冒出"。"）。纯 Rust 小库，无传递依赖。
+unicode-linebreak = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 # rustls 0.23 不再自动选 crypto provider，必须显式启用一个（ring / aws-lc-rs）

@@ -189,9 +189,9 @@ fn shoot(path: &str) {
 
 /// 一帧：两行（Listen / Speak），颜色取设置里的纯红 / 纯绿。
 ///
-/// 文本**短到每条轨只占一个视觉行**：视口模式的布局把整条行序列排在窗口底部，
-/// 总高超过窗口高度时最上面的行会被画布裁掉（`layout_rows_in_viewport`）——
-/// 字太长会让 Listen 那行整个跑到窗口外，截图上就只剩 Speak 一行。
+/// 文本**短到每条轨只占一个视觉行**：内容按底边对齐画进窗口画布，窗口矮于
+/// 内容需要的高度时最上面的区域会被裁掉（壳会把窗口往上长高，但这个探针的窗口
+/// 是固定的）——字太长会让 Listen 那行跑到窗口外，截图上就只剩 Speak 一行。
 fn frame(n: usize) -> SubtitleFrame {
     let line = |track: Track, text: String| SubtitleLine {
         track,

@@ -2,6 +2,12 @@
 //!
 //! 跟窗口无关——输入是内容和几何，输出是一块预乘 BGRA 的 `Canvas`，所以快照
 //! 工具可以不开窗口就复用完全相同的像素路径。
+//!
+//! 一帧分两步：[`Renderer::plan`] 算布局（含上浮动画的位置），[`Renderer::draw`]
+//! 再照着布局上色。拆开是为了让"字摆在哪"这件事能脱离像素单测——不变量测试
+//! （`tests/invariants.rs`）盯的就是 `plan` 的输出。
+
+use std::time::Instant;
 
 use vox_core::ports::{SubtitleFrame, SubtitleLine};
 use vox_core::settings::SubtitleSettings;
@@ -9,13 +15,13 @@ use vox_core::subtitle::{RenderedChar, Track};
 
 use crate::canvas::{Canvas, Mask};
 use crate::color::{alpha_to_u8, parse_hex_rgb_or, Rgb};
-use crate::layout::{layout_rows, layout_rows_in_viewport, Metrics, RowMetrics};
+use crate::layout::{fill_breaks, layout_regions, FrameLayout, Metrics, PlacedLine, TrackText};
 use crate::text::{FontFactory, GlyphSource};
 
 /// 字幕底衬的颜色（近黑）。alpha 由设置里的 `background_alpha` 给。
 const PLATE_COLOR: Rgb = Rgb::new(0, 0, 0);
-const LAYOUT_ANIMATION_MS: u64 = 220;
-const INITIAL_CHAR_ID: u64 = 1;
+/// 整块上浮动画的时长（施工稿 C6：约 200ms，ease-out）。
+const SCROLL_ANIMATION_MS: f32 = 200.0;
 
 /// 一帧需要的全部输入。
 pub struct FrameInput<'a> {
@@ -23,15 +29,20 @@ pub struct FrameInput<'a> {
     pub settings: &'a SubtitleSettings,
     /// 客户区宽度（物理像素）。
     pub client_width: i32,
-    /// 客户区高度（物理像素）。大于 0 时使用固定视口布局，0 仅供离线快照使用
-    /// “按内容高度”的兼容模式。
-    pub client_height: i32,
+    /// 窗口当前高度。内容按**底边对齐**画进这块画布（字幕贴着屏幕下沿长）；
+    /// 窗口比内容矮时顶上的区域会被裁掉，这时壳要照 [`FrameOutput::client_height`]
+    /// 把窗口长高。`None` = 画布就取内容需要的高度（快照、VR 纹理用）。
+    pub client_height: Option<i32>,
     pub dpi: u32,
+    /// 这一帧的时刻。上浮动画按它推进，测试可以喂合成时刻。
+    pub now: Instant,
 }
 
-/// 画完一帧之后窗口需要采用的高度。
+/// 画完一帧之后的回报。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FrameOutput {
+    /// 内容需要的窗口高度 = 在跑轨数 × 行数 × 行距 + 边距，**不随内容变**（C4）。
+    /// 窗口矮于它就该长高，否则最上面一块区域会被裁。
     pub client_height: i32,
 }
 
@@ -42,118 +53,107 @@ struct RowStyle {
     radius: f32,
 }
 
-#[derive(Debug, Clone, Default)]
-struct CharIdentity {
-    previous: Vec<char>,
-    ids: Vec<u64>,
+/// 一条轨的滚动状态（C6）：`pos` 以 ease-out 追 `target`。
+///
+/// 爆发输入时 `target` 会一连跳好几行，这时不追动画——先把多出来的部分瞬移掉，
+/// 只保留最后一行的动画，否则字幕会一直拖着老行不肯走。
+#[derive(Debug, Clone, Copy, Default)]
+struct TrackScroll {
+    target: f32,
+    pos: f32,
+    step: f32,
+    from: f32,
+    elapsed: f32,
+    last_ms: Option<u64>,
 }
 
-impl CharIdentity {
-    /// Match the current frame to the previous ordered character sequence. LCS keeps
-    /// identities through append and TTL prefix pruning without putting lifecycle data
-    /// into `RenderedChar` or making the subtitle frame protocol renderer-specific.
-    fn update(&mut self, chars: &[RenderedChar], next_id: &mut u64) -> Vec<u64> {
-        let current: Vec<char> = chars.iter().map(|c| c.ch).collect();
-        if current.is_empty() {
-            self.previous.clear();
-            self.ids.clear();
-            return Vec::new();
+impl TrackScroll {
+    /// 推进一帧，返回当前应该用的滚动位移（像素）。
+    fn advance(&mut self, total_lines: usize, visible: u32, step: f32, now_ms: u64) -> f32 {
+        let target = total_lines.saturating_sub(visible as usize) as f32 * step;
+        if target != self.target || step != self.step {
+            self.target = target;
+            self.from = self.pos;
+            self.elapsed = 0.0;
+            self.step = step;
         }
+        let dt = match self.last_ms {
+            Some(last) => now_ms.saturating_sub(last) as f32,
+            None => 0.0,
+        };
+        self.last_ms = Some(now_ms);
 
-        let old_len = self.previous.len();
-        let new_len = current.len();
-        let mut lcs = vec![vec![0u16; new_len + 1]; old_len + 1];
-        for i in (0..old_len).rev() {
-            for j in (0..new_len).rev() {
-                lcs[i][j] = if self.previous[i] == current[j] {
-                    lcs[i + 1][j + 1].saturating_add(1)
-                } else {
-                    lcs[i + 1][j].max(lcs[i][j + 1])
-                };
+        // 落后超过一行：多余的部分瞬移，只留最后一行的动画。
+        if self.target - self.pos > step {
+            self.pos = self.target - step;
+            self.from = self.pos;
+            self.elapsed = 0.0;
+        }
+        if self.pos < self.target {
+            self.elapsed += dt;
+            let t = (self.elapsed / SCROLL_ANIMATION_MS).clamp(0.0, 1.0);
+            let eased = 1.0 - (1.0 - t).powi(3);
+            self.pos = self.from + (self.target - self.from) * eased;
+            if t >= 1.0 {
+                self.pos = self.target;
             }
+        } else {
+            self.pos = self.target;
         }
+        self.pos
+    }
 
-        let mut matched = vec![None; new_len];
-        let (mut i, mut j) = (0usize, 0usize);
-        while i < old_len && j < new_len {
-            if self.previous[i] == current[j] {
-                matched[j] = self.ids.get(i).copied();
-                i += 1;
-                j += 1;
-            } else if lcs[i + 1][j] >= lcs[i][j + 1] {
-                i += 1;
-            } else {
-                j += 1;
-            }
-        }
+    fn is_animating(&self) -> bool {
+        (self.target - self.pos).abs() > f32::EPSILON
+    }
 
-        let mut ids = Vec::with_capacity(new_len);
-        for id in matched {
-            let id = match id {
-                Some(id) => id,
-                None => {
-                    let fresh = (*next_id).max(INITIAL_CHAR_ID);
-                    *next_id = fresh.saturating_add(1);
-                    fresh
-                }
-            };
-            ids.push(id);
-        }
-        self.previous = current;
-        self.ids = ids.clone();
-        ids
+    fn reset(&mut self) {
+        *self = Self::default();
     }
 }
 
-#[derive(Debug, Clone)]
-struct StableRow {
-    key: u64,
-    placed: crate::layout::PlacedRow,
-    char_ids: Vec<u64>,
+/// 一条轨每帧复用的缓冲。渲染每帧都会跑，**这里不做新分配**。
+#[derive(Debug, Default)]
+struct TrackScratch {
+    text: String,
+    chars: Vec<char>,
+    advances: Vec<i32>,
+    breaks: Vec<bool>,
+    line_height: i32,
+    ascent: i32,
 }
 
-#[derive(Debug, Clone)]
-struct RowTransition {
-    started: std::time::Instant,
-    from: Vec<(u64, f32)>,
-    target: Vec<StableRow>,
-}
-
-impl RowTransition {
-    fn progress(&self, now: std::time::Instant) -> f32 {
-        let elapsed = now.saturating_duration_since(self.started).as_millis() as f32;
-        (elapsed / LAYOUT_ANIMATION_MS as f32).clamp(0.0, 1.0)
+impl TrackScratch {
+    /// 量一遍这条轨的度量，并把 UAX #14 的断行机会填好。
+    fn measure(&mut self, line: Option<&SubtitleLine>, font: &mut dyn GlyphSource) -> bool {
+        self.chars.clear();
+        self.advances.clear();
+        self.breaks.clear();
+        self.text.clear();
+        let Some(line) = line else {
+            return false;
+        };
+        let metrics = font.metrics();
+        self.line_height = metrics.line_height.max(1);
+        self.ascent = metrics.ascent;
+        for rc in &line.chars {
+            self.chars.push(rc.ch);
+            self.advances.push(font.advance(rc.ch).max(0));
+            self.text.push(rc.ch);
+        }
+        fill_breaks(&self.text, &self.chars, &mut self.breaks);
+        true
     }
 
-    fn y_at(&self, key: u64, now: std::time::Instant) -> Option<f32> {
-        let target = self.target.iter().find(|row| row.key == key)?;
-        let start = self
-            .from
-            .iter()
-            .find(|(old_key, _)| *old_key == key)
-            .map(|(_, y)| *y)
-            .unwrap_or(target.placed.plate.y as f32);
-        Some(interpolate_y(
-            start,
-            target.placed.plate.y as f32,
-            self.progress(now),
-        ))
+    fn text(&self) -> TrackText<'_> {
+        TrackText {
+            chars: &self.chars,
+            advances: &self.advances,
+            breaks: &self.breaks,
+            line_height: self.line_height,
+            ascent: self.ascent,
+        }
     }
-}
-
-/// Ease-out cubic interpolation used for every layout transition.
-fn interpolate_y(start: f32, end: f32, progress: f32) -> f32 {
-    let t = progress.clamp(0.0, 1.0);
-    let eased = 1.0 - (1.0 - t).powi(3);
-    start + (end - start) * eased
-}
-
-fn layout_changed(previous: &[StableRow], target: &[StableRow]) -> bool {
-    previous.len() != target.len()
-        || previous
-            .iter()
-            .zip(target.iter())
-            .any(|(old, new)| old.key != new.key || old.placed.plate.y != new.placed.plate.y)
 }
 
 /// 一帧一帧往 `Canvas` 上画。持有字体，所以只能在窗口线程上用。
@@ -161,15 +161,19 @@ pub struct Renderer {
     font: Box<dyn GlyphSource>,
     /// 设置里的字体族/字号/DPI 变了要重建光栅器，所以工厂也存着。
     font_factory: FontFactory,
-    /// 记住建字体时的参数，`restyle` 只在真的变了的时候重建。
+    /// 记住建字体时的参数，`sync_font` 只在真的变了的时候重建。
     font_family: String,
     font_size: u32,
     dpi: u32,
-    listen_ids: CharIdentity,
-    speak_ids: CharIdentity,
-    next_char_id: u64,
-    previous_rows: Vec<StableRow>,
-    transition: Option<RowTransition>,
+    /// 字体度量随字体走，布局要用。
+    line_height: i32,
+    ascent: i32,
+    listen_scratch: TrackScratch,
+    speak_scratch: TrackScratch,
+    listen_scroll: TrackScroll,
+    speak_scroll: TrackScroll,
+    epoch: Instant,
+    last_frame_ms: u64,
 }
 
 impl Renderer {
@@ -180,17 +184,22 @@ impl Renderer {
         font_factory: FontFactory,
     ) -> vox_core::ports::PortResult<Self> {
         let font = font_factory(&settings.font_family, settings.font_size, dpi)?;
+        let metrics = font.metrics();
+        let epoch = Instant::now();
         Ok(Self {
             font,
             font_factory,
             font_family: settings.font_family.clone(),
             font_size: settings.font_size,
             dpi,
-            listen_ids: CharIdentity::default(),
-            speak_ids: CharIdentity::default(),
-            next_char_id: INITIAL_CHAR_ID,
-            previous_rows: Vec::new(),
-            transition: None,
+            line_height: metrics.line_height,
+            ascent: metrics.ascent,
+            listen_scratch: TrackScratch::default(),
+            speak_scratch: TrackScratch::default(),
+            listen_scroll: TrackScroll::default(),
+            speak_scroll: TrackScroll::default(),
+            epoch,
+            last_frame_ms: 0,
         })
     }
 
@@ -207,89 +216,81 @@ impl Renderer {
             return Ok(());
         }
         self.font = (self.font_factory)(&settings.font_family, settings.font_size, dpi)?;
+        let metrics = self.font.metrics();
         self.font_family = settings.font_family.clone();
         self.font_size = settings.font_size;
         self.dpi = dpi;
+        self.line_height = metrics.line_height;
+        self.ascent = metrics.ascent;
         // A font/DPI change invalidates every measured boundary. Let the next frame
         // establish a fresh layout rather than carrying pixel positions across metrics.
-        self.previous_rows.clear();
-        self.transition = None;
+        self.listen_scratch = TrackScratch::default();
+        self.speak_scratch = TrackScratch::default();
+        self.listen_scroll.reset();
+        self.speak_scroll.reset();
         Ok(())
     }
 
+    /// 还有行在往上浮吗？只有这时才需要继续请求重绘。
     pub fn is_animating(&self) -> bool {
-        self.transition.is_some()
+        self.listen_scroll.is_animating() || self.speak_scroll.is_animating()
     }
 
-    /// 只算高度不画。
-    pub fn measure(&mut self, frame: &SubtitleFrame, client_width: i32, dpi: u32) -> i32 {
-        let (listen, speak) = self.measure_rows(frame);
-        layout_rows(&listen, &speak, client_width, Metrics::for_dpi(dpi)).client_height
+    /// 算一帧的布局，不画。返回的 [`FrameLayout`] 里是每个字最终落在哪。
+    pub fn plan(&mut self, input: &FrameInput<'_>) -> FrameLayout {
+        let metrics = Metrics::for_dpi(input.dpi);
+        let has_listen = self
+            .listen_scratch
+            .measure(find_line(input.frame, Track::Listen), self.font.as_mut());
+        let has_speak = self
+            .speak_scratch
+            .measure(find_line(input.frame, Track::Speak), self.font.as_mut());
+
+        let now_ms = input.now.saturating_duration_since(self.epoch).as_millis() as u64;
+        let lines_per_track = input.settings.lines_per_track.max(1);
+        let step = metrics.line_step(self.line_height);
+        self.last_frame_ms = now_ms;
+
+        let listen = &mut self.listen_scroll;
+        let speak = &mut self.speak_scroll;
+        layout_regions(
+            has_listen.then(|| self.listen_scratch.text()),
+            has_speak.then(|| self.speak_scratch.text()),
+            |is_listen, total_lines| {
+                let visible = if is_listen { has_listen } else { has_speak };
+                let visible = if visible { lines_per_track } else { 0 };
+                if is_listen {
+                    listen.advance(total_lines, visible, step, now_ms)
+                } else {
+                    speak.advance(total_lines, visible, step, now_ms)
+                }
+            },
+            input.client_width,
+            lines_per_track,
+            metrics,
+        )
     }
 
     /// 把一帧画到 `canvas` 上。`resize` 本身会清空画布，不再重复清屏。
     pub fn draw(&mut self, canvas: &mut Canvas, input: &FrameInput<'_>) -> FrameOutput {
         let metrics = Metrics::for_dpi(input.dpi);
-        let (listen_m, speak_m) = self.measure_rows(input.frame);
-        let mut sub = if input.client_height > 0 {
-            layout_rows_in_viewport(
-                &listen_m,
-                &speak_m,
-                input.client_width,
-                input.client_height,
-                metrics,
-            )
+        let layout = self.plan(input);
+        let height = input.client_height.unwrap_or(layout.client_height).max(1);
+        canvas.resize(input.client_width.max(1), height);
+        // 底边对齐：窗口比内容高就把内容压到底下，矮就从顶上裁。
+        let dy = if layout.client_height > 1 {
+            (height - layout.client_height) as f32
         } else {
-            // 快照/离线调用可以传 0，保留旧的“按内容高度”语义；真实窗口
-            // 始终传入正高度，使用固定视口。
-            layout_rows(&listen_m, &speak_m, input.client_width, metrics)
+            0.0
         };
-        if input.client_height <= 0 {
-            if let Some(row) = sub.listen.clone() {
-                sub.listen_rows.push(row);
-            }
-            if let Some(row) = sub.speak.clone() {
-                sub.speak_rows.push(row);
-            }
-        }
-
-        let listen_ids = self.listen_ids.update(
-            track_chars(input.frame, Track::Listen),
-            &mut self.next_char_id,
-        );
-        let speak_ids = self.speak_ids.update(
-            track_chars(input.frame, Track::Speak),
-            &mut self.next_char_id,
-        );
-        let target_rows = self.collect_rows(&sub, &listen_ids, &speak_ids, input.frame);
-        let positions = if input.client_height <= 0 {
-            // Offline snapshots use content-sized layout and are rendered as a
-            // single settled frame. Do not carry a real-window transition between
-            // independent scenes.
-            let positions = settled_positions(&target_rows);
-            self.previous_rows = target_rows;
-            self.transition = None;
-            positions
-        } else {
-            let now = std::time::Instant::now();
-            let current_positions = self.current_positions(now);
-            self.update_transition(
-                target_rows,
-                current_positions,
-                metrics,
-                input.client_height.max(1),
-            );
-            self.current_positions(now)
-        };
-
-        canvas.resize(input.client_width, sub.client_height);
 
         let listen_color = parse_hex_rgb_or(&input.settings.listen_color, Rgb::WHITE);
         let speak_color = parse_hex_rgb_or(&input.settings.speak_color, Rgb::WHITE);
-        let keep_offscreen_rows = self.transition.is_some();
-        for (track, color) in [(Track::Listen, listen_color), (Track::Speak, speak_color)] {
-            let placed_rows = track_slice(track, &sub.listen_rows, &sub.speak_rows);
-            let Some(line) = find_line(input.frame, track) else {
+        for (track, region, color) in [
+            (Track::Listen, layout.listen.as_ref(), listen_color),
+            (Track::Speak, layout.speak.as_ref(), speak_color),
+        ] {
+            let (Some(region), Some(line)) = (region, find_line(input.frame, track)) else {
                 continue;
             };
             let style = RowStyle {
@@ -297,213 +298,53 @@ impl Renderer {
                 plate_alpha: input.settings.background_alpha,
                 radius: metrics.plate_radius as f32,
             };
-            for placed in placed_rows {
-                // During a transition the old and new layouts are both retained.
-                // Once settled, fully offscreen visual rows are skipped here; their
-                // characters remain in the frame and can still expire by TTL.
-                if input.client_height > 0
-                    && !keep_offscreen_rows
-                    && (placed.plate.bottom() <= 0 || placed.plate.y >= sub.client_height)
-                {
-                    continue;
-                }
-                let key = self.row_key(track, placed, track_slice(track, &listen_ids, &speak_ids));
-                let y = positions
-                    .iter()
-                    .find(|(row_key, _)| *row_key == key)
-                    .map(|(_, y)| *y)
-                    .unwrap_or(placed.plate.y as f32);
-                self.draw_row(canvas, placed, line, style, y);
+            canvas.push_clip(region.region.0 + dy as i32, region.region.1 + dy as i32);
+            for placed in &region.lines {
+                self.draw_line(canvas, placed, line, style, dy);
             }
+            canvas.pop_clip();
         }
 
         FrameOutput {
-            client_height: sub.client_height,
+            client_height: layout.client_height,
         }
     }
 
-    fn collect_rows(
-        &self,
-        layout: &crate::layout::SubtitleLayout,
-        listen_ids: &[u64],
-        speak_ids: &[u64],
-        frame: &SubtitleFrame,
-    ) -> Vec<StableRow> {
-        let mut rows = Vec::with_capacity(layout.listen_rows.len() + layout.speak_rows.len());
-        for (track, placed_rows, ids) in [
-            (Track::Listen, &layout.listen_rows, listen_ids),
-            (Track::Speak, &layout.speak_rows, speak_ids),
-        ] {
-            // 源行不存在的视觉行既画不出来，也不该参与动画状态，直接跳过。
-            if find_line(frame, track).is_none() {
-                continue;
-            }
-            for placed in placed_rows {
-                let ids_for_row = ids
-                    .get(placed.first_visible..placed.last_visible.min(ids.len()))
-                    .unwrap_or(&[])
-                    .to_vec();
-                rows.push(StableRow {
-                    key: self.row_key(track, placed, ids),
-                    placed: placed.clone(),
-                    char_ids: ids_for_row,
-                });
-            }
-        }
-        rows
-    }
-
-    fn row_key(&self, track: Track, placed: &crate::layout::PlacedRow, ids: &[u64]) -> u64 {
-        let first = ids
-            .get(placed.first_visible)
-            .copied()
-            .unwrap_or_else(|| placed.first_visible as u64 + INITIAL_CHAR_ID);
-        let track_bit = match track {
-            Track::Listen => 0u64,
-            Track::Speak => 1u64 << 63,
-        };
-        track_bit | first
-    }
-
-    fn current_positions(&self, now: std::time::Instant) -> Vec<(u64, f32)> {
-        let Some(transition) = &self.transition else {
-            return settled_positions(&self.previous_rows);
-        };
-        transition
-            .target
-            .iter()
-            .filter_map(|row| transition.y_at(row.key, now).map(|y| (row.key, y)))
-            .collect()
-    }
-
-    fn update_transition(
-        &mut self,
-        target: Vec<StableRow>,
-        current_positions: Vec<(u64, f32)>,
-        metrics: Metrics,
-        viewport_height: i32,
-    ) {
-        if target.is_empty() {
-            self.previous_rows.clear();
-            self.transition = None;
-            return;
-        }
-
-        // The first visible frame is a baseline, not a scroll event. Subsequent
-        // boundary changes are the ones that need interpolation.
-        if self.previous_rows.is_empty() {
-            self.previous_rows = target;
-            self.transition = None;
-            return;
-        }
-
-        let changed = layout_changed(&self.previous_rows, &target);
-        if !changed {
-            self.previous_rows = target;
-            if self
-                .transition
-                .as_ref()
-                .is_some_and(|transition| transition.progress(std::time::Instant::now()) >= 1.0)
-            {
-                self.transition = None;
-            }
-            return;
-        }
-
-        let row_step = metrics.row_gap.saturating_add(
-            target
-                .iter()
-                .map(|row| row.placed.plate.h)
-                .max()
-                .unwrap_or(1),
-        ) as f32;
-        // If a row splits, its first half usually keeps the old key. Do not reuse
-        // that same old y for the unmatched second half, or the two target rows
-        // would overlap at animation t=0. Prefix-pruned rows can still use overlap
-        // matching because no exact row is claiming their previous position.
-        let mut claimed_old_keys: Vec<u64> = target
-            .iter()
-            .filter(|row| self.previous_rows.iter().any(|old| old.key == row.key))
-            .map(|row| row.key)
-            .collect();
-        let mut from = Vec::with_capacity(target.len());
-        for row in &target {
-            let old_y = current_positions
-                .iter()
-                .find(|(key, _)| *key == row.key)
-                .map(|(_, y)| *y)
-                .or_else(|| {
-                    let matched = self
-                        .previous_rows
-                        .iter()
-                        .filter(|old| !claimed_old_keys.contains(&old.key))
-                        .filter_map(|old| {
-                            let overlap = old
-                                .char_ids
-                                .iter()
-                                .filter(|id| row.char_ids.contains(id))
-                                .count();
-                            (overlap > 0).then_some((overlap, old.key, old.placed.plate.y as f32))
-                        })
-                        .max_by_key(|(overlap, _, _)| *overlap);
-                    if let Some((_, old_key, y)) = matched {
-                        claimed_old_keys.push(old_key);
-                        Some(y)
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| {
-                    // A row inserted before another track must not start on top of
-                    // that track's old row. Enter below the viewport; the canvas
-                    // clips it until the eased transition brings it into place.
-                    (row.placed.plate.y as f32 + row_step).max(viewport_height as f32 + row_step)
-                });
-            from.push((row.key, old_y));
-        }
-        self.transition = Some(RowTransition {
-            started: std::time::Instant::now(),
-            from,
-            target: target.clone(),
-        });
-        self.previous_rows = target;
-    }
-
-    fn measure_rows(&mut self, frame: &SubtitleFrame) -> (RowMetrics, RowMetrics) {
-        let fm = self.font.metrics();
-        let mut make = |track: Track| {
-            let chars = track_chars(frame, track);
-            RowMetrics {
-                advances: chars.iter().map(|c| self.font.advance(c.ch)).collect(),
-                line_height: fm.line_height,
-                ascent: fm.ascent,
-            }
-        };
-        (make(Track::Listen), make(Track::Speak))
-    }
-
-    fn draw_row(
+    fn draw_line(
         &mut self,
         canvas: &mut Canvas,
-        placed: &crate::layout::PlacedRow,
+        placed: &PlacedLine,
         line: &SubtitleLine,
         style: RowStyle,
-        animated_y: f32,
+        dy: f32,
     ) {
-        let y = animated_y.round() as i32;
-        let delta_y = y.saturating_sub(placed.plate.y);
-        let plate = crate::geom::RectI::new(placed.plate.x, y, placed.plate.w, placed.plate.h);
-        canvas.fill_round_rect(plate, style.radius, PLATE_COLOR, style.plate_alpha);
-
+        // 正在移出区域顶部的那一行按被裁的比例淡出：底衬和墨迹一起淡。
+        let fade = placed.clip;
+        if fade <= 0.0 {
+            return;
+        }
+        let y = (placed.y + dy).round() as i32;
+        let plate_alpha = (style.plate_alpha as f32 * fade).round() as u8;
+        if plate_alpha > 0 {
+            canvas.fill_round_rect(
+                crate::geom::RectI::new(placed.plate_x, y, placed.plate_w, placed.plate_h),
+                style.radius,
+                PLATE_COLOR,
+                plate_alpha,
+            );
+        }
+        let baseline_y = (placed.baseline_y + dy).round() as i32;
         let mut x = placed.text_x;
-        let baseline_y = placed.baseline_y.saturating_add(delta_y);
-        for rc in line
-            .chars
-            .iter()
-            .skip(placed.first_visible)
-            .take(placed.last_visible.saturating_sub(placed.first_visible))
-        {
-            x += draw_char_with(self.font.as_mut(), canvas, x, baseline_y, rc, style.color);
+        for rc in line.chars.iter().take(placed.last).skip(placed.first) {
+            x += draw_char_with(
+                self.font.as_mut(),
+                canvas,
+                x,
+                baseline_y,
+                rc,
+                style.color,
+                fade,
+            );
         }
     }
 }
@@ -516,8 +357,9 @@ fn draw_char_with(
     baseline_y: i32,
     rc: &RenderedChar,
     color: Rgb,
+    extra_fade: f32,
 ) -> i32 {
-    let alpha = alpha_to_u8(rc.alpha);
+    let alpha = alpha_to_u8(rc.alpha * extra_fade);
     let Some(g) = font.glyph(rc.ch) else {
         return 0;
     };
@@ -542,168 +384,173 @@ fn find_line(frame: &SubtitleFrame, track: Track) -> Option<&SubtitleLine> {
     frame.lines.iter().find(|l| l.track == track)
 }
 
-/// 某条轨上的字符序列；这条轨没有内容时给空切片。
-///
-/// 量字宽和更新字符身份都要按轨取一次字符，写法一模一样，收成这一个 lookup。
-fn track_chars(frame: &SubtitleFrame, track: Track) -> &[RenderedChar] {
-    find_line(frame, track)
-        .map(|line| line.chars.as_slice())
-        .unwrap_or(&[])
-}
-
-/// 按轨从"听人 / 对外"两份数据里挑出对应的那一份。
-///
-/// `Track` 到两个字段的映射在渲染循环里要写好几遍（视觉行、字符 id），
-/// 集中在一处免得两边写岔。
-fn track_slice<'a, T>(track: Track, listen: &'a [T], speak: &'a [T]) -> &'a [T] {
-    match track {
-        Track::Listen => listen,
-        Track::Speak => speak,
-    }
-}
-
-/// 已落位的行 → `(行 key, 底衬 y)`。过渡没在跑时位置就是布局算出来的那个 y。
-fn settled_positions(rows: &[StableRow]) -> Vec<(u64, f32)> {
-    rows.iter()
-        .map(|row| (row.key, row.placed.plate.y as f32))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
-    fn line(track: Track, text: &str) -> SubtitleLine {
-        SubtitleLine {
-            track,
-            chars: text
-                .chars()
-                .map(|ch| RenderedChar { ch, alpha: 1.0 })
+    /// 等宽假光栅器：每个字固定步进，掩码是一块实心方块。跟字形引擎无关。
+    struct FakeFont {
+        advance: i32,
+        line_height: i32,
+        ascent: i32,
+    }
+
+    impl GlyphSource for FakeFont {
+        fn metrics(&self) -> crate::text::FontMetrics {
+            crate::text::FontMetrics {
+                line_height: self.line_height,
+                ascent: self.ascent,
+            }
+        }
+
+        fn advance(&mut self, _ch: char) -> i32 {
+            self.advance
+        }
+
+        fn glyph(&mut self, _ch: char) -> Option<&crate::text::Glyph> {
+            None
+        }
+    }
+
+    fn settings() -> SubtitleSettings {
+        SubtitleSettings::default()
+    }
+
+    fn renderer(advance: i32) -> Renderer {
+        Renderer::new(
+            &settings(),
+            96,
+            crate::text::font_factory(move |_, size, _| {
+                Ok(Box::new(FakeFont {
+                    advance: advance.max(1) * (size as i32 / 30).max(1),
+                    line_height: 40 * (size as i32 / 30).max(1),
+                    ascent: 32 * (size as i32 / 30).max(1),
+                }) as Box<dyn GlyphSource>)
+            }),
+        )
+        .expect("假字体不会失败")
+    }
+
+    fn frame(lines: &[(Track, &str)]) -> SubtitleFrame {
+        SubtitleFrame {
+            lines: lines
+                .iter()
+                .map(|(track, text)| SubtitleLine {
+                    track: *track,
+                    chars: text
+                        .chars()
+                        .map(|ch| RenderedChar { ch, alpha: 1.0 })
+                        .collect(),
+                    color: "#ffffff".into(),
+                })
                 .collect(),
-            color: "#ffffff".into(),
+        }
+    }
+
+    fn input<'a>(
+        frame: &'a SubtitleFrame,
+        settings: &'a SubtitleSettings,
+        now: Instant,
+    ) -> FrameInput<'a> {
+        FrameInput {
+            frame,
+            settings,
+            client_width: 880,
+            client_height: None,
+            dpi: 96,
+            now,
         }
     }
 
     #[test]
     fn find_line_picks_the_right_track() {
-        let frame = SubtitleFrame {
-            lines: vec![line(Track::Speak, "a"), line(Track::Listen, "b")],
-        };
+        let frame = frame(&[(Track::Speak, "a"), (Track::Listen, "b")]);
         assert_eq!(find_line(&frame, Track::Speak).unwrap().chars[0].ch, 'a');
         assert_eq!(find_line(&frame, Track::Listen).unwrap().chars[0].ch, 'b');
     }
 
     #[test]
-    fn character_identity_survives_append_and_ttl_prefix_prune() {
-        let mut identity = CharIdentity::default();
-        let mut next = INITIAL_CHAR_ID;
-        let first = identity.update(
-            &"abc"
-                .chars()
-                .map(|ch| RenderedChar { ch, alpha: 1.0 })
-                .collect::<Vec<_>>(),
-            &mut next,
+    fn scroll_settles_at_target_after_the_animation() {
+        let mut scroll = TrackScroll::default();
+        scroll.advance(10, 2, 46.0, 0);
+        assert!(scroll.is_animating(), "目标变了就该在追");
+        let mut now = 0u64;
+        for _ in 0..40 {
+            now += 16;
+            scroll.advance(10, 2, 46.0, now);
+        }
+        assert!(
+            !scroll.is_animating(),
+            "200ms 之后必须停稳，实际 pos={} target={}",
+            scroll.pos,
+            scroll.target
         );
-        let appended = identity.update(
-            &"abcd"
-                .chars()
-                .map(|ch| RenderedChar { ch, alpha: 1.0 })
-                .collect::<Vec<_>>(),
-            &mut next,
-        );
-        assert_eq!(&appended[..3], &first[..]);
-        let pruned = identity.update(
-            &"bcd"
-                .chars()
-                .map(|ch| RenderedChar { ch, alpha: 0.5 })
-                .collect::<Vec<_>>(),
-            &mut next,
-        );
-        assert_eq!(&pruned[..], &appended[1..]);
-        assert_eq!(pruned.len(), 3, "布局变化不能删除仍在 TTL 内的字符");
     }
 
     #[test]
-    fn ease_out_layout_midpoint_stays_between_endpoints() {
-        let y = interpolate_y(100.0, 52.0, 0.5);
-        assert!(y < 100.0 && y > 52.0, "中间帧必须位于起点和终点之间: {y}");
-        assert_eq!(interpolate_y(100.0, 52.0, 0.0), 100.0);
-        assert_eq!(interpolate_y(100.0, 52.0, 1.0), 52.0);
+    fn burst_input_never_lags_more_than_one_line() {
+        let mut scroll = TrackScroll::default();
+        scroll.advance(1, 2, 46.0, 0);
+        // 爆发：一帧里多出十行。
+        for frame in 1..=20u64 {
+            scroll.advance(12, 2, 46.0, frame * 16);
+            assert!(
+                scroll.target - scroll.pos <= 46.0 + 1e-3,
+                "落后必须不超过一行，实际落后 {}",
+                scroll.target - scroll.pos
+            );
+        }
     }
 
     #[test]
-    fn row_transition_reaches_exact_target_after_duration() {
-        let target = StableRow {
-            key: 1,
-            placed: crate::layout::PlacedRow {
-                plate: crate::geom::RectI::new(0, 52, 100, 40),
-                first_visible: 0,
-                last_visible: 2,
-                text_x: 0,
-                baseline_y: 30,
-            },
-            char_ids: vec![1, 2],
-        };
-        let transition = RowTransition {
-            started: Instant::now() - Duration::from_millis(LAYOUT_ANIMATION_MS),
-            from: vec![(1, 100.0)],
-            target: vec![target],
-        };
-        assert_eq!(transition.y_at(1, Instant::now()).unwrap(), 52.0);
+    fn empty_frame_is_one_transparent_pixel() {
+        let mut r = renderer(30);
+        let settings = settings();
+        let frame = SubtitleFrame { lines: Vec::new() };
+        let mut canvas = Canvas::new(880, 1);
+        let out = r.draw(&mut canvas, &input(&frame, &settings, Instant::now()));
+        assert_eq!(out.client_height, 1);
+        assert!(canvas.bytes().iter().all(|b| *b == 0));
+        assert!(!r.is_animating(), "空帧不该还在动画");
     }
 
     #[test]
-    fn new_visual_row_has_a_transition_even_when_visible_row_count_is_constant() {
-        let old = vec![
-            StableRow {
-                key: 1,
-                placed: crate::layout::PlacedRow {
-                    plate: crate::geom::RectI::new(0, 80, 100, 40),
-                    first_visible: 0,
-                    last_visible: 2,
-                    text_x: 0,
-                    baseline_y: 30,
-                },
-                char_ids: vec![1, 2],
-            },
-            StableRow {
-                key: 3,
-                placed: crate::layout::PlacedRow {
-                    plate: crate::geom::RectI::new(0, 126, 100, 40),
-                    first_visible: 2,
-                    last_visible: 4,
-                    text_x: 0,
-                    baseline_y: 30,
-                },
-                char_ids: vec![3, 4],
-            },
-        ];
-        let next = vec![
-            StableRow {
-                key: 5,
-                placed: crate::layout::PlacedRow {
-                    plate: crate::geom::RectI::new(0, 80, 100, 40),
-                    first_visible: 0,
-                    last_visible: 2,
-                    text_x: 0,
-                    baseline_y: 30,
-                },
-                char_ids: vec![5, 6],
-            },
-            StableRow {
-                key: 7,
-                placed: crate::layout::PlacedRow {
-                    plate: crate::geom::RectI::new(0, 126, 100, 40),
-                    first_visible: 2,
-                    last_visible: 4,
-                    text_x: 0,
-                    baseline_y: 30,
-                },
-                char_ids: vec![7, 8],
-            },
-        ];
-        let changed = layout_changed(&old, &next);
-        assert!(changed, "行数不变但行身份变化也必须触发过渡");
+    fn height_follows_regions_and_line_count_only() {
+        let mut r = renderer(30);
+        let settings = settings();
+        let short = frame(&[(Track::Listen, "短")]);
+        let long = frame(&[(Track::Listen, &"很长的一句话".repeat(20))]);
+        let a = r.plan(&input(&short, &settings, Instant::now()));
+        let b = r.plan(&input(&long, &settings, Instant::now()));
+        assert_eq!(a.client_height, b.client_height, "高度不跟内容走");
+        assert!(
+            b.listen.expect("区域").lines.len() > a.listen.expect("区域").lines.len(),
+            "但行数要跟着内容涨"
+        );
+    }
+
+    #[test]
+    fn one_track_never_moves_the_other() {
+        let mut r = renderer(30);
+        let settings = settings();
+        let listen_only = frame(&[(Track::Listen, "听人说话")]);
+        let layout_a = r.plan(&input(&listen_only, &settings, Instant::now()));
+        let both = frame(&[(Track::Listen, "听人说话"), (Track::Speak, "对外说话")]);
+        let layout_b = r.plan(&input(&both, &settings, Instant::now()));
+        assert_eq!(
+            layout_a.listen, layout_b.listen,
+            "对外那条轨有内容，不该挪动听人那条轨"
+        );
+    }
+
+    #[test]
+    fn last_frame_time_is_recorded_for_the_animation() {
+        let mut r = renderer(30);
+        let settings = settings();
+        let epoch = r.epoch + Duration::from_millis(1234);
+        let frame = frame(&[(Track::Listen, "abc")]);
+        r.plan(&input(&frame, &settings, epoch));
+        assert_eq!(r.last_frame_ms, 1234);
     }
 }
