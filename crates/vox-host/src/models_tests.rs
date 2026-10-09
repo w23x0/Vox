@@ -483,19 +483,38 @@ fn date_helpers() {
     assert_eq!(strip_snapshot_suffix("gummy-realtime-v1"), None);
 }
 
-/// 真连国内站官方列表：`DASHSCOPE_API_KEY=… cargo test -p vox-host --ignored live_aliyun_list -- --nocapture`。
-/// 只打印条数与模型 ID，不打印密钥。
+/// 真连国内站官方列表。密钥先从 Secret Service 读（`secret-service` feature 开着时，
+/// service `com.vox.app` / user `api-key.aliyun`，与桌面档同一条），没有再退回环境变量
+/// `DASHSCOPE_API_KEY`。只打印 id / adapted / offline_at / snapshot_of / label，不打印密钥。
+///
+/// `cargo test -p vox-host --features secret-service --ignored live_aliyun_list -- --nocapture`
 #[test]
-#[ignore = "needs DASHSCOPE_API_KEY and network"]
+#[ignore = "needs a stored Aliyun key (Secret Service or DASHSCOPE_API_KEY) and network"]
 fn live_aliyun_list() {
-    let key = std::env::var("DASHSCOPE_API_KEY").expect("DASHSCOPE_API_KEY");
+    let key = live_key().expect("no key in Secret Service nor DASHSCOPE_API_KEY");
     let list = list_models(ModelProvider::Aliyun, Some(&key), AliyunRegion::Cn, true);
     assert!(list.error.is_none(), "{:?}", list.error);
     for m in &list.models {
         println!(
-            "{} adapted={} offline_at={:?} snapshot_of={:?}",
-            m.id, m.adapted, m.offline_at, m.snapshot_of
+            "{} adapted={} offline_at={:?} snapshot_of={:?} label={:?}",
+            m.id, m.adapted, m.offline_at, m.snapshot_of, m.label
         );
     }
     assert!(list.models.iter().any(|m| m.adapted));
+}
+
+#[cfg(all(target_os = "linux", feature = "secret-service"))]
+fn live_key() -> Option<String> {
+    use vox_core::ports::SecretStore;
+    let from_store = crate::secrets::service::SecretServiceStore::new()
+        .load_api_key()
+        .ok()
+        .flatten()
+        .filter(|k| !k.trim().is_empty());
+    from_store.or_else(|| std::env::var("DASHSCOPE_API_KEY").ok())
+}
+
+#[cfg(not(all(target_os = "linux", feature = "secret-service")))]
+fn live_key() -> Option<String> {
+    std::env::var("DASHSCOPE_API_KEY").ok()
 }

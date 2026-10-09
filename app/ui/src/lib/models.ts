@@ -93,5 +93,5 @@ export function useModelList(provider: ModelProvider): ModelsView {
 /** 某个模型 ID 的展示名：清单里有就用清单的，否则目录里的，再不行就原样 ID。 */
 export function modelDisplayName(list: ModelList, id: string, uiLang: UiLang): string {
   const entry: ModelEntry | undefined = list.models.find((m) => m.id === id);
-  return entry ? entry.label : catalog.modelLabel(id, uiLang);
+  return entry && list.source === "official" ? entry.label : catalog.modelLabel(id, uiLang);
 }

@@ -387,7 +387,12 @@ function ModelsCard({ provider }: { provider: ModelProvider }) {
 
       <div className="model-list">
         {list.models.map((model) => (
-          <ModelItem key={model.id} model={model} provider={provider} />
+          <ModelItem
+              key={model.id}
+              model={model}
+              provider={provider}
+              builtin={list.source === "builtin"}
+            />
         ))}
       </div>
     </section>
@@ -411,8 +416,18 @@ function errorText(list: ModelList, t: Translate): string {
   return t("models.errOther", { message: err.message });
 }
 
-function ModelItem({ model, provider }: { model: ModelEntry; provider: ModelProvider }) {
-  const { t } = useLang();
+function ModelItem({
+  model,
+  provider,
+  builtin,
+}: {
+  model: ModelEntry;
+  provider: ModelProvider;
+  builtin: boolean;
+}) {
+  const { t, uiLang } = useLang();
+  // 内置条目的名字后端只有一种语言，按 id 查目录取界面语言；官方条目用官方 name。
+  const label = builtin ? catalog.modelLabel(model.id, uiLang) : model.label;
   const [open, setOpen] = useState(false);
   const bodyId = `model-detail-${provider}-${model.id}`;
   const voiceCount = provider === "aliyun" ? catalog.voiceCatalog().length : 0;
@@ -430,7 +445,7 @@ function ModelItem({ model, provider }: { model: ModelEntry; provider: ModelProv
       >
         <IconChevron size={14} className={open ? "more-chevron open" : "more-chevron"} />
         <span className="mi-main">
-          <span className="mi-label">{model.label}</span>
+          <span className="mi-label">{label}</span>
           <span className="mono mi-id">{model.id}</span>
         </span>
         <span className="mi-badges">
