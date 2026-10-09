@@ -50,6 +50,8 @@ struct Model {
 #[derive(Deserialize)]
 struct Api {
     legacy_endpoint: String,
+    /// 国际站（新加坡）地址：国际站的 API Key 只认这一个。
+    intl_endpoint: String,
 }
 
 #[derive(Deserialize)]
@@ -299,12 +301,13 @@ fn main() {
         gpt.api.output_sample_rate.unwrap_or(24_000),
     ));
     out.push_str(&format!(
-        "pub const CATALOG_VERIFIED_AT: &str = {};\npub const DEFAULT_MODEL_NAME: &str = {};\npub const DEFAULT_MODEL_LABEL: &str = {};\npub const STABLE_MODEL_SNAPSHOT: &str = {};\npub const API_BASE: &str = {};\n",
+        "pub const CATALOG_VERIFIED_AT: &str = {};\npub const DEFAULT_MODEL_NAME: &str = {};\npub const DEFAULT_MODEL_LABEL: &str = {};\npub const STABLE_MODEL_SNAPSHOT: &str = {};\npub const API_BASE: &str = {};\npub const API_BASE_INTL: &str = {};\n",
         lit(&catalog.verified_at),
         lit(&catalog.model.id),
         lit(&catalog.model.label.zh),
         lit(&catalog.model.stable_snapshot),
-        lit(&catalog.api.legacy_endpoint)
+        lit(&catalog.api.legacy_endpoint),
+        lit(&catalog.api.intl_endpoint)
     ));
     out.push_str(&format!(
         "pub const DEFAULT_TARGET_LANGUAGE: &str = {};\npub const LISTEN_TARGET_LANGUAGE: &str = {};\npub const DEFAULT_VOICE: &str = {};\n",

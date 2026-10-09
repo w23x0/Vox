@@ -18,7 +18,7 @@ use vox_core::latency::LatencySnapshot;
 use vox_core::ports::{AudioApp, DeviceInfo};
 use vox_core::runtime::Snapshot as CoreSnapshot;
 use vox_core::settings::{
-    ControlSettings, ListenSettings, Settings, SpeakSettings, SubtitleSettings,
+    AliyunRegion, ControlSettings, ListenSettings, Settings, SpeakSettings, SubtitleSettings,
 };
 use vox_core::usage::UsageLedger;
 
@@ -40,6 +40,7 @@ pub struct SettingsDto {
     /// Agent 控制面的开关与授权位。设置页那一屏（`sections/AgentControl.tsx`）读写它，
     /// **起没起**是另一回事——那在 `SnapshotDto.control` 里（观察值，不是设置）。
     pub control: ControlSettings,
+    pub aliyun_region: AliyunRegion,
 }
 
 impl From<Settings> for SettingsDto {
@@ -53,6 +54,7 @@ impl From<Settings> for SettingsDto {
             start_minimized: s.start_minimized,
             ui_language: s.ui_language,
             control: s.control,
+            aliyun_region: s.aliyun_region,
         }
     }
 }

@@ -64,6 +64,8 @@ const ja = {
     sourceLanguage: "相手の言語",
     targetLanguageAria: "発話側が話す出力言語",
     sourceLanguageAria: "受聴側が聴く相手の話す言語",
+    listenTargetLanguage: "翻訳先",
+    listenTargetLanguageAria: "受聴側の翻訳先の言語",
     voice: "訳音声",
     voiceAria: "{pipe} の訳音声",
     providerAria: "{pipe} のモデルプロバイダー",
@@ -315,6 +317,10 @@ const ja = {
   },
 
   providersPage: {
+    region: "リージョン",
+    regionAria: "Model Studio のリージョン：API キーは作成したリージョンでのみ有効",
+    regionCn: "中国（北京）",
+    regionIntl: "国際（シンガポール）",
     selectProvider: "設定するモデルプロバイダー",
     apiKey: "API キー",
     apiKeySet: "設定済み",

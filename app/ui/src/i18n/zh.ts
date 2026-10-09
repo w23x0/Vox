@@ -51,6 +51,8 @@ const zh = {
     sourceLanguage: "对方语言",
     targetLanguageAria: "对外说话的目标语言",
     sourceLanguageAria: "听人说话时对方说的语言",
+    listenTargetLanguage: "译成",
+    listenTargetLanguageAria: "听人说话时译成的语言",
     voice: "译音音色",
     voiceAria: "{pipe}的译音音色",
     providerAria: "{pipe}的模型服务商",
@@ -302,6 +304,10 @@ const zh = {
   },
 
   providersPage: {
+    region: "地区",
+    regionAria: "阿里云百炼的地区：API Key 只在注册它的地区有效",
+    regionCn: "国内站（北京）",
+    regionIntl: "国际站（新加坡，海外用户）",
     selectProvider: "要配置的模型服务商",
     apiKey: "API 密钥",
     apiKeySet: "已配置",

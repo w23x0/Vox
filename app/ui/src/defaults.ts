@@ -46,6 +46,7 @@ export const DEFAULT_SETTINGS: Settings = {
     provider: "aliyun",
     model_name: DEFAULT_MODEL_NAME,
     target: null,
+    target_language: "zh",
     output_device: null,
     show_translation: true,
     speak_translation: true,
@@ -79,6 +80,7 @@ export const DEFAULT_SETTINGS: Settings = {
     allow_config_write: false,
     transcript_notify_ms: 250,
   },
+  aliyun_region: "cn",
 };
 
 export function clamp(value: number, min: number, max: number): number {

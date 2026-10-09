@@ -19,7 +19,10 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use crate::catalog;
+use crate::settings::AliyunRegion;
 use crate::usage::TurnUsage;
 
 /// 上传音频的采样率。
@@ -31,21 +34,42 @@ pub const OUTPUT_SAMPLE_RATE: u32 = 24_000;
 /// （`wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime`）。
 pub const ENDPOINT_ENV: &str = "VOX_ALIYUN_ENDPOINT";
 
-/// 拼出连接地址。模型名走 query 参数。
-pub fn endpoint_url(model_name: &str) -> String {
-    let base = std::env::var(ENDPOINT_ENV).ok();
-    endpoint_url_with(base.as_deref(), model_name)
+/// 当前地区：`false` = 国内站，`true` = 国际站。由 `Runtime` 在设置落地时写入
+/// （[`set_region`]）。放进程级是为了不把一个接入点参数穿过整条流水线的配置链。
+static INTL_REGION: AtomicBool = AtomicBool::new(false);
+
+/// 设置里的地区落到连接地址上。`Runtime::new` / `update_settings` 调。
+pub fn set_region(region: AliyunRegion) {
+    INTL_REGION.store(region == AliyunRegion::Intl, Ordering::Relaxed);
 }
 
-/// `base` 是用户给的覆盖地址；空、不是 `wss://`/`ws://` 开头就退回 catalog 里的缺省。
+fn region_base(region: AliyunRegion) -> &'static str {
+    match region {
+        AliyunRegion::Cn => catalog::API_BASE,
+        AliyunRegion::Intl => catalog::API_BASE_INTL,
+    }
+}
+
+/// 拼出连接地址。模型名走 query 参数。环境变量覆盖优先于设置里的地区。
+pub fn endpoint_url(model_name: &str) -> String {
+    let region = if INTL_REGION.load(Ordering::Relaxed) {
+        AliyunRegion::Intl
+    } else {
+        AliyunRegion::Cn
+    };
+    let base = std::env::var(ENDPOINT_ENV).ok();
+    endpoint_url_with(base.as_deref(), region, model_name)
+}
+
+/// `base` 是用户给的覆盖地址；空、不是 `wss://`/`ws://` 开头就退回该地区的缺省。
 /// 用户贴来的地址可能自带 `?model=...`，query 一律去掉再按当前模型重拼。
-fn endpoint_url_with(base: Option<&str>, model_name: &str) -> String {
+fn endpoint_url_with(base: Option<&str>, region: AliyunRegion, model_name: &str) -> String {
     let base = base
         .map(|b| b.trim())
         .filter(|b| b.starts_with("wss://") || b.starts_with("ws://"))
         .map(|b| b.split('?').next().unwrap_or(b).trim_end_matches('/'))
         .filter(|b| !b.is_empty())
-        .unwrap_or(catalog::API_BASE);
+        .unwrap_or(region_base(region));
     format!("{}?model={}", base, catalog::normalize_model(model_name))
 }
 
@@ -545,17 +569,35 @@ mod tests {
         let ws = "wss://ws-abc.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime";
         // 控制台贴来的地址自带 `?model=`（甚至是别的模型）：去掉重拼，不能拼出两个 `?`。
         assert_eq!(
-            endpoint_url_with(Some(&format!(" {ws}/?model=old ")), LIVE),
+            endpoint_url_with(
+                Some(&format!(" {ws}/?model=old ")),
+                AliyunRegion::Intl,
+                LIVE
+            ),
             format!("{ws}?model={LIVE}")
         );
         // 空串 / 不是 ws(s) 地址：退回缺省，别把垃圾拼进 URL。
         for junk in ["", "  ", "https://example.com", "?model=x"] {
             assert_eq!(
-                endpoint_url_with(Some(junk), LIVE),
+                endpoint_url_with(Some(junk), AliyunRegion::Cn, LIVE),
                 format!("{}?model={LIVE}", catalog::API_BASE),
                 "{junk:?}"
             );
         }
+    }
+
+    #[test]
+    fn region_picks_the_matching_default_endpoint() {
+        // 国际站的 Key 连北京会被拒：地区必须真的换掉主机，而不是只换个名字。
+        assert_eq!(
+            endpoint_url_with(None, AliyunRegion::Intl, LIVE),
+            format!("{}?model={LIVE}", catalog::API_BASE_INTL)
+        );
+        assert_eq!(
+            endpoint_url_with(None, AliyunRegion::Cn, LIVE),
+            format!("{}?model={LIVE}", catalog::API_BASE)
+        );
+        assert_ne!(catalog::API_BASE, catalog::API_BASE_INTL);
     }
 
     #[test]

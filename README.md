@@ -5,7 +5,7 @@ A desktop real-time speech translator for live conversations — **Windows** and
 | Pipeline | Input | Output |
 | --- | --- | --- |
 | **Speak out** | your microphone | translated speech into a virtual mic + live captions |
-| **Listen in** | a chosen program's audio | Chinese speech to your headphones + live captions |
+| **Listen in** | a chosen program's audio | translated speech to your headphones + live captions |
 
 Built with **Tauri 2 + React 19 + Rust**. The UI handles config and status; audio capture, noise reduction, resampling, WebSocket transport, hotkeys and the overlay caption window live in Rust, behind per-platform shells (`vox-*-win` on Windows, `vox-*-linux` on Linux) — the core (`vox-core`, `vox-net`, `vox-dsp`) is platform-neutral.
 
@@ -16,7 +16,8 @@ Built with **Tauri 2 + React 19 + Rust**. The UI handles config and status; audi
 - **Windows**: process loopback ("Listen in") needs **Win11 / Server 2022 (build 20348+)**.
 - **Linux**: **PipeWire** required (default on mainstream distros). "Listen in" captures the chosen program's own streams via PipeWire; the virtual microphone is a PipeWire sink (nothing to install). The overlay runs through XWayland on Wayland sessions so it can position itself and stay on top; global hotkeys are read from `/dev/input` (evdev). Non-PipeWire audio stacks are not supported.
 - Providers — **Alibaba Cloud Bailian**, **Google Gemini**, **OpenAI Realtime** — selectable per pipeline, each with one fixed realtime translation model.
-- "Listen in" always translates **into Chinese**; the source language is auto-detected or set manually.
+- "Listen in" translates into the language you pick (Chinese by default); the source language is auto-detected or set manually.
+- Alibaba Cloud Bailian: pick the region in Settings → Providers — **China (Beijing)** or **International (Singapore)**. An API key only works in the region it was created in, so overseas accounts must choose International. `VOX_ALIYUN_ENDPOINT` overrides the endpoint (e.g. a workspace-specific `wss://…maas.aliyuncs.com` URL).
 - UI language: 简体中文 / 日本語 / English, independent of the translation languages.
 - Provider API keys are stored locally and encrypted per user: **Windows DPAPI** on Windows, **Secret Service** (gnome-keyring / KWallet, via `keyring`) on Linux.
 - Provider metadata lives in [`catalog/*.json`](catalog/), not in source code.
@@ -107,7 +108,7 @@ Vox/
 
 **Speak:** `mic → mono → RNNoise → gate → 16 kHz PCM → provider → (captions + 24 kHz speech to the virtual mic)`
 
-**Listen:** `program audio → mono → 16 kHz PCM → provider → (Chinese captions + 24 kHz speech to headphones)`
+**Listen:** `program audio → mono → 16 kHz PCM → provider → (captions + 24 kHz speech to headphones)`
 
 The virtual mic is VB-CABLE on Windows and a PipeWire sink on Linux; "program audio" is WASAPI process
 loopback on Windows and PipeWire per-node capture on Linux.

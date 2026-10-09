@@ -5,7 +5,7 @@
 | 流水线 | 输入 | 输出 |
 | --- | --- | --- |
 | **对外说话（Speak out）** | 你的麦克风 | 译音送入虚拟麦克风 + 实时字幕 |
-| **听人说话（Listen in）** | 指定程序的音频 | 中文语音送耳机 + 实时字幕 |
+| **听人说话（Listen in）** | 指定程序的音频 | 译音送耳机 + 实时字幕 |
 
 基于 **Tauri 2 + React 19 + Rust**。界面负责配置与状态；音频采集、降噪、重采样、WebSocket 传输、快捷键与悬浮字幕窗口都落在 Rust 里，按平台分成两套外壳（Windows 是 `vox-*-win`，Linux 是 `vox-*-linux`）；内核（`vox-core` / `vox-net` / `vox-dsp`）平台无关。
 
@@ -16,7 +16,8 @@ English：[`../README.md`](../README.md) · 日本語：[`ja.md`](ja.md) · 한�
 - **Windows**：「听人说话」的进程环回需 **Win11 / Server 2022（build 20348+）**。
 - **Linux**：需要 **PipeWire**（主流发行版默认就是）。「听人说话」直接抓目标程序自己的音频流；虚拟麦克风就是一个 PipeWire sink（不用装任何东西）；Wayland 会话下悬浮窗走 XWayland 才能定位置顶；全局热键直读 `/dev/input`（evdev）。非 PipeWire 的音频栈不支持。
 - 服务商——**阿里云百炼**、**Google Gemini**、**OpenAI Realtime**——每条流水线单独选择，各固定一个实时翻译模型。
-- 「听人说话」固定**翻成中文**；源语言自动检测或手动指定。
+- 「听人说话」翻成你选的语言（缺省中文）；源语言自动检测或手动指定。
+- 阿里云百炼：在「服务商」设置里选地区——**国内站（北京）**或**国际站（新加坡）**。API Key 只在注册它的地区有效，海外账号要选国际站。环境变量 `VOX_ALIYUN_ENDPOINT` 可直接覆盖接入地址（例如工作空间专属的 `wss://…maas.aliyuncs.com`）。
 - 界面语言：简体中文 / 日本語 / English，与翻译语言相互独立。
 - 服务商 API Key 本地存储、按用户加密：Windows 用 **DPAPI**，Linux 用 **Secret Service**（gnome-keyring / KWallet，走 `keyring`）。
 - 服务商元数据在 [`catalog/*.json`](../catalog/)，不进源码。
@@ -78,7 +79,7 @@ Vox/
 
 **Speak：** `mic → mono → RNNoise → gate → 16 kHz PCM → provider →（字幕 + 24 kHz 语音送 VB-CABLE）`
 
-**Listen：** `loopback → mono → 16 kHz PCM → provider →（中文字幕 + 24 kHz 语音送耳机）`
+**Listen：** `loopback → mono → 16 kHz PCM → provider →（字幕 + 24 kHz 语音送耳机）`
 
 两条流水线独立运行；`vox-core::Runtime` 是唯一真源。
 

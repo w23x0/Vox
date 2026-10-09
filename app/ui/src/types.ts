@@ -89,6 +89,8 @@ export interface ListenSettings {
   provider: ModelProvider;
   model_name: string;
   target: ListenTarget | null;
+  /** 译成哪种语言；老配置缺省中文。 */
+  target_language: string;
   output_device: string | null;
   show_translation: boolean;
   speak_translation: boolean;
@@ -149,4 +151,8 @@ export interface Settings {
   ui_language: string;
   /** Agent 控制面的开关与授权位。 */
   control: ControlSettings;
+  /** 阿里云百炼地区：`cn` 国内站（北京）/ `intl` 国际站（新加坡）。Key 只在注册地区有效。 */
+  aliyun_region: AliyunRegion;
 }
+
+export type AliyunRegion = "cn" | "intl";

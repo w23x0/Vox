@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import * as catalog from "../catalog";
 import { useLang } from "../i18n/context";
 import { useStore } from "../store";
-import type { ModelProvider } from "../types";
+import type { AliyunRegion, ModelProvider } from "../types";
 import { Dropdown } from "../ui/controls";
 import { IconExternal, IconSave, IconTrash } from "../ui/icons";
 import { useToast } from "../ui/toast";
@@ -13,7 +13,7 @@ import { ConfirmButton } from "../ui/ConfirmButton";
 import { orderedVoices } from "../voices";
 
 export function ProvidersPage() {
-  const { api, snapshot, reload } = useStore();
+  const { api, snapshot, reload, settings, patch } = useStore();
   const toast = useToast();
   const { uiLang, t } = useLang();
   const [provider, setProvider] = useState<ModelProvider>(
@@ -109,6 +109,26 @@ export function ProvidersPage() {
                 : t("providersPage.apiKeyNotSet")}
           </span>
         </div>
+
+        {provider === "aliyun" ? (
+          <div className="row" style={{ justifyContent: "space-between", marginBottom: 14 }}>
+            <label className="stat-label" htmlFor="dd-aliyun-region">
+              {t("providersPage.region")}
+            </label>
+            <div style={{ width: 260, maxWidth: "70%" }}>
+              <Dropdown
+                id="dd-aliyun-region"
+                label={t("providersPage.regionAria")}
+                value={settings.aliyun_region}
+                options={[
+                  { value: "cn", label: t("providersPage.regionCn") },
+                  { value: "intl", label: t("providersPage.regionIntl") },
+                ]}
+                onChange={(value) => patch({ aliyun_region: value as AliyunRegion })}
+              />
+            </div>
+          </div>
+        ) : null}
 
         <div className="row" style={{ alignItems: "stretch" }}>
           {!hasDraft ? (

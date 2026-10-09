@@ -264,6 +264,19 @@ export function PipelineCard({ pipeline }: { pipeline: HomePipeline }) {
             </div>
           ) : (
             <div style={{ minWidth: 0 }}>
+              <label className="stat-label" htmlFor="dd-home-listen-target-language">
+                {t("pipeline.listenTargetLanguage")}
+              </label>
+              <Dropdown
+                id="dd-home-listen-target-language"
+                label={t("pipeline.listenTargetLanguageAria")}
+                value={listen.target_language}
+                options={languageChoices}
+                onChange={(targetLanguage) =>
+                  patch({ listen: { target_language: targetLanguage } })
+                }
+              />
+              <div style={{ marginTop: 8 }} />
               <label className="stat-label" htmlFor="dd-home-listen-source">
                 {t("pipeline.sourceLanguage")}
               </label>

@@ -48,6 +48,8 @@ const en = {
     sourceLanguage: "Their language",
     targetLanguageAria: "Target language to speak into",
     sourceLanguageAria: "The language the other person is speaking",
+    listenTargetLanguage: "Translate into",
+    listenTargetLanguageAria: "Language to translate the other person into",
     voice: "Translation voice",
     voiceAria: "Translation voice for {pipe}",
     providerAria: "Provider for {pipe}",
@@ -299,6 +301,10 @@ const en = {
   },
 
   providersPage: {
+    region: "Region",
+    regionAria: "Alibaba Cloud Model Studio region: an API key only works in the region it was created in",
+    regionCn: "China (Beijing)",
+    regionIntl: "International (Singapore)",
     selectProvider: "Provider to configure",
     apiKey: "API key",
     apiKeySet: "Configured",

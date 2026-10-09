@@ -28,6 +28,7 @@
   "api": {
     "transport": "websocket",
     "legacy_endpoint": "wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
+    "intl_endpoint": "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime",
     "api_key_placeholder": "sk-...",
     "recommended_endpoints": {
       "cn_beijing": "wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime",

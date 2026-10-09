@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use crate::capability::Capability;
 use crate::catalog::{
     self, ActivationMode, DEFAULT_MODEL_NAME, DEFAULT_TARGET_LANGUAGE, DEFAULT_VOICE,
+    LISTEN_TARGET_LANGUAGE,
 };
 use crate::hotkey::Hotkey;
 
@@ -54,6 +55,19 @@ impl ModelProvider {
     }
 }
 
+/// 阿里云百炼的地区。API Key 只在注册它的地区有效：国内站的 Key 连北京，
+/// 国际站（海外用户）的 Key 连新加坡。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum AliyunRegion {
+    /// 国内站（北京）。
+    #[default]
+    Cn,
+    /// 国际站（新加坡）。
+    Intl,
+}
+
 /// 全部设置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -74,6 +88,8 @@ pub struct Settings {
     pub ui_language: String,
     /// Agent 控制面（MCP / CLI）的开关与授权位。
     pub control: ControlSettings,
+    /// 阿里云百炼走哪个地区的接入点。老配置没有这一格，读出来是国内站（行为不变）。
+    pub aliyun_region: AliyunRegion,
 }
 
 impl Default for Settings {
@@ -88,6 +104,7 @@ impl Default for Settings {
             start_minimized: false,
             ui_language: DEFAULT_UI_LANGUAGE.to_string(),
             control: ControlSettings::default(),
+            aliyun_region: AliyunRegion::default(),
         }
     }
 }
@@ -204,6 +221,8 @@ pub struct ListenSettings {
     pub model_name: String,
     /// 要抓哪个程序的声音。`None` = 还没选。
     pub target: Option<ListenTarget>,
+    /// 译成哪种语言。老配置没有这一格，读出来是中文（行为不变）。
+    pub target_language: String,
     /// 中文语音播出去的设备名；`None` 表示系统默认（耳机）。
     pub output_device: Option<String>,
     /// 是否把译文推到字幕轨。
@@ -224,6 +243,7 @@ impl Default for ListenSettings {
             provider: ModelProvider::Aliyun,
             model_name: DEFAULT_MODEL_NAME.to_string(),
             target: None,
+            target_language: LISTEN_TARGET_LANGUAGE.to_string(),
             output_device: None,
             show_translation: true,
             speak_translation: true,
@@ -401,14 +421,17 @@ impl Settings {
         speak.input_device = normalize_device(speak.input_device.take());
         speak.output_device = normalize_device(speak.output_device.take());
 
-        // 听人说话：目标语言固定中文，只校音色和设备。
+        // 听人说话：目标语言表外的代码退回中文（不是对外说话那份缺省）。
         let listen = &mut self.listen;
+        if catalog::language_label(&listen.target_language).is_none() {
+            listen.target_language = LISTEN_TARGET_LANGUAGE.to_string();
+        }
         // 听人说话始终保留字幕，只把是否念出来交给用户选择。
         listen.show_translation = true;
         listen.model_name =
             catalog::normalize_model_for(listen.provider, &listen.model_name).to_string();
-        if !catalog::voice_available(catalog::LISTEN_TARGET_LANGUAGE, &listen.voice) {
-            listen.voice = catalog::default_voice_for_language(catalog::LISTEN_TARGET_LANGUAGE);
+        if !catalog::voice_available(&listen.target_language, &listen.voice) {
+            listen.voice = catalog::default_voice_for_language(&listen.target_language);
         }
         listen.output_device = normalize_device(listen.output_device.take());
         if let Some(target) = &listen.target {

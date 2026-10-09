@@ -251,6 +251,7 @@ impl Runtime {
     pub fn new(settings: Settings, clock: Arc<dyn Clock>) -> Self {
         let mut settings = settings;
         settings.normalize();
+        crate::cloud::protocol::set_region(settings.aliyun_region);
         let mut pipelines = BTreeMap::new();
         for p in [Pipeline::Speak, Pipeline::Listen] {
             pipelines.insert(p, PipelineStatus::default());
@@ -562,6 +563,8 @@ impl Runtime {
             if new == old {
                 return new;
             }
+            // 地区只影响下一次建连；已在跑的会话不动。
+            crate::cloud::protocol::set_region(new.aliyun_region);
 
             // 字幕时序变了立刻生效。
             if new.subtitle.char_ttl_ms != old.subtitle.char_ttl_ms
@@ -660,7 +663,8 @@ impl Runtime {
             let (listen_live, listen_session) = Self::live_session(&s, Pipeline::Listen);
             if listen_live
                 && (new.listen.provider != old.listen.provider
-                    || new.listen.model_name != old.listen.model_name)
+                    || new.listen.model_name != old.listen.model_name
+                    || new.listen.target_language != old.listen.target_language)
             {
                 events.push(Event::Notice {
                     notice: Notice::info("模型设置已保存，重启「听人说话」后生效")
@@ -845,7 +849,7 @@ impl Runtime {
                 provider: settings.listen.provider,
                 model_name: settings.listen.model_name.clone(),
                 api_key,
-                target_language: catalog::LISTEN_TARGET_LANGUAGE.to_string(),
+                target_language: settings.listen.target_language.clone(),
                 voice: settings
                     .listen
                     .speak_translation
@@ -1392,6 +1396,13 @@ mod tests {
             crate::catalog::LISTEN_TARGET_LANGUAGE
         );
         assert!(!listen.denoise, "听的那条不降噪");
+        let mut to_en = draft.clone();
+        to_en.listen.target_language = "en".to_string();
+        assert_eq!(
+            Runtime::session_config_for(&to_en, Pipeline::Listen).target_language,
+            "en",
+            "听人说话的目标语言要跟设置走，不能写死中文"
+        );
 
         // 与访问器是**同一个映射**：把三格会话态（会话号 / 密钥 / 阀门开合）压到中性值，
         // 两份必须逐字段相同——否则 dry-run 算出来的清单与真会跑的那条会对不上。
