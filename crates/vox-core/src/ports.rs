@@ -217,6 +217,9 @@ pub struct SubtitleFrame {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubtitleLine {
     pub track: Track,
+    /// `chars[0]` 的绝对下标（这条轨从队首丢掉过多少字，只增不减）。
+    /// 渲染侧靠它把"某一行的行首"这类锚点跨帧对上，见 `SubtitleTrack::origin`。
+    pub origin: u64,
     pub chars: Vec<RenderedChar>,
     /// `#rrggbb`。
     pub color: String,

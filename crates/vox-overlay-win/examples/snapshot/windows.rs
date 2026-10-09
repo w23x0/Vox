@@ -188,6 +188,7 @@ fn scenes() -> Vec<Scene> {
 fn line(track: Track, color: &str, chars: Vec<RenderedChar>) -> SubtitleLine {
     SubtitleLine {
         track,
+        origin: 0,
         chars,
         color: color.into(),
     }

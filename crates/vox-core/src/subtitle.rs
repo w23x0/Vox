@@ -234,6 +234,11 @@ pub struct SubtitleTrack {
     last_update_ms: u64,
     /// 还没收到过任何内容（跟"收到过但已经淡出清空"区分开）。
     started: bool,
+    /// 从队首丢掉（清空 / 截断）过的字数累计，只增不减。
+    ///
+    /// 它让每个字有一个**永不重用的绝对下标** = `origin() + 当前下标`：渲染侧
+    /// 靠它记住"某一行的行首在哪"，模型丢掉队首之后它依然找得到自己的锚点。
+    dropped: u64,
 }
 
 impl SubtitleTrack {
@@ -243,6 +248,7 @@ impl SubtitleTrack {
             timing,
             last_update_ms: 0,
             started: false,
+            dropped: 0,
         }
     }
 
@@ -306,6 +312,7 @@ impl SubtitleTrack {
 
     /// 清空这一条轨。
     pub fn clear(&mut self) {
+        self.dropped += self.char_count() as u64;
         self.sentences.clear();
         self.started = false;
     }
@@ -345,6 +352,7 @@ impl SubtitleTrack {
             }
             let n = first.chars.len();
             self.sentences.remove(0);
+            self.dropped += n as u64;
             dropped += n;
             over = over.saturating_sub(n);
         }
@@ -397,6 +405,11 @@ impl SubtitleTrack {
             .filter(|c| c.alpha > 0.0)
             .map(|c| c.ch)
             .collect()
+    }
+
+    /// 队首已经丢掉的字数累计：`render()` 返回的第 0 个字的绝对下标。
+    pub fn origin(&self) -> u64 {
+        self.dropped
     }
 
     fn char_count(&self) -> usize {
@@ -605,6 +618,25 @@ mod tests {
             t.text(100),
             "第3句。第4句。正在说的",
             "正在说的那一句一个字都不能少"
+        );
+    }
+
+    #[test]
+    fn origin_counts_every_char_ever_dropped() {
+        let mut t = track();
+        for i in 0..4 {
+            t.update_sentence(&format!("第{i}句。"), 4, i);
+            t.finish_sentence(&format!("第{i}句。"), i);
+        }
+        assert_eq!(t.origin(), 0);
+        t.trim_sealed(8);
+        assert_eq!(t.origin(), 8, "丢掉两句 × 4 字，绝对下标从 8 起");
+        t.update_sentence("新的", 2, 10);
+        t.clear();
+        assert_eq!(
+            t.origin(),
+            8 + 8 + 2,
+            "清空也算丢：绝对下标永不重用，渲染侧的锚点才不会认错"
         );
     }
 

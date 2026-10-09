@@ -100,6 +100,7 @@ fn frame_at(subs: &Subtitles, now_ms: u64) -> SubtitleFrame {
         if !chars.is_empty() {
             lines.push(SubtitleLine {
                 track,
+                origin: subs.track(track).origin(),
                 chars,
                 color: color.into(),
             });

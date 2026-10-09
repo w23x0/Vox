@@ -229,19 +229,22 @@ impl State {
     /// 区域只有 `lines_per_track` 行，放得下几个字取决于窗口宽度和字宽——芯里量不到。
     /// 这里取一个**偏大**的估计：拿窗口宽度除以"最小可能的字宽"（字号的 1/4 em，
     /// 比任何真实字形都窄），算出最坏情况下区域放得下的字数，再乘 4 倍余量。
-    /// 宁可多留（多留只是慢一点），也不能删掉还看得见的字——那会破坏"已封口的行不变"。
+    /// 宁可多留（多留只是慢一点），也不能删掉还看得见的字。
     ///
-    /// 没有几何信息（还没落过窗口位置）就返回 0 = 不丢。
+    /// 这里是按整句丢的，**不在行首**；可见字不会因此重排，是因为渲染侧另外记着一个
+    /// 落在行首的锚点（`vox-overlay-core::render`），排版从锚点起，模型丢到锚点之前
+    /// 的内容它看不见。
+    ///
+    /// 字号为 0 这种不可能的配置返回 0 = 不丢。
     fn sealed_trim_budget(&self) -> usize {
         let sub = &self.settings.subtitle;
-        let Some(geo) = sub.geometry else {
-            return 0;
-        };
-        if geo.width == 0 || sub.font_size == 0 {
+        if sub.font_size == 0 {
             return 0;
         }
+        // 还没落过窗口位置时按缺省窗宽估：不能因为没几何就永远不丢（会无限涨）。
+        let width = sub.geometry.map_or(880, |g| g.width).max(1);
         let min_advance = (sub.font_size / 4).max(1);
-        let per_line = (geo.width / min_advance) as usize;
+        let per_line = (width / min_advance) as usize;
         sub.lines_per_track as usize * per_line * 4
     }
 }
@@ -536,6 +539,7 @@ impl Runtime {
             if !chars.is_empty() {
                 lines.push(crate::ports::SubtitleLine {
                     track,
+                    origin: s.subtitles.track(track).origin(),
                     chars,
                     color: color.clone(),
                 });

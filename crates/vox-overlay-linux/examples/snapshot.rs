@@ -33,6 +33,8 @@ enum Event {
     Update(Track, &'static str, &'static str),
     /// 这一句说完了，定稿。
     Finish(Track, &'static str),
+    /// 模型按预算丢掉队首的定稿句，只留 `usize` 个定稿字（模拟 Runtime 的截断）。
+    Trim(Track, usize),
 }
 
 struct Scene {
@@ -54,6 +56,7 @@ fn main() {
     }
 
     let mut problems: Vec<String> = Vec::new();
+    let mut before_trim: Option<Vec<u8>> = None;
     println!("输出目录: {}", dir.display());
     for scene in scenes() {
         let settings = SubtitleSettings::default();
@@ -86,6 +89,9 @@ fn main() {
                         subs.track_mut(*track).update_sentence(full, n, now);
                     }
                     Event::Finish(track, text) => subs.track_mut(*track).finish_sentence(text, now),
+                    Event::Trim(track, keep) => {
+                        subs.track_mut(*track).trim_sealed(*keep);
+                    }
                 }
                 next += 1;
             }
@@ -112,6 +118,18 @@ fn main() {
         let ink = canvas.bytes().iter().filter(|&&b| b != 0).count();
         if ink == 0 {
             problems.push(format!("{}: 一帧有字的画面却是全透明", scene.name));
+        }
+        // 截断前后对比：同一段内容，模型丢掉队首之后画面必须逐像素相同。
+        if scene.name.starts_with("5a") {
+            before_trim = Some(canvas.bytes().to_vec());
+        }
+        if scene.name.starts_with("5b") {
+            match &before_trim {
+                Some(before) if before.as_slice() == canvas.bytes() => {
+                    println!("  截断前后画面逐像素相同");
+                }
+                _ => problems.push("5b: 模型截断队首之后画面和截断前不一致（可见字重排了）".into()),
+            }
         }
         let backdrop = backdrop(canvas.width(), canvas.height());
         let composed = composite(&canvas, &backdrop);
@@ -152,6 +170,7 @@ fn frame_at(subs: &Subtitles, now: u64) -> SubtitleFrame {
         if !chars.is_empty() {
             lines.push(SubtitleLine {
                 track,
+                origin: subs.track(track).origin(),
                 chars,
                 color: color.into(),
             });
@@ -162,6 +181,27 @@ fn frame_at(subs: &Subtitles, now: u64) -> SubtitleFrame {
 
 const LONG: &str = "The quick brown fox jumps over the lazy dog, 然后它又跳过了第二只更懒的狗，\
                     and then something unexpected happened 就在那一刻字幕必须折行而且不能乱跳。";
+
+/// 连续说话：每 120ms 一句，不静默。返回事件序列与最后一句结束的时刻。
+fn nonstop_speech() -> (Vec<(u64, Event)>, u64) {
+    const SENTENCES: [&str; 6] = [
+        "The quick brown fox jumps over the lazy dog, 然后它又跳过了第二只狗。",
+        "字幕必须折行而且不能乱跳，and every word keeps its place on screen.",
+        "实时翻译 is hard when 人们说话不停顿，but the caption just glides up.",
+        "好的，supercalifragilistic 这个词很长，so it must wrap by whole words.",
+        "你好，hello world，今天天气不错，let us go for a walk in the park.",
+        "最后一句话，this is the last sentence before we trim the history.",
+    ];
+    let mut events = Vec::new();
+    let mut t = 0u64;
+    for i in 0..18 {
+        let text = SENTENCES[i % SENTENCES.len()];
+        events.push((t, Event::Update(Track::Listen, text, text)));
+        events.push((t + 60, Event::Finish(Track::Listen, text)));
+        t += 120;
+    }
+    (events, t)
+}
 
 fn scenes() -> Vec<Scene> {
     use Event::{Finish, Update};
@@ -218,6 +258,22 @@ fn scenes() -> Vec<Scene> {
                 (400, Update(Speak, "This is the first line of a long caption and it fills the row nicely, and then the second line starts here and goes on and on until it also fills up the whole row and more", "")),
             ],
             shot_at: 900,
+        },
+        Scene {
+            name: "5a-long-before-trim",
+            what: "连续说了十几句（几百字、无静默）：只看得见最后几行，字都在底衬里",
+            events: nonstop_speech().0,
+            shot_at: nonstop_speech().1 + 400,
+        },
+        Scene {
+            name: "5b-long-after-trim",
+            what: "模型把队首的定稿句丢掉之后：画面与 5a 逐像素相同，没有一个字挪位置",
+            events: {
+                let (mut events, end) = nonstop_speech();
+                events.push((end + 100, Event::Trim(Track::Listen, 600)));
+                events
+            },
+            shot_at: nonstop_speech().1 + 800,
         },
         Scene {
             name: "4a-two-tracks",

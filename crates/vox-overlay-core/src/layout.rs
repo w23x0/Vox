@@ -80,6 +80,11 @@ pub struct TrackText<'a> {
     pub breaks: &'a [bool],
     pub line_height: i32,
     pub ascent: i32,
+    /// `chars[0]` 在整帧字序列里的下标。排版只从渲染侧记住的行首锚点开始，
+    /// 锚点之前的字不再参与折行，这里把下标换回整帧的。
+    pub base: usize,
+    /// 锚点之前已经折出（并且早已滚出区域）的行数。
+    pub first_line: usize,
 }
 
 impl<'a> TrackText<'a> {
@@ -114,8 +119,10 @@ pub struct PlacedLine {
 /// 一条轨的整个区域。
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct TrackLayout {
-    /// 区域内**所有**视觉行（含已经移出区域顶部的），按行号排列。
+    /// 锚点起的所有视觉行（含正在移出区域顶部的），按行号排列。
     pub lines: Vec<PlacedLine>,
+    /// `lines[0]` 在这条轨整个行序列里的行号（锚点之前滚出去的行数）。
+    pub first_line: usize,
     /// 区域顶/底（画的时候拿它裁剪，免得上浮中的行画到隔壁区域上）。
     pub region: (i32, i32),
 }
@@ -320,14 +327,15 @@ where
             continue;
         }
         let segments = wrap(text, avail, hang);
-        let scroll = scroll_for(slot == 0, segments.len());
+        let scroll = scroll_for(slot == 0, text.first_line + segments.len());
         let bottom = top + region_h;
         let mut track = TrackLayout {
+            first_line: text.first_line,
             region: (top, bottom),
             ..Default::default()
         };
         for (index, segment) in segments.iter().enumerate() {
-            let y = top as f32 + index as f32 * step - scroll;
+            let y = top as f32 + (text.first_line + index) as f32 * step - scroll;
             // 正在移出区域顶部的那一行按被裁的比例淡出。
             let visible = (y + plate_h as f32 - top as f32).max(0.0) / plate_h as f32;
             let plate_w =
@@ -339,8 +347,8 @@ where
                 plate_h,
                 text_x: metrics.padding + metrics.plate_pad_x,
                 baseline_y: y + metrics.plate_pad_y as f32 + text.ascent as f32,
-                first: segment.first,
-                last: segment.last,
+                first: text.base + segment.first,
+                last: text.base + segment.last,
                 clip: visible.clamp(0.0, 1.0),
             });
         }
@@ -388,6 +396,7 @@ mod tests {
             breaks,
             line_height: 40,
             ascent: 32,
+            ..Default::default()
         }
     }
 

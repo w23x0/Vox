@@ -84,6 +84,7 @@ fn main() {
                 Some(line) => line.chars = chars,
                 None => lines.push(SubtitleLine {
                     track: *track,
+                    origin: 0,
                     chars,
                     color: match track {
                         Track::Listen => settings.listen_color.clone(),

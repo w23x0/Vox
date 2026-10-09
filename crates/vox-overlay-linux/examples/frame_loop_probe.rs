@@ -195,6 +195,7 @@ fn shoot(path: &str) {
 fn frame(n: usize) -> SubtitleFrame {
     let line = |track: Track, text: String| SubtitleLine {
         track,
+        origin: 0,
         chars: text
             .chars()
             .map(|ch| RenderedChar { ch, alpha: 1.0 })

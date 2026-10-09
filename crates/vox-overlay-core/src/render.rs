@@ -112,6 +112,26 @@ impl TrackScroll {
     }
 }
 
+/// 一条轨的排版锚点：排版从这里开始，锚点之前的字不再参与折行。
+///
+/// **锚点永远落在某个视觉行的行首**，所以从它起重新贪心折行，结果与原来从该行起的
+/// 折行逐字相同——丢掉它之前的内容不会让剩下的字重排。这是长时间连续说话时
+/// 仍能保住"字不动"的关键：模型会按预算丢掉队首的字，但可见字的排版不依赖它们。
+///
+/// `abs` 是锚点那个字的绝对下标（`SubtitleLine::origin` + 帧内下标），跨帧稳定。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct TrackAnchor {
+    abs: u64,
+    /// 锚点之前已经折出、早已滚出区域的行数。
+    lines: usize,
+}
+
+/// 锚点之后至少再留几行"区域之外"的行才允许把锚点往前推。
+///
+/// 改译可能让行数缩水，滚出去的行要能回来；留 `lines_per_track + 1` 行余量，
+/// 缩水不超过这个数的改译不会让已经丢开的行需要重现。
+const ANCHOR_SLACK_EXTRA: usize = 1;
+
 /// 一条轨每帧复用的缓冲。渲染每帧都会跑，**这里不做新分配**。
 #[derive(Debug, Default)]
 struct TrackScratch {
@@ -121,28 +141,63 @@ struct TrackScratch {
     breaks: Vec<bool>,
     line_height: i32,
     ascent: i32,
+    /// 本帧这条轨第 0 个字的绝对下标。
+    origin: u64,
+    /// 排版起点在本帧字序列里的下标（锚点换算出来的）。
+    base: usize,
+    first_line: usize,
 }
 
 impl TrackScratch {
-    /// 量一遍这条轨的度量，并把 UAX #14 的断行机会填好。
-    fn measure(&mut self, line: Option<&SubtitleLine>, font: &mut dyn GlyphSource) -> bool {
+    /// 量一遍这条轨**从锚点起**的度量，并把 UAX #14 的断行机会填好。
+    ///
+    /// 锚点对不上本帧（轨被清空、模型把锚点之前的字丢到了锚点后面）就退回帧首，
+    /// 返回 `Fresh`，调用方要连带重置上浮动画。
+    fn measure(
+        &mut self,
+        line: Option<&SubtitleLine>,
+        anchor: &mut TrackAnchor,
+        font: &mut dyn GlyphSource,
+    ) -> Measured {
         self.chars.clear();
         self.advances.clear();
         self.breaks.clear();
         self.text.clear();
         let Some(line) = line else {
-            return false;
+            let had = *anchor != TrackAnchor::default();
+            *anchor = TrackAnchor::default();
+            return if had {
+                Measured::Gone
+            } else {
+                Measured::Absent
+            };
         };
         let metrics = font.metrics();
         self.line_height = metrics.line_height.max(1);
         self.ascent = metrics.ascent;
-        for rc in &line.chars {
+        self.origin = line.origin;
+        let end = line.origin + line.chars.len() as u64;
+        let mut fresh = false;
+        if anchor.abs < line.origin || anchor.abs >= end {
+            *anchor = TrackAnchor {
+                abs: line.origin,
+                lines: 0,
+            };
+            fresh = true;
+        }
+        self.base = (anchor.abs - line.origin) as usize;
+        self.first_line = anchor.lines;
+        for rc in &line.chars[self.base..] {
             self.chars.push(rc.ch);
             self.advances.push(font.advance(rc.ch).max(0));
             self.text.push(rc.ch);
         }
         fill_breaks(&self.text, &self.chars, &mut self.breaks);
-        true
+        if fresh {
+            Measured::Fresh
+        } else {
+            Measured::Present
+        }
     }
 
     fn text(&self) -> TrackText<'_> {
@@ -152,8 +207,48 @@ impl TrackScratch {
             breaks: &self.breaks,
             line_height: self.line_height,
             ascent: self.ascent,
+            base: self.base,
+            first_line: self.first_line,
         }
     }
+}
+
+/// `TrackScratch::measure` 的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Measured {
+    /// 本帧没有这条轨，上一帧也没有。
+    Absent,
+    /// 本帧没有这条轨，上一帧有（要把上浮动画归零）。
+    Gone,
+    /// 有，沿用上一帧的锚点。
+    Present,
+    /// 有，但锚点作废、从帧首重新排（新内容出现 / 清空后重来）。
+    Fresh,
+}
+
+impl Measured {
+    fn present(self) -> bool {
+        matches!(self, Measured::Present | Measured::Fresh)
+    }
+}
+
+/// 把锚点往前推到"已经滚出区域、且留够余量"的最后一个行首。
+fn advance_anchor(
+    anchor: &mut TrackAnchor,
+    origin: u64,
+    region: &crate::layout::TrackLayout,
+    lines_per_track: usize,
+) {
+    let slack = lines_per_track + ANCHOR_SLACK_EXTRA;
+    let Some(k) = region.lines.len().checked_sub(lines_per_track + slack) else {
+        return;
+    };
+    if k == 0 {
+        return;
+    }
+    // 第 k 行的行首就是新锚点：它之前的 k 行都在区域上方、且留够了余量。
+    anchor.abs = origin + region.lines[k].first as u64;
+    anchor.lines = region.first_line + k;
 }
 
 /// 一帧一帧往 `Canvas` 上画。持有字体，所以只能在窗口线程上用。
@@ -172,6 +267,8 @@ pub struct Renderer {
     speak_scratch: TrackScratch,
     listen_scroll: TrackScroll,
     speak_scroll: TrackScroll,
+    listen_anchor: TrackAnchor,
+    speak_anchor: TrackAnchor,
     epoch: Instant,
     last_frame_ms: u64,
 }
@@ -198,6 +295,8 @@ impl Renderer {
             speak_scratch: TrackScratch::default(),
             listen_scroll: TrackScroll::default(),
             speak_scroll: TrackScroll::default(),
+            listen_anchor: TrackAnchor::default(),
+            speak_anchor: TrackAnchor::default(),
             epoch,
             last_frame_ms: 0,
         })
@@ -228,6 +327,8 @@ impl Renderer {
         self.speak_scratch = TrackScratch::default();
         self.listen_scroll.reset();
         self.speak_scroll.reset();
+        self.listen_anchor = TrackAnchor::default();
+        self.speak_anchor = TrackAnchor::default();
         Ok(())
     }
 
@@ -239,12 +340,26 @@ impl Renderer {
     /// 算一帧的布局，不画。返回的 [`FrameLayout`] 里是每个字最终落在哪。
     pub fn plan(&mut self, input: &FrameInput<'_>) -> FrameLayout {
         let metrics = Metrics::for_dpi(input.dpi);
-        let has_listen = self
-            .listen_scratch
-            .measure(find_line(input.frame, Track::Listen), self.font.as_mut());
-        let has_speak = self
-            .speak_scratch
-            .measure(find_line(input.frame, Track::Speak), self.font.as_mut());
+        let listen_state = self.listen_scratch.measure(
+            find_line(input.frame, Track::Listen),
+            &mut self.listen_anchor,
+            self.font.as_mut(),
+        );
+        let speak_state = self.speak_scratch.measure(
+            find_line(input.frame, Track::Speak),
+            &mut self.speak_anchor,
+            self.font.as_mut(),
+        );
+        // 轨消失或锚点作废 = 内容换了一茬，上浮动画从头来，别拖着上一茬的位移。
+        for (state, scroll) in [
+            (listen_state, &mut self.listen_scroll),
+            (speak_state, &mut self.speak_scroll),
+        ] {
+            if matches!(state, Measured::Gone | Measured::Fresh) {
+                scroll.reset();
+            }
+        }
+        let (has_listen, has_speak) = (listen_state.present(), speak_state.present());
 
         let now_ms = input.now.saturating_duration_since(self.epoch).as_millis() as u64;
         let lines_per_track = input.settings.lines_per_track.max(1);
@@ -253,7 +368,7 @@ impl Renderer {
 
         let listen = &mut self.listen_scroll;
         let speak = &mut self.speak_scroll;
-        layout_regions(
+        let layout = layout_regions(
             has_listen.then(|| self.listen_scratch.text()),
             has_speak.then(|| self.speak_scratch.text()),
             |is_listen, total_lines| {
@@ -268,7 +383,25 @@ impl Renderer {
             input.client_width,
             lines_per_track,
             metrics,
-        )
+        );
+        // 排版的结果就是下一帧锚点的依据：已经滚出区域并留够余量的行不再参与折行。
+        if let Some(region) = &layout.listen {
+            advance_anchor(
+                &mut self.listen_anchor,
+                self.listen_scratch.origin,
+                region,
+                lines_per_track as usize,
+            );
+        }
+        if let Some(region) = &layout.speak {
+            advance_anchor(
+                &mut self.speak_anchor,
+                self.speak_scratch.origin,
+                region,
+                lines_per_track as usize,
+            );
+        }
+        layout
     }
 
     /// 把一帧画到 `canvas` 上。`resize` 本身会清空画布，不再重复清屏。
@@ -438,6 +571,7 @@ mod tests {
                 .iter()
                 .map(|(track, text)| SubtitleLine {
                     track: *track,
+                    origin: 0,
                     chars: text
                         .chars()
                         .map(|ch| RenderedChar { ch, alpha: 1.0 })

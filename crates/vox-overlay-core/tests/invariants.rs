@@ -108,6 +108,13 @@ const WORDS: [&str; 10] = [
     "实时",
     "翻译",
 ];
+/// 几个字母，不带空格：模拟一个词在逐字往后长。
+fn letters(rng: &mut Rng) -> String {
+    (0..1 + rng.below(6))
+        .map(|_| char::from(b'a' + rng.below(26) as u8))
+        .collect()
+}
+
 const TAILS: [&str; 6] = ["", "。", "，字幕", " 的意思。", "！", "テスト"];
 
 /// 一句假的话。混中英与标点，好让折行/悬挂标点那条路径也被随机走到。
@@ -122,13 +129,15 @@ fn phrase(rng: &mut Rng) -> String {
     out
 }
 
-/// 一个视觉行的样子：轨内行号、底衬 x、行里的字与每个字的 x。
+/// 一个视觉行的样子：底衬 x、行里的字与每个字的 x、第一个字的绝对下标。
 #[derive(Debug, Clone, PartialEq)]
 struct PlacedLine {
     y: f32,
     plate_x: i32,
     chars: Vec<char>,
     xs: Vec<i32>,
+    /// 第一个字的**绝对下标**（`SubtitleLine::origin` + 帧内下标），模型丢队首也不变。
+    first_abs: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -136,25 +145,52 @@ struct Placed {
     lines: Vec<PlacedLine>,
     /// 区域顶边的屏幕 y。只在"在跑轨数"变化时才允许变（C4）。
     top: i32,
+    /// `lines[0]` 在这条轨整个行序列里的行号：渲染侧丢开早已滚出的行之后，
+    /// 看"相对行号"必须加上它，否则截断前后对不上。
+    first_line: usize,
 }
 
+/// 一个字的落点：(绝对行号, x, 字)。
+type Slot = (usize, i32, char);
+
 impl Placed {
-    fn flat(&self) -> Vec<char> {
-        self.lines
-            .iter()
-            .flat_map(|l| l.chars.iter().copied())
-            .collect()
+    fn total_lines(&self) -> usize {
+        self.first_line + self.lines.len()
     }
 
-    /// 字在轨内的下标 → (行号, x)。行号是**轨内**序号，不是屏幕 y（上浮会改 y）。
-    fn slots(&self) -> Vec<(usize, i32)> {
-        let mut out = Vec::new();
+    /// 绝对字下标 → 落点。
+    fn slots(&self) -> std::collections::BTreeMap<u64, Slot> {
+        let mut out = std::collections::BTreeMap::new();
         for (li, line) in self.lines.iter().enumerate() {
-            for &x in &line.xs {
-                out.push((li, x));
+            for (k, (&x, &ch)) in line.xs.iter().zip(&line.chars).enumerate() {
+                out.insert(line.first_abs + k as u64, (self.first_line + li, x, ch));
             }
         }
         out
+    }
+
+    fn line_at(&self, abs_line: usize) -> Option<&PlacedLine> {
+        abs_line
+            .checked_sub(self.first_line)
+            .and_then(|i| self.lines.get(i))
+    }
+
+    fn first_char(&self) -> u64 {
+        self.lines.first().map_or(0, |l| l.first_abs)
+    }
+
+    /// 末尾那个还在增长的词（连续字母数字）的起点；末尾不是词就没有。
+    fn growing_word_start(&self) -> Option<u64> {
+        let slots = self.slots();
+        let mut start = None;
+        for (&abs, &(_, _, ch)) in slots.iter().rev() {
+            if ch.is_ascii_alphanumeric() {
+                start = Some(abs);
+            } else {
+                break;
+            }
+        }
+        start
     }
 }
 
@@ -251,11 +287,11 @@ impl World {
                 .track(track)
                 .render(self.now)
                 .into_iter()
-                .filter(|c| c.alpha > 0.0)
                 .collect();
             if !chars.is_empty() {
                 lines.push(SubtitleLine {
                     track,
+                    origin: self.subs.track(track).origin(),
                     chars,
                     color: "#ffffff".into(),
                 });
@@ -302,6 +338,11 @@ fn placed_of(
     let Some(region) = region else {
         return Placed::default();
     };
+    let origin = frame
+        .lines
+        .iter()
+        .find(|l| l.track == track)
+        .map_or(0, |l| l.origin);
     let chars: Vec<char> = frame
         .lines
         .iter()
@@ -310,6 +351,7 @@ fn placed_of(
         .unwrap_or_default();
     let mut placed = Placed {
         top: region.region.0,
+        first_line: region.first_line,
         ..Placed::default()
     };
     for line in &region.lines {
@@ -326,6 +368,7 @@ fn placed_of(
             plate_x: line.plate_x,
             chars: line_chars,
             xs: line_xs,
+            first_abs: origin + line.first as u64,
         });
     }
     placed
@@ -335,6 +378,8 @@ fn placed_of(
 enum Step {
     /// 服务端把整句往前推：新增若干字。
     Extend(String),
+    /// 一个词逐字往后长（没有尾空格）：词长到超宽时整体挪到下一行一次。
+    Grow(String),
     /// 服务端改译/纠错：新整句不以旧整句为前缀。
     Rewrite(String),
     /// 这一句说完了，定稿。
@@ -344,10 +389,11 @@ enum Step {
 }
 
 fn make_step(rng: &mut Rng) -> Step {
-    match rng.below(10) {
-        0..=4 => Step::Extend(phrase(rng)),
-        5..=7 => Step::Rewrite(phrase(rng)),
-        8 => Step::Finish(phrase(rng)),
+    match rng.below(13) {
+        0..=3 => Step::Extend(phrase(rng)),
+        4..=6 => Step::Grow(letters(rng)),
+        7..=9 => Step::Rewrite(phrase(rng)),
+        10 => Step::Finish(phrase(rng)),
         _ => Step::Wait(STEP_MS * (1 + rng.below(3))),
     }
 }
@@ -356,57 +402,88 @@ fn make_step(rng: &mut Rng) -> Step {
 // 不变量检查
 // ---------------------------------------------------------------------------
 
-/// 两个字序列的最长公共前缀长度。
-fn common_prefix(a: &[char], b: &[char]) -> usize {
-    a.iter().zip(b).take_while(|(x, y)| x == y).count()
+/// 分歧点：两帧都有的字里第一个内容不同的绝对下标；新帧比旧帧短（尾巴被改没了）
+/// 时，分歧点就是新帧的末尾。
+fn divergence(
+    pm: &std::collections::BTreeMap<u64, Slot>,
+    cm: &std::collections::BTreeMap<u64, Slot>,
+) -> Option<u64> {
+    let differing = pm
+        .iter()
+        .find(|(abs, (_, _, ch))| cm.get(abs).is_some_and(|c| c.2 != *ch))
+        .map(|(abs, _)| *abs);
+    let cur_end = cm.keys().next_back().map(|k| k + 1);
+    let shortened = cur_end.filter(|end| pm.contains_key(end));
+    match (differing, shortened) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
 }
 
 fn check_i1(where_: &str, prev: &Placed, cur: &Placed) -> Result<(), String> {
-    let (pf, cf) = (prev.flat(), cur.flat());
-    let d = common_prefix(&pf, &cf);
-    let (ps, cs) = (prev.slots(), cur.slots());
-    for k in 0..d {
-        if ps.get(k) != cs.get(k) {
-            return Err(format!(
-                "{where_}: I1 位置不动——第 {k} 个字 {:?} 的 (行号,x) 从 {:?} 变成了 {:?}",
-                cf[k], ps[k], cs[k]
-            ));
+    let (pm, cm) = (prev.slots(), cur.slots());
+    // 分歧点：两帧都有的字里第一个内容不同的绝对下标。
+    let d = divergence(&pm, &cm);
+    // 例外条款（施工稿 §1 I1）：仅当前行尾、仍在增长的那个词，在增长导致超宽时
+    // 整体移到下一行一次；其余字不动。
+    let word = prev.growing_word_start();
+    let visible_from = prev.total_lines().saturating_sub(LINES_PER_TRACK as usize);
+    for (&abs, &(line, x, ch)) in &pm {
+        if d.is_some_and(|d| abs >= d) || word.is_some_and(|w| abs >= w) {
+            break;
+        }
+        match cm.get(&abs) {
+            Some(&(l2, x2, _)) if (line, x) != (l2, x2) => {
+                return Err(format!(
+                    "{where_}: I1 位置不动——绝对第 {abs} 个字 {ch:?} 的 (行号,x) 从 {:?} 变成了 {:?}",
+                    (line, x),
+                    (l2, x2)
+                ));
+            }
+            Some(_) => {}
+            None if abs < cur.first_char() && line >= visible_from => {
+                return Err(format!(
+                    "{where_}: I1 位置不动——可见字 {ch:?}（绝对第 {abs} 个，第 {line} 行）被截掉了"
+                ));
+            }
+            None => {}
         }
     }
     Ok(())
 }
 
 fn check_i2(where_: &str, prev: &Placed, cur: &Placed) -> Result<(), String> {
-    let d = common_prefix(&prev.flat(), &cur.flat());
     if prev.lines.len() < 2 {
         return Ok(());
     }
+    let (pm, cm) = (prev.slots(), cur.slots());
+    let d = divergence(&pm, &cm);
     // 分歧点落在第几行；从那一行起允许重排，更上面的行必须冻结。
-    let mut divergent_line = prev.lines.len();
-    let mut seen = 0usize;
-    for (li, line) in prev.lines.iter().enumerate() {
-        if seen + line.chars.len() > d {
-            divergent_line = li;
-            break;
-        }
-        seen += line.chars.len();
-    }
+    let divergent_line = match d {
+        Some(d) => pm.get(&d).map_or(prev.total_lines(), |s| s.0),
+        None => prev.total_lines(),
+    };
     // 最后一行底下还没有新行，不算封口：它还在往右长。
-    let sealed = prev.lines.len() - 1;
+    let sealed = prev.total_lines() - 1;
     for (li, old) in prev.lines.iter().enumerate() {
+        let abs_line = prev.first_line + li;
         // 折行要往后看一个不可断的词：分歧点落在下一行开头的词里，上一行的收尾
         // 也可能跟着变（新词更短就能挤上来）。所以分歧行的前一行也不算封口。
-        if li + 1 >= divergent_line || li >= sealed {
+        if abs_line + 1 >= divergent_line || abs_line >= sealed {
             break;
         }
-        let Some(new) = cur.lines.get(li) else {
+        // 被渲染侧丢开（早已滚出区域）的行不在了，不算变。
+        let Some(new) = cur.line_at(abs_line) else {
+            if abs_line < cur.first_line {
+                continue;
+            }
             return Err(format!(
-                "{where_}: I2 已封口的行不该消失——第 {li} 行 {old:?} 没了"
+                "{where_}: I2 已封口的行不该消失——第 {abs_line} 行 {old:?} 没了"
             ));
         };
         if old.chars != new.chars || old.xs != new.xs {
             return Err(format!(
-                "{where_}: I2 已封口的行不该变——第 {li} 行从 {old:?} 变成 {new:?}"
+                "{where_}: I2 已封口的行不该变——第 {abs_line} 行从 {old:?} 变成 {new:?}"
             ));
         }
     }
@@ -434,6 +511,39 @@ fn check_i3(where_: &str, cur: &Placed) -> Result<(), String> {
                 return Err(format!(
                     "{where_}: I3 行距必须恒定——观察到 {gap}，基准 {step}"
                 ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_i4(
+    where_: &str,
+    track: Track,
+    prev: &Placed,
+    cur: &Placed,
+    count_changed: bool,
+) -> Result<(), String> {
+    let moved = |what: String| {
+        Err(format!(
+            "{where_}: I4 轨道独立——只动了 {track:?}，另一条轨的{what}：{prev:?} 变成 {cur:?}"
+        ))
+    };
+    if prev.lines.is_empty() != cur.lines.is_empty() {
+        return moved("内容凭空出现/消失".into());
+    }
+    if prev.total_lines() != cur.total_lines() {
+        return moved("行数变了".into());
+    }
+    // 区域顶边只允许在 `me` 这条轨出现/消失（在跑轨数变）时变。
+    if !count_changed && prev.top != cur.top {
+        return moved("区域顶边变了".into());
+    }
+    // 渲染侧可能各自把早已滚出的行丢开，所以只比两边都还在的行（按绝对行号）。
+    for (li, old) in prev.lines.iter().enumerate() {
+        if let Some(new) = cur.line_at(prev.first_line + li) {
+            if old != new {
+                return moved(format!("第 {} 行变了", prev.first_line + li));
             }
         }
     }
@@ -483,6 +593,11 @@ fn run_sequence(seed: u64) -> Result<(), String> {
                 full.push_str(&text);
                 world.feed(track, &full);
             }
+            Step::Grow(text) => {
+                let mut full = world.sentence[World::index(track)].clone();
+                full.push_str(&text);
+                world.feed(track, &full);
+            }
             Step::Rewrite(text) => world.feed(track, &text),
             Step::Finish(text) => world.commit(track, &text),
             Step::Wait(ms) => world.tick(ms),
@@ -499,16 +614,7 @@ fn run_sequence(seed: u64) -> Result<(), String> {
         // I4：另一条轨一个坐标都不能动。
         // 区域顶边只允许在 `me` 这条轨出现/消失（在跑轨数变）时变；其余情况一个坐标都不许动。
         let count_changed = prev[me].lines.is_empty() != cur[me].lines.is_empty();
-        let mut other_prev = prev[other].clone();
-        if count_changed {
-            other_prev.top = cur[other].top;
-        }
-        if other_prev != cur[other] {
-            return Err(format!(
-                "{where_}: I4 轨道独立——只动了 {track:?}，另一条轨却从 {:?} 变成 {:?}",
-                prev[other], cur[other]
-            ));
-        }
+        check_i4(&where_, track, &prev[other], &cur[other], count_changed)?;
         check_i5(&where_, &world, track)?;
         check_i5(
             &where_,
@@ -585,19 +691,23 @@ fn rewriting_the_middle_only_reshuffles_after_the_divergence() {
     // 分歧点在第 6 个字。
     world.feed(Track::Listen, "翻译字幕永远保持位置不动啊");
     let after = world.view().listen;
-    let d = common_prefix(&before.flat(), &after.flat());
-    for k in 0..d {
+    let (b, a) = (before.slots(), after.slots());
+    let d = b
+        .iter()
+        .find(|(abs, slot)| a.get(abs).is_some_and(|x| x.2 != slot.2))
+        .map(|(abs, _)| *abs)
+        .expect("改译后必有分歧点");
+    assert!(d >= 4, "分歧点在第 6 个字附近，实际 {d}");
+    for (abs, slot) in &b {
+        if *abs >= d {
+            break;
+        }
         assert_eq!(
-            before.slots()[k],
-            after.slots()[k],
-            "分歧点之前（第 {k} 个字）不许挪位置"
+            Some(slot),
+            a.get(abs),
+            "分歧点之前（绝对第 {abs} 个字）不许挪位置、不许换字"
         );
     }
-    assert_eq!(
-        after.flat()[..d],
-        before.flat()[..d],
-        "公共前缀必须逐字相同"
-    );
 }
 
 /// 定向：超宽的一行不许从左侧滚掉老字（R4 / I3）。
@@ -608,7 +718,7 @@ fn an_overlong_line_keeps_every_char_from_the_first_one() {
     world.feed(Track::Listen, &long);
     let view = world.view();
     assert_eq!(
-        view.listen.flat().len(),
+        view.listen.slots().len(),
         200,
         "整行 200 个字都该被排进某个视觉行，不许被丢掉（旧行为是从左侧丢老字）"
     );
@@ -683,5 +793,101 @@ fn unconfirmed_tail_is_dimmed_and_confirmed_tail_is_not() {
     assert!(
         unconfirmed.iter().all(|a| (*a - 0.7).abs() < 1e-6),
         "未确认的尾巴画 0.7 倍：{unconfirmed:?}"
+    );
+}
+
+/// 定向：一个词逐字往后长、没有尾空格（I1 的例外条款）。
+///
+/// 词长到让行超宽时，它整体挪到下一行**一次**；除它之外的字一个都不动。
+#[test]
+fn a_growing_word_hops_to_the_next_line_once_and_nothing_else_moves() {
+    let mut world = World::new(0);
+    let mut sentence = "ab cd ef ".repeat(17);
+    world.feed(Track::Listen, &sentence);
+    let mut prev = world.view().listen;
+    let word_start = prev.slots().len() as u64;
+    let mut hops = 0;
+    let mut last_home: Option<(usize, i32)> = None;
+    let mut first_home: Option<(usize, i32)> = None;
+    for i in 0..14 {
+        sentence.push(char::from(b'a' + i));
+        world.feed(Track::Listen, &sentence);
+        let cur = world.view().listen;
+        check_i1("growing word", &prev, &cur).expect("词之外的字不许动");
+        check_i2("growing word", &prev, &cur).expect("封口的行不许变");
+        let home = cur.slots().get(&word_start).map(|s| (s.0, s.1));
+        if last_home.is_some() && home != last_home {
+            hops += 1;
+        }
+        first_home = first_home.or(home);
+        last_home = home;
+        prev = cur;
+    }
+    assert_eq!(
+        hops, 1,
+        "整词只许挪一次，实际 {hops} 次（落点 {last_home:?}）"
+    );
+    assert_eq!(
+        last_home.map(|h| (h.0, h.1)),
+        first_home.map(|h| (h.0 + 1, 0)),
+        "挪到了下一行行首"
+    );
+}
+
+/// 定向：长时间连续说话（无静默、几千字、中英混排）。模型按预算丢队首、渲染侧把锚点
+/// 推到行首，全程可见字的 (绝对行号, x) 一个都不许变。
+#[test]
+fn five_thousand_chars_of_nonstop_speech_never_reflow_visible_chars() {
+    const PIECES: [&str; 8] = [
+        "the quick brown fox ",
+        "然后它又跳过了一只狗，",
+        "and then something happened ",
+        "字幕必须折行而且不能乱跳。",
+        "hello world ",
+        "实时翻译 ",
+        "supercalifragilistic ",
+        "好的，",
+    ];
+    // 模拟 Runtime 的预算：已定稿的字留这么多，更早的定稿句整句丢掉。
+    const KEEP_SEALED: usize = 1000;
+    let mut world = World::new(0);
+    let mut rng = Rng(0xC0FFEE);
+    let mut prev = Placed::default();
+    let mut fed = 0usize;
+    let mut checked = 0usize;
+    while fed < 5200 {
+        let mut sentence = String::new();
+        for _ in 0..(3 + rng.below(4)) {
+            sentence.push_str(PIECES[rng.below(PIECES.len() as u64) as usize]);
+            world.now += 40;
+            world.feed(Track::Listen, &sentence);
+            let cur = world.view().listen;
+            let where_ = format!("fed={fed} chars={}", sentence.chars().count());
+            check_i1(&where_, &prev, &cur).unwrap_or_else(|e| panic!("{e}"));
+            check_i2(&where_, &prev, &cur).unwrap_or_else(|e| panic!("{e}"));
+            check_i3(&where_, &cur).unwrap_or_else(|e| panic!("{e}"));
+            prev = cur;
+            checked += 1;
+        }
+        fed += sentence.chars().count();
+        world.commit(Track::Listen, &sentence);
+        world.subs.track_mut(Track::Listen).trim_sealed(KEEP_SEALED);
+    }
+    assert!(checked > 300, "该检查了几百帧，实际 {checked}");
+    let track = world.subs.track(Track::Listen);
+    assert!(
+        track.origin() > 3000,
+        "模型必须真的丢过队首，实际 origin={}",
+        track.origin()
+    );
+    assert!(
+        prev.first_line > 20,
+        "渲染侧必须真的把锚点往前推过，实际丢开了 {} 行",
+        prev.first_line
+    );
+    assert!(
+        prev.lines.len() <= 2 * LINES_PER_TRACK as usize + 3,
+        "锚点之后只该剩区域 + 余量那么几行，实际 {}",
+        prev.lines.len()
     );
 }

@@ -189,6 +189,7 @@ mod tests {
         overlay.render(SubtitleFrame {
             lines: vec![SubtitleLine {
                 track: Track::Listen,
+                origin: 0,
                 chars: "悬浮字幕测试"
                     .chars()
                     .map(|ch| RenderedChar { ch, alpha: 1.0 })
@@ -218,6 +219,7 @@ mod tests {
                     o.render(SubtitleFrame {
                         lines: vec![SubtitleLine {
                             track: Track::Speak,
+                            origin: 0,
                             chars: format!("{worker}-{i}")
                                 .chars()
                                 .map(|ch| RenderedChar { ch, alpha: 1.0 })
@@ -251,6 +253,7 @@ mod gdi_render_tests {
     fn line(track: Track, text: &str) -> SubtitleLine {
         SubtitleLine {
             track,
+            origin: 0,
             chars: text
                 .chars()
                 .map(|ch| RenderedChar { ch, alpha: 1.0 })
@@ -298,6 +301,7 @@ mod gdi_render_tests {
         let frame = SubtitleFrame {
             lines: vec![SubtitleLine {
                 track: Track::Listen,
+                origin: 0,
                 chars: "完全透明"
                     .chars()
                     .map(|ch| RenderedChar { ch, alpha: 0.0 })

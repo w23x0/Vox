@@ -184,6 +184,7 @@ mod tests {
         SubtitleFrame {
             lines: vec![SubtitleLine {
                 track: Track::Listen,
+                origin: 0,
                 chars: vec![RenderedChar { ch: '字', alpha }],
                 color: "#eef6ff".into(),
             }],
