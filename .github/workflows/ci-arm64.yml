@@ -14,7 +14,7 @@
 #     没有可比性。按 §2.5-2，性能结论只能来自板上自计时（§2.5-1 的实时倍率），
 #     "有板子之前不写任何够用的结论"（同文件 §5）。
 #   - 不证明真机上有没有 ALSA/设备/打包能跑——那些在 S4-C 的其它行（vox-audio-alsa 等）验。
-#   - 不覆盖 Windows 端。x86 门禁与 release 构建见 .github/workflows/release.yml。
+#   - 不覆盖 Windows 端。Windows 端另有一个常驻 job：.github/workflows/ci-windows.yml（打包仍在 release.yml）。
 name: CI (aarch64 cross)
 
 on:

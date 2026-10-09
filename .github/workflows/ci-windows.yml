@@ -1,0 +1,106 @@
+# CI-WIN · Windows 门禁：windows-latest 上把"能在 Windows 编的成员"全过一遍
+#
+# 这个 job **证明什么**：
+#   1. 三个 Windows 平台外壳（vox-audio-win / vox-input-win / vox-overlay-win）
+#      与桌面装配层（app/src-tauri 的 Windows 分支：**编得过、测试跑得过**）。
+#      这部分代码在 Linux 开发机上被 `cfg(windows)` 整个挡掉，改坏了本机看不出来——
+#      在此之前，只有 release.yml 偶尔打 tag 时才会编一次，也就是说**平时没人编译它**。
+#      这个 job 就是那唯一的常驻检查点。
+#   2. 平台无关的那些成员（vox-core / vox-dsp / vox-net / vox-mcp / vox-host /
+#      vox-overlay-core / vox-osc）在 Windows 的 ABI 与 API 集下依然成立。
+#
+# 这个 job **不证明什么**（与 ci-arm64.yml 同一条口径，别拿它当性能结论用）：
+#   - **不证明性能**。Windows 侧热路径的实测数字在 docs/research/BACKEND_HEALTH_CHECK.md，
+#     那来自开发机，不是 runner。
+#   - **不证明真机上能用**。要真声卡 / 真 GDI / 真桌面的用例在代码里都带了
+#     `#[ignore = "需要真实桌面"]` 之类的标注（vox-audio-win 与 vox-overlay-win 的
+#     测试模块），只能手动跑，命令写在各处的模块注释里。vox-host 的密钥服务那条
+#     也一样带着 `#[ignore = "需要真机上跑着 Secret Service"]`（src/secrets/service.rs）；
+#     vox-input-win 那两条只是 VK 码解析，纯逻辑，本来就不碰硬件。
+#   - **不出包**。打包在 release.yml（tauri-action，NSIS）。
+#
+# ── 为什么下面一串 --exclude ────────────────────────────────────────────────
+# 五个 Linux 专属成员过不了 Windows 的 `--all-targets`。**这不是 Windows 代码的 bug**，
+# 而是它们自己没把 lib 里的 Linux 段、以及 examples/tests 罩进
+# `cfg(target_os = "linux")`。逐个文件的实据（`cargo check --workspace --all-targets
+# --target x86_64-pc-windows-gnu` 的真实报错）：
+#   vox-input-linux    lib 整体 import evdev / libc（src/codes.rs、src/hotkey.rs），
+#                      而这两个依赖是 `[target.'cfg(target_os = "linux")'.dependencies]`，
+#                      在 Windows 侧根本不存在 → E0432 / E0433（外加 std::os::fd）。
+#                      tests/evdev_end_to_end.rs 自己是有 `#![cfg(target_os = "linux")]`
+#                      的，只是 lib 先编不过，根本轮不到它。
+#   vox-audio-linux    三个 example 全中：examples/smoke.rs 与 examples/virtual_mic.rs
+#                      用 LinuxCapture / LinuxPlayback / VirtualSink / virtual_mic_description，
+#                      examples/devices.rs 用 pipewire_available / LinuxDeviceRegistry——
+#                      这些符号只在 linux 那一侧 → E0432。
+#   vox-audio-alsa     examples/devices.rs（alsa::pcm::PCM / alsa::Direction，
+#                      外加 alsa_available 等）、examples/loopback.rs 与
+#                      tests/aloop_roundtrip.rs（AlsaCapture / AlsaPlayback）→ E0432。
+#   vox-overlay-linux  examples/live.rs、examples/frame_loop_probe.rs（gtk / glib）、
+#                      examples/snapshot.rs（vox_overlay_linux::font_factory）、
+#                      tests/ink_in_plate.rs（gtk / glib）
+#                      （release.yml 的 Linux 端专门装了 fonts-noto-cjk 才跑得了它）。
+#   vox-headless       失败点在 lib 的测试模块，不在 tests/ 目录（那边是有
+#                      `#![cfg(target_os = "linux")]` 的）：它经 platform()，
+#                      而 platform() 只有 linux 一条实现，非 Linux 目标上落到
+#                      platform/other.rs 的"其它平台"分支 → E0282（src/headless.rs:550
+#                      推不出类型）+ E0277（platform/other.rs:71 的 unwrap_err 要
+#                      Platform: Debug，而 Platform 没 derive Debug）。
+# 也就是说这些 crate 只承诺"在 Linux 上编过"——那边由本机的 `cargo test --workspace`
+# 和 release.yml 的 publish-tauri-linux 盯着。真要在 Windows 上连它们一起编，得先给它们
+# 补 cfg 门控，那是代码活（且要迁移调用方），不是 CI 活，故不在本工单范围内。
+name: CI (Windows)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 仓库没有 .gitattributes。若 runner 的 git 把 core.autocrlf 设成了 true，
+      # checkout 会把 LF 落成 CRLF，`cargo fmt --check` 就会逐文件报"该改了"——
+      # 那是行尾造成的假阳性，不是格式真的坏了。先把开关关掉，再按 index 里的字节
+      # （永远是 LF）把工作区重写一遍。只动本次 checkout，不碰仓库内容。
+      - name: Normalize line endings to LF
+        run: |
+          git config --global core.autocrlf false
+          git checkout-index -a -f
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: .
+
+      # fmt 与目标无关（格式错了哪儿都错），所以全量跑，不过 exclude 名单。
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      # exclude 名单与下面 test 那一步保持一致；理由见文件头。
+      - name: Clippy (Windows-buildable members)
+        run: >
+          cargo clippy --locked --workspace --all-targets
+          --exclude vox-input-linux
+          --exclude vox-audio-linux
+          --exclude vox-audio-alsa
+          --exclude vox-overlay-linux
+          --exclude vox-headless
+          -- -D warnings
+
+      # 不加 --all-targets：那只多构建 benches（本仓库一个都没有）。examples 照常构建
+      # 并运行——vox-net 的 aliyyun_probe 特意声明了 `test = true`（见它的 Cargo.toml），
+      # 就是为了让它那 15 条单测被 cargo test 跑到；去掉这一步反而会漏。
+      - name: Test (Windows-buildable members)
+        run: >
+          cargo test --locked --workspace
+          --exclude vox-input-linux
+          --exclude vox-audio-linux
+          --exclude vox-audio-alsa
+          --exclude vox-overlay-linux
+          --exclude vox-headless
