@@ -5797,7 +5797,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vox"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "openvr",
  "parking_lot",
@@ -5831,7 +5831,7 @@ dependencies = [
 
 [[package]]
 name = "vox-audio-alsa"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "alsa",
  "libc",
@@ -5842,7 +5842,7 @@ dependencies = [
 
 [[package]]
 name = "vox-audio-linux"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "pipewire",
  "serde_json",
@@ -5853,7 +5853,7 @@ dependencies = [
 
 [[package]]
 name = "vox-audio-win"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "tracing",
  "vox-core",
@@ -5864,7 +5864,7 @@ dependencies = [
 
 [[package]]
 name = "vox-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "parking_lot",
@@ -5876,7 +5876,7 @@ dependencies = [
 
 [[package]]
 name = "vox-dsp"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "nnnoiseless",
  "rubato",
@@ -5885,7 +5885,7 @@ dependencies = [
 
 [[package]]
 name = "vox-headless"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "parking_lot",
  "serde",
@@ -5903,7 +5903,7 @@ dependencies = [
 
 [[package]]
 name = "vox-host"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "keyring",
@@ -5920,7 +5920,7 @@ dependencies = [
 
 [[package]]
 name = "vox-input-linux"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "evdev",
  "libc",
@@ -5931,7 +5931,7 @@ dependencies = [
 
 [[package]]
 name = "vox-input-win"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "parking_lot",
  "tracing",
@@ -5941,7 +5941,7 @@ dependencies = [
 
 [[package]]
 name = "vox-mcp"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",
@@ -5953,7 +5953,7 @@ dependencies = [
 
 [[package]]
 name = "vox-net"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "futures-util",
  "parking_lot",
@@ -5967,11 +5967,11 @@ dependencies = [
 
 [[package]]
 name = "vox-osc"
-version = "0.2.1"
+version = "0.3.0"
 
 [[package]]
 name = "vox-overlay-core"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "tracing",
  "vox-core",
@@ -5979,7 +5979,7 @@ dependencies = [
 
 [[package]]
 name = "vox-overlay-linux"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "fontdb",
  "glib",
@@ -5992,7 +5992,7 @@ dependencies = [
 
 [[package]]
 name = "vox-overlay-win"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "parking_lot",
  "tracing",
