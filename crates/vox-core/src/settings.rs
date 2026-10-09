@@ -584,7 +584,7 @@ mod tests {
             r#"{
                 "speak": {
                     "provider": "gemini",
-                    "model_name": "qwen3.5-livetranslate-flash-realtime",
+                    "model_name": "qwen3.8-livetranslate-flash-realtime",
                     "voice_clone_frequency": 5
                 },
                 "listen": {
@@ -605,7 +605,7 @@ mod tests {
             r#"{
                 "speak": {
                     "provider": "gpt",
-                    "model_name": "qwen3.5-livetranslate-flash-realtime",
+                    "model_name": "qwen3.8-livetranslate-flash-realtime",
                     "voice_clone_frequency": 3
                 },
                 "listen": {

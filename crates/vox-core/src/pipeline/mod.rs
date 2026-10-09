@@ -1610,7 +1610,7 @@ pub(crate) mod tests {
     use crate::usage::Stamp;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-    const MODEL: &str = "qwen3.5-livetranslate-flash-realtime";
+    const MODEL: &str = "qwen3.8-livetranslate-flash-realtime";
 
     // --- 测试用的假件 ------------------------------------------------------
 
@@ -2924,7 +2924,7 @@ pub(crate) mod tests {
         assert!(enabled
             .last()
             .unwrap()
-            .contains(r#""modalities":["text","audio"]"#));
+            .contains(r#""output_modalities":["text","audio"]"#));
         assert_eq!(rig.wire.connects.load(Ordering::SeqCst), 1);
 
         rig.engine
@@ -2940,7 +2940,7 @@ pub(crate) mod tests {
         assert!(disabled
             .last()
             .unwrap()
-            .contains(r#""modalities":["text"]"#));
+            .contains(r#""output_modalities":["text"]"#));
         assert_eq!(
             rig.wire.connects.load(Ordering::SeqCst),
             1,
@@ -3212,7 +3212,7 @@ pub(crate) mod tests {
             rig.wire
                 .sent()
                 .iter()
-                .any(|f| f.contains("\"modalities\":[\"text\"]"))
+                .any(|f| f.contains("\"output_modalities\":[\"text\"]"))
         });
 
         // ④ 开闸：门开着才上传，链一动不动。

@@ -438,7 +438,7 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
-    const LIVE: &str = "qwen3.5-livetranslate-flash-realtime";
+    const LIVE: &str = "qwen3.8-livetranslate-flash-realtime";
 
     fn session() -> Session {
         Session::new(
@@ -734,7 +734,7 @@ mod tests {
         s.handshake(0);
 
         let frame = parse(&s.hot_update(&HotChange::voice("Chelsie"), 1).unwrap());
-        assert_eq!(frame["session"]["voice"], "Chelsie");
+        assert_eq!(frame["session"]["audio"]["output"]["voice"], "Chelsie");
 
         // Some(None) = 只要文字。
         let off = HotChange {
@@ -742,8 +742,11 @@ mod tests {
             ..HotChange::default()
         };
         let frame = parse(&s.hot_update(&off, 2).unwrap());
-        assert_eq!(frame["session"]["modalities"], serde_json::json!(["text"]));
-        assert!(frame["session"].get("voice").is_none());
+        assert_eq!(
+            frame["session"]["output_modalities"],
+            serde_json::json!(["text"])
+        );
+        assert!(frame["session"]["audio"]["output"].get("voice").is_none());
     }
 
     #[test]

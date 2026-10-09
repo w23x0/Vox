@@ -5,7 +5,7 @@
 //!
 //! 持久化格式沿用旧版，按模型分桶：
 //! ```json
-//! { "qwen3.5-livetranslate-flash-realtime": { "total_tokens": 0, ... } }
+//! { "qwen3.8-livetranslate-flash-realtime": { "total_tokens": 0, ... } }
 //! ```
 //! 在这个基础上多存了 `daily` / `monthly` 两个桶，用来显示"今日 / 本月"。
 
@@ -174,7 +174,7 @@ impl UsageLedger {
 mod tests {
     use super::*;
 
-    const MODEL: &str = "qwen3.5-livetranslate-flash-realtime";
+    const MODEL: &str = "qwen3.8-livetranslate-flash-realtime";
 
     fn stamp(day: u32) -> Stamp {
         Stamp {

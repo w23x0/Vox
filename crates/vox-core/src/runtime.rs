@@ -1956,7 +1956,7 @@ mod tests {
     fn usage_accumulates_without_any_pricing() {
         let (rt, _rec) = fixture();
         rt.record_usage(
-            "qwen3.5-livetranslate-flash-realtime",
+            "qwen3.8-livetranslate-flash-realtime",
             &TurnUsage {
                 input_tokens: 120,
                 output_tokens: 80,
@@ -1964,7 +1964,7 @@ mod tests {
             },
         );
         rt.record_usage(
-            "qwen3.5-livetranslate-flash-realtime",
+            "qwen3.8-livetranslate-flash-realtime",
             &TurnUsage {
                 input_tokens: 30,
                 output_tokens: 10,

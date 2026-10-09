@@ -27,13 +27,26 @@ pub const INPUT_SAMPLE_RATE: u32 = 16_000;
 /// 服务端回的语音采样率。
 pub const OUTPUT_SAMPLE_RATE: u32 = 24_000;
 
+/// 覆盖连接地址的环境变量：填百炼控制台给的工作空间专属地址
+/// （`wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime`）。
+pub const ENDPOINT_ENV: &str = "VOX_ALIYUN_ENDPOINT";
+
 /// 拼出连接地址。模型名走 query 参数。
 pub fn endpoint_url(model_name: &str) -> String {
-    format!(
-        "{}?model={}",
-        catalog::API_BASE,
-        catalog::normalize_model(model_name)
-    )
+    let base = std::env::var(ENDPOINT_ENV).ok();
+    endpoint_url_with(base.as_deref(), model_name)
+}
+
+/// `base` 是用户给的覆盖地址；空、不是 `wss://`/`ws://` 开头就退回 catalog 里的缺省。
+/// 用户贴来的地址可能自带 `?model=...`，query 一律去掉再按当前模型重拼。
+fn endpoint_url_with(base: Option<&str>, model_name: &str) -> String {
+    let base = base
+        .map(|b| b.trim())
+        .filter(|b| b.starts_with("wss://") || b.starts_with("ws://"))
+        .map(|b| b.split('?').next().unwrap_or(b).trim_end_matches('/'))
+        .filter(|b| !b.is_empty())
+        .unwrap_or(catalog::API_BASE);
+    format!("{}?model={}", base, catalog::normalize_model(model_name))
 }
 
 /// 鉴权头的值（`Authorization: Bearer sk-...`）。
@@ -117,25 +130,44 @@ impl SessionParams {
     }
 
     /// `session.update` 里那个 `session` 对象。
+    ///
+    /// 按 qwen3.8 的会话形状拼：输出模态叫 `output_modalities`，音频格式与音色收在
+    /// `audio.input` / `audio.output` 下（跟 `session.created` 回显的形状一致）；
+    /// 不发 `turn_detection`，用服务端缺省（`speaker_detection`）。3.8 的 ASR 恒开；
+    /// 文档没写 3.8 的源语种字段，手动选了源语言时沿用 `input_audio_transcription.language`
+    /// （缺省自动识别时不发，报文与官方 3.8 示例一致）。
     pub fn to_session_object(&self) -> Value {
         let audio = self.audio_enabled();
         let mut session = Map::new();
         session.insert(
-            "modalities".into(),
+            "output_modalities".into(),
             if audio {
                 json!(["text", "audio"])
             } else {
                 json!(["text"])
             },
         );
-        session.insert("input_audio_format".into(), json!("pcm"));
-        session.insert("output_audio_format".into(), json!("pcm"));
+
+        let mut output = Map::new();
+        output.insert(
+            "format".into(),
+            json!({ "type": "pcm", "sample_rate": OUTPUT_SAMPLE_RATE }),
+        );
+        if let Some(voice) = self.effective_voice() {
+            output.insert("voice".into(), json!(voice));
+        }
+        session.insert(
+            "audio".into(),
+            json!({
+                "input": { "format": { "type": "pcm", "sample_rate": INPUT_SAMPLE_RATE } },
+                "output": Value::Object(output),
+            }),
+        );
 
         session.insert(
             "translation".into(),
             json!({ "language": self.target_language }),
         );
-        // 手动选过源语言就把它锁进会话，不填则让服务端自动识别。
         if let Some(lang) = &self.source_language {
             session.insert(
                 "input_audio_transcription".into(),
@@ -145,14 +177,11 @@ impl SessionParams {
 
         if audio {
             if let Some(freq) = self.clone_frequency {
-                session.insert("voice".into(), json!("default"));
                 session.insert("enable_voice_clone".into(), json!(true));
                 session.insert(
                     "voice_clone_options".into(),
                     json!({ "frequency": freq.as_str() }),
                 );
-            } else if let Some(voice) = self.voice.as_deref() {
-                session.insert("voice".into(), json!(voice));
             }
         }
 
@@ -280,8 +309,9 @@ impl Decoder {
             .to_string();
 
         let event = match event_type.as_str() {
-            // transcript 类的文字在 `transcript`，text 类的在 `delta`。（坑 2）
-            "response.audio_transcript.delta" => self.accumulate(str_field(&value, "transcript")),
+            // qwen3.8 的 transcript 增量在 `delta`；老形状放在 `transcript`，两个都认。（坑 2）
+            "response.audio_transcript.delta" => self
+                .accumulate(str_field(&value, "delta").or_else(|| str_field(&value, "transcript"))),
             "response.text.delta" | "response.output_text.delta" => {
                 self.accumulate(str_field(&value, "delta"))
             }
@@ -488,7 +518,7 @@ pub fn pcm16_to_float(bytes: &[u8]) -> Vec<f32> {
 mod tests {
     use super::*;
 
-    const LIVE: &str = "qwen3.5-livetranslate-flash-realtime";
+    const LIVE: &str = "qwen3.8-livetranslate-flash-realtime";
 
     fn speak_params() -> SessionParams {
         SessionParams {
@@ -511,6 +541,24 @@ mod tests {
     }
 
     #[test]
+    fn endpoint_override_takes_the_workspace_url_and_rebuilds_the_query() {
+        let ws = "wss://ws-abc.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime";
+        // 控制台贴来的地址自带 `?model=`（甚至是别的模型）：去掉重拼，不能拼出两个 `?`。
+        assert_eq!(
+            endpoint_url_with(Some(&format!(" {ws}/?model=old ")), LIVE),
+            format!("{ws}?model={LIVE}")
+        );
+        // 空串 / 不是 ws(s) 地址：退回缺省，别把垃圾拼进 URL。
+        for junk in ["", "  ", "https://example.com", "?model=x"] {
+            assert_eq!(
+                endpoint_url_with(Some(junk), LIVE),
+                format!("{}?model={LIVE}", catalog::API_BASE),
+                "{junk:?}"
+            );
+        }
+    }
+
+    #[test]
     fn auth_header_is_a_bearer_token() {
         assert_eq!(auth_header_value("sk-abc"), "Bearer sk-abc");
     }
@@ -519,15 +567,30 @@ mod tests {
     fn livetranslate_uses_the_native_translation_param() {
         let session = speak_params().to_session_object();
         assert_eq!(session["translation"]["language"], "ja");
-        assert_eq!(session["modalities"], json!(["text", "audio"]));
-        assert_eq!(session["voice"], "Tina");
-        assert_eq!(session["input_audio_format"], "pcm");
-        assert_eq!(session["output_audio_format"], "pcm");
+        assert_eq!(session["output_modalities"], json!(["text", "audio"]));
+        assert_eq!(session["audio"]["output"]["voice"], "Tina");
+        assert_eq!(
+            session["audio"]["input"]["format"],
+            json!({ "type": "pcm", "sample_rate": INPUT_SAMPLE_RATE })
+        );
+        assert_eq!(
+            session["audio"]["output"]["format"],
+            json!({ "type": "pcm", "sample_rate": OUTPUT_SAMPLE_RATE })
+        );
+        // 3.5 形状的字段一个都不能留：3.8 会话里它们不认。
+        for old in [
+            "modalities",
+            "voice",
+            "input_audio_format",
+            "output_audio_format",
+            "sample_rate",
+            "turn_detection",
+            "input_audio_transcription",
+        ] {
+            assert!(session.get(old).is_none(), "不该再发 {old}");
+        }
         // 专用翻译模型不靠提示词驱动。
         assert!(session.get("instructions").is_none());
-        assert!(session.get("turn_detection").is_none());
-        // 没选源语言就不发 `input_audio_transcription`——服务端自动识别。
-        assert!(session.get("input_audio_transcription").is_none());
     }
 
     #[test]
@@ -550,8 +613,11 @@ mod tests {
     #[test]
     fn text_only_session_asks_for_no_audio_modality() {
         let session = SessionParams::text_only(LIVE, "en").to_session_object();
-        assert_eq!(session["modalities"], json!(["text"]));
-        assert!(session.get("voice").is_none(), "不要语音就别报音色");
+        assert_eq!(session["output_modalities"], json!(["text"]));
+        assert!(
+            session["audio"]["output"].get("voice").is_none(),
+            "不要语音就别报音色"
+        );
     }
 
     #[test]
@@ -565,8 +631,8 @@ mod tests {
         );
         assert!(!params.audio_enabled());
         let session = params.to_session_object();
-        assert_eq!(session["modalities"], json!(["text"]));
-        assert!(session.get("voice").is_none());
+        assert_eq!(session["output_modalities"], json!(["text"]));
+        assert!(session["audio"]["output"].get("voice").is_none());
     }
 
     #[test]
@@ -574,7 +640,10 @@ mod tests {
         let mut params = speak_params();
         params.clone_frequency = Some(CloneFrequency::Always);
         let session = params.to_session_object();
-        assert_eq!(session["voice"], "default", "复刻时音色必须写死 default");
+        assert_eq!(
+            session["audio"]["output"]["voice"], "default",
+            "复刻时音色必须写死 default"
+        );
         assert_eq!(session["enable_voice_clone"], true);
         assert_eq!(session["voice_clone_options"]["frequency"], "always");
         assert_eq!(params.effective_voice(), Some("default"));
@@ -669,6 +738,23 @@ mod tests {
             }
         );
         assert_eq!(dec.pending(), "", "收尾后不能留半句");
+    }
+
+    /// qwen3.8：`response.audio_transcript.delta` 的增量在 `delta` 字段，按序累加。
+    #[test]
+    fn qwen38_audio_transcript_delta_reads_the_delta_field() {
+        let mut dec = Decoder::new();
+        dec.decode(r#"{"type":"response.audio_transcript.delta","delta":"Hel"}"#);
+        let b = dec
+            .decode(r#"{"type":"response.audio_transcript.delta","delta":"lo"}"#)
+            .unwrap();
+        assert_eq!(
+            b.event,
+            ServerEvent::TextDelta {
+                text: "Hello".into(),
+                confirmed: Some("Hello".into())
+            }
+        );
     }
 
     /// 坑 4：done 里的文字是空的，要拿累积的凑，不能吐空串。

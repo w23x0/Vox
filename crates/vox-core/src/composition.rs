@@ -813,7 +813,7 @@ mod tests {
                 "uplink_rate": "session",
                 "downlink_rate": "playback",
                 "params": {
-                    "model_name": "qwen3.5-livetranslate-flash-realtime",
+                    "model_name": "qwen3.8-livetranslate-flash-realtime",
                     "target_language": "ja",
                     "voice": "Tina",
                     "clone_frequency": null,
@@ -849,7 +849,7 @@ mod tests {
                 "uplink_rate": "session",
                 "downlink_rate": "playback",
                 "params": {
-                    "model_name": "qwen3.5-livetranslate-flash-realtime",
+                    "model_name": "qwen3.8-livetranslate-flash-realtime",
                     "target_language": "zh",
                     "voice": "Tina",
                     "clone_frequency": null,

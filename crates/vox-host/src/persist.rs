@@ -513,7 +513,7 @@ mod headless_tests {
         let persist = Persist::start(dir.clone());
         let mut ledger = UsageLedger::default();
         ledger.record(
-            "qwen3.5-livetranslate-flash-realtime",
+            "qwen3.8-livetranslate-flash-realtime",
             &TurnUsage {
                 input_tokens: 120,
                 output_tokens: 30,

@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "verified_at": "2026-08-18",
+  "verified_at": "2026-10-09",
   "expected_counts": {
     "languages": 60,
     "audio_output_languages": 29,
@@ -16,14 +16,14 @@
     "console_url": "https://bailian.console.aliyun.com/?apiKey=1"
   },
   "model": {
-    "id": "qwen3.5-livetranslate-flash-realtime",
+    "id": "qwen3.8-livetranslate-flash-realtime",
     "label": {
-      "zh": "Qwen3.5 LiveTranslate Flash",
-      "en": "Qwen3.5 LiveTranslate Flash",
-      "ja": "Qwen3.5 LiveTranslate Flash"
+      "zh": "Qwen3.8 LiveTranslate Flash",
+      "en": "Qwen3.8 LiveTranslate Flash",
+      "ja": "Qwen3.8 LiveTranslate Flash"
     },
     "kind": "realtime_translation",
-    "stable_snapshot": "qwen3.5-livetranslate-flash-realtime-2026-05-19"
+    "stable_snapshot": "qwen3.8-livetranslate-flash-realtime"
   },
   "api": {
     "transport": "websocket",
@@ -63,7 +63,7 @@
     "Molly"
   ],
   "sources": {
-    "overview": "https://help.aliyun.com/zh/model-studio/qwen3-5-livetranslate-flash-realtime",
+    "overview": "https://help.aliyun.com/zh/model-studio/qwen3-8-livetranslate-flash-realtime",
     "client_events": "https://help.aliyun.com/zh/model-studio/live-translator-client-events",
     "server_events": "https://help.aliyun.com/zh/model-studio/live-translator-server-events",
     "voices": "https://help.aliyun.com/zh/model-studio/omni-voice-list",

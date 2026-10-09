@@ -10,7 +10,7 @@ meta gate_active_at_boot true
 meta translate true
 meta output_device default
 # wire
-wire 0 {"event_id":"event_0_1","session":{"input_audio_format":"pcm","modalities":["text","audio"],"output_audio_format":"pcm","translation":{"language":"zh"},"voice":"Tina"},"type":"session.update"}
+wire 0 {"event_id":"event_0_1","session":{"audio":{"input":{"format":{"sample_rate":16000,"type":"pcm"}},"output":{"format":{"sample_rate":24000,"type":"pcm"},"voice":"Tina"}},"output_modalities":["text","audio"],"translation":{"language":"zh"}},"type":"session.update"}
 wire 1 audio_append 0 640 936b78f74a8f9f25
 wire 2 audio_append 1 640 6f8eeea9d7eddb25
 # play
@@ -35,7 +35,7 @@ event {"kind":"subtitle_delta","track":"listen","text":"ちは","done":false,"re
 event {"kind":"subtitle_delta","track":"listen","text":"、","done":false,"replace":false,"confirmed":"こんにちは、"}
 event {"kind":"subtitle_delta","track":"listen","text":"こんにちは。","done":true,"replace":true,"confirmed":"こんにちは。"}
 event {"kind":"subtitle_delta","track":"listen","text":"你好","done":false,"replace":false,"confirmed":"你好"}
-event {"kind":"usage_changed","usage":{"qwen3.5-livetranslate-flash-realtime":{"input_tokens":30,"output_tokens":12,"total_tokens":42,"turns":1,"daily":{"input_tokens":30,"output_tokens":12,"total_tokens":42,"turns":1},"daily_date":"2026-08-05","monthly":{"input_tokens":30,"output_tokens":12,"total_tokens":42,"turns":1},"monthly_month":"2026-08","updated_at":0}}}
+event {"kind":"usage_changed","usage":{"qwen3.8-livetranslate-flash-realtime":{"input_tokens":30,"output_tokens":12,"total_tokens":42,"turns":1,"daily":{"input_tokens":30,"output_tokens":12,"total_tokens":42,"turns":1},"daily_date":"2026-08-05","monthly":{"input_tokens":30,"output_tokens":12,"total_tokens":42,"turns":1},"monthly_month":"2026-08","updated_at":0}}}
 event latency_changed 5
 # wire_life
 wire_life connect 1

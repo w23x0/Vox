@@ -10,7 +10,7 @@ meta gate_active_at_boot true
 meta translate true
 meta output_device CABLE_Input
 # wire
-wire 0 {"event_id":"event_0_1","session":{"input_audio_format":"pcm","modalities":["text","audio"],"output_audio_format":"pcm","translation":{"language":"ja"},"voice":"Tina"},"type":"session.update"}
+wire 0 {"event_id":"event_0_1","session":{"audio":{"input":{"format":{"sample_rate":16000,"type":"pcm"}},"output":{"format":{"sample_rate":24000,"type":"pcm"},"voice":"Tina"}},"output_modalities":["text","audio"],"translation":{"language":"ja"}},"type":"session.update"}
 wire 1 audio_append 0 882 c99a7a6a23423252
 wire 2 audio_append 1 882 1711dab4c9ad50c8
 wire 3 audio_append 2 3308 18983fea1e326605

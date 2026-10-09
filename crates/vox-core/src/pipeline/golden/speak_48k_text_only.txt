@@ -11,7 +11,7 @@ meta translate true
 meta voice none
 meta output_device CABLE_Input
 # wire
-wire 0 {"event_id":"event_0_1","session":{"input_audio_format":"pcm","modalities":["text"],"output_audio_format":"pcm","translation":{"language":"ja"}},"type":"session.update"}
+wire 0 {"event_id":"event_0_1","session":{"audio":{"input":{"format":{"sample_rate":16000,"type":"pcm"}},"output":{"format":{"sample_rate":24000,"type":"pcm"}}},"output_modalities":["text"],"translation":{"language":"ja"}},"type":"session.update"}
 wire 1 audio_append 0 640 48003018d9209725
 # play
 play open 0 none

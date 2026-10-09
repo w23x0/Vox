@@ -168,7 +168,7 @@ mod tests {
         runtime.notify(Notice::info("装配好了"));
         // 用量事件也走同一条路（这里只要求"不 panic"）。
         runtime.record_usage(
-            "qwen3.5-livetranslate-flash-realtime",
+            "qwen3.8-livetranslate-flash-realtime",
             &vox_core::usage::TurnUsage {
                 input_tokens: 1,
                 output_tokens: 1,
