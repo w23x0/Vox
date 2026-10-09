@@ -31,7 +31,7 @@
 | # | 决定 |
 |---|---|
 | M1 | **方言表**：`catalog/aliyun.json` 重构为多模型：顶层 `dialects{}`（`qwen3.8`、`qwen3.5`，各自的会话形状要点、语言表、音色表、能力位）+ `models[]`（`id`、`dialect`、`recommended`、`label`）。模型→方言靠显式 `id` 或 `id_prefix` 匹配（快照 `-YYYY-MM-DD` 后缀归到同方言）。`gpt.json` / `gemini.json` 同构（各一个方言）。表里**不放**官方列表能给的东西（发布时间、下线时间、价格）。 |
-| M2 | **协议方言**：`crates/vox-core/src/cloud/protocol.rs` 的 session.update 构造与事件解码拆成按方言的适配器（trait 或 enum 分派均可，以简单为准），`SessionParams` 带方言。GPT / Gemini 已在各自文件，接到同一选择点。 |
+| M2 | **协议方言**：`crates/vox-core/src/cloud/protocol.rs` 的 session.update 构造按方言分适配器（trait 或 enum 分派均可，以简单为准）；事件解码两方言事件名兼容，用并集解码，不拆，`SessionParams` 带方言。GPT / Gemini 已在各自文件，接到同一选择点。 |
 | M3 | **接入点走配置链**：删掉进程级 `INTL_REGION` 与 `set_region`。`Settings` 增加 `aliyun_endpoint: String`（空 = 按地区缺省），连同 `aliyun_region` 经 SessionConfig 传到建连处。`VOX_ALIYUN_ENDPOINT` 环境变量保留为最高优先级的调试覆盖。前端已在 `types.ts` 用 `aliyun_endpoint` 这个名字。 |
 | M4 | **放宽模型归一**：`normalize_model_for` 不再把一切归到缺省；只要模型 ID 能匹配到方言就保留，匹配不到才回缺省。旧设置里 qwen3.5 / 3.8 的值都要保留。 |
 | M5 | **`list_models` 命令**（Tauri + `vox-host` 共享实现，无屏档也能调）：按 `UI-REDESIGN.md` §6 的 `ModelList` 契约返回。阿里云按 §1.1 拉并翻页；OpenAI `GET https://api.openai.com/v1/models`（Bearer）按 id 含 `realtime-translate` 过滤；Gemini `GET https://generativelanguage.googleapis.com/v1beta/models?key=…&pageSize=1000` 按 name 含 `live-translate` 且 `supportedGenerationMethods` 含 `bidiGenerateContent` 过滤。`adapted` = 匹配到方言；`offline_at` 取 offline_time 的日期部分；能力与语言来自方言表。错误归类 `auth`（401/403）/ `network`（连接/超时/DNS）/ `other`，带 `host`。内存缓存 10 分钟，`refresh=true` 强制重拉；拉失败返回内置列表（方言表里的 `models[]`）+ error。HTTP 客户端用 workspace 已有的；**不许让 `cargo tree -p vox-headless` 多出 tauri/gtk/keyring/zbus 类依赖**（加一个纯 Rust HTTPS 客户端可以，报告写依赖树对比）。 |

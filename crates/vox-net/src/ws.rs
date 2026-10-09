@@ -389,6 +389,12 @@ struct CloseCatcher<S> {
     /// 还没处理完的字节。两种东西会留在这儿：**没读完的 HTTP 升级应答**，以及
     /// **拼不完整的帧**（控制帧不分片，但 TCP 会分片，一条 close 帧很可能横跨两次读）。
     pending: Vec<u8>,
+    /// 已处理好、等着交给上层的字节。`push` 一次可能吐出比上层缓冲大得多的量
+    /// （底层一次读 16 KiB，tungstenite 给的缓冲只有 4 KiB），所以必须按上层
+    /// 能收的量分批吐，余量留到下一次 poll——一次塞太多 `put_slice` 会 panic。
+    ready: Vec<u8>,
+    /// `ready` 里已经交出去的前缀长度。
+    ready_pos: usize,
     caught: CaughtCloseSlot,
     /// 升级应答的 `\r\n\r\n` 是不是已经过去了。
     ///
@@ -403,6 +409,8 @@ impl<S> CloseCatcher<S> {
         Self {
             inner,
             pending: Vec::new(),
+            ready: Vec::new(),
+            ready_pos: 0,
             caught,
             upgraded: false,
         }
@@ -437,22 +445,34 @@ impl<S> CloseCatcher<S> {
 
         let rest = &self.pending[start..];
         let mut consumed = 0usize;
-        while let Some((header_len, payload_len, total_len)) = frame_len(&rest[consumed..]) {
+        while let Some((header_len, payload_len, total)) = frame_len(&rest[consumed..]) {
+            // 长度算不出来（溢出）：不可能是合法帧，剩下的原样放行，让 tungstenite 去报错。
+            let Some(total_len) = total else {
+                out.extend_from_slice(&rest[consumed..]);
+                consumed = rest.len();
+                break;
+            };
             if rest.len() - consumed < total_len {
                 break;
             }
             let frame = &rest[consumed..consumed + total_len];
-            if opcode_of(frame) == 0x8 && payload_len > MAX_CONTROL_PAYLOAD {
+            let masked = frame[1] & 0x80 != 0;
+            if opcode_of(frame) == 0x8 && payload_len > MAX_CONTROL_PAYLOAD && !masked {
                 let (code, reason) = split_close_payload(&frame[header_len..]);
                 *self.caught.lock().expect("close 槽的锁不该中毒") =
                     Some(CaughtClose { code, reason });
-                // 重新拼一条合法的 close 帧：同样的头，长度改成 125（2 字节码 +
-                // 123 字节理由），理由按字节截断（多字节 UTF-8 截断了也只是
-                // 服务端那条备注的一部分，完整原文已经另存了）。
-                let mut truncated = Vec::with_capacity(header_len + MAX_CONTROL_PAYLOAD);
-                truncated
-                    .extend_from_slice(&rewrite_length(&frame[..header_len], MAX_CONTROL_PAYLOAD));
-                truncated.extend_from_slice(&frame[header_len..header_len + MAX_CONTROL_PAYLOAD]);
+                // 重新拼一条合法的 close 帧：同样的头，负载 = 2 字节码 + 至多 123 字节
+                // 理由。截断点退回到 UTF-8 字符边界，否则 tungstenite 会报 UTF-8 错误，
+                // 读循环走 Err 分支（完整原文已经另存在槽里）。
+                let reason_bytes = &frame[header_len + CLOSE_CODE_LEN..];
+                let mut keep = (MAX_CONTROL_PAYLOAD - CLOSE_CODE_LEN).min(reason_bytes.len());
+                while keep > 0 && (reason_bytes[keep] & 0xC0) == 0x80 {
+                    keep -= 1;
+                }
+                let new_len = CLOSE_CODE_LEN + keep;
+                let mut truncated = Vec::with_capacity(header_len + new_len);
+                truncated.extend_from_slice(&rewrite_length(&frame[..header_len], new_len));
+                truncated.extend_from_slice(&frame[header_len..header_len + new_len]);
                 out.extend_from_slice(&truncated);
             } else {
                 out.extend_from_slice(frame);
@@ -480,15 +500,17 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-/// 帧头 `(header_len, payload_len, total_len)`。字节不够就返回 `None`。
+/// 帧头 `(header_len, payload_len, total_len)`。字节不够就返回 `None`；
+/// 总长度算不出来（64 位长度字段溢出 `usize`）时 `total_len` 是 `None`。
 ///
-/// 帧头两字节：`b0 = FIN|RSV|opcode`，`b1 = MASK|len`。**掩码位在第二字节**
-/// （服务端→客户端的帧一律不掩码，这里仍然照协议读，免得哪天接到会掩码的对端）。
-fn frame_len(bytes: &[u8]) -> Option<(usize, usize, usize)> {
+/// 帧头两字节：`b0 = FIN|RSV|opcode`，`b1 = MASK|len`。**掩码位在第二字节**。
+/// 这层**只改写服务端→客户端的未掩码 close 帧**（协议规定服务端不掩码）；
+/// 掩码帧照常算长度、原样放行。
+fn frame_len(bytes: &[u8]) -> Option<(usize, usize, Option<usize>)> {
     let second = *bytes.get(1)?;
     let masked = second & 0x80 != 0;
     let short_len = (second & 0x7F) as usize;
-    let (header_len, payload_len) = match short_len {
+    let (header_len, payload_len): (usize, usize) = match short_len {
         126 => {
             let extended = bytes.get(2..4)?;
             (4, u16::from_be_bytes([extended[0], extended[1]]) as usize)
@@ -496,12 +518,17 @@ fn frame_len(bytes: &[u8]) -> Option<(usize, usize, usize)> {
         127 => {
             let extended = bytes.get(2..10)?;
             let raw: [u8; 8] = extended.try_into().expect("刚好 8 字节");
-            (10, u64::from_be_bytes(raw) as usize)
+            (
+                10,
+                usize::try_from(u64::from_be_bytes(raw)).unwrap_or(usize::MAX),
+            )
         }
         len => (2, len),
     };
     let mask_len = if masked { 4 } else { 0 };
-    let total = header_len + mask_len + payload_len;
+    let total = header_len
+        .checked_add(mask_len)
+        .and_then(|head| head.checked_add(payload_len));
     Some((header_len + mask_len, payload_len, total))
 }
 
@@ -540,6 +567,19 @@ impl<S: AsyncRead + Unpin> AsyncRead for CloseCatcher<S> {
     ) -> Poll<std::io::Result<()>> {
         let mut scratch = [0u8; SPY_BUFFER];
         loop {
+            // 有存货先吐存货（只吐上层放得下的量），不去碰底层：
+            // 这时返回 Ready，上层下一次 poll 会接着来取，不存在"该醒没醒"。
+            if self.ready_pos < self.ready.len() {
+                let take = (self.ready.len() - self.ready_pos).min(buf.remaining());
+                let start = self.ready_pos;
+                buf.put_slice(&self.ready[start..start + take]);
+                self.ready_pos += take;
+                if self.ready_pos == self.ready.len() {
+                    self.ready.clear();
+                    self.ready_pos = 0;
+                }
+                return Poll::Ready(Ok(()));
+            }
             let mut scratch_buf = ReadBuf::new(&mut scratch);
             match Pin::new(&mut self.inner).poll_read(cx, &mut scratch_buf) {
                 Poll::Ready(Ok(())) => {
@@ -548,13 +588,10 @@ impl<S: AsyncRead + Unpin> AsyncRead for CloseCatcher<S> {
                         // 对端真的收摊了（真 EOF）。
                         return Poll::Ready(Ok(()));
                     }
-                    let out = self.push(&scratch_buf.filled()[..fresh]);
-                    if out.is_empty() {
-                        // 只到了一帧的头：接着读下一段，别把 0 字节当 EOF 交上去。
-                        continue;
-                    }
-                    buf.put_slice(&out);
-                    return Poll::Ready(Ok(()));
+                    // 空输出（只到了一帧的头）：接着读下一段，别把 0 字节当 EOF 交上去。
+                    // 非空输出存进 `ready`，下一圈循环按上层缓冲大小分批吐。
+                    self.ready = self.push(&scratch_buf.filled()[..fresh]);
+                    self.ready_pos = 0;
                 }
                 other => return other,
             }
@@ -640,6 +677,13 @@ async fn reader_task(
                         }
                     }
                     Some(Err(e)) => {
+                        // 旁路已经截到过 close 原文就以它为准：那才是服务端的真话，
+                        // 比 tungstenite 的协议错误有用得多。
+                        let has_caught = caught.lock().map(|slot| slot.is_some()).unwrap_or(false);
+                        if has_caught {
+                            let _ = tx.send(ReaderMsg::Closed(close_reason(None, &caught))).await;
+                            break;
+                        }
                         let reason = format!("连接读取出错：{e}");
                         let _ = tx.send(ReaderMsg::Error(reason)).await;
                         break;
@@ -1026,14 +1070,11 @@ mod tests {
         }
     }
 
-    /// 起一个本地 **TLS** WebSocket 服务端：先回一条普通文本帧，再甩一条 182 字节的
-    /// close 帧。返回地址与它的自签根证书。
-    ///
-    /// 这条路径专门防"`CloseCatcher` 套在 TLS 之下"：那样它看到的是密文，
-    /// 会把 TLS 握手字节当 WS 帧去截断，真连 `wss://` 全部失败，而 `ws://` 的测试看不出来。
-    async fn start_tls_oversized_close_server(
-        reason: &'static str,
-    ) -> (SocketAddr, rustls::pki_types::CertificateDer<'static>) {
+    /// 自签证书 + 服务端 acceptor。返回 acceptor 与证书（给客户端当信任根）。
+    fn tls_fixture() -> (
+        tokio_rustls::TlsAcceptor,
+        rustls::pki_types::CertificateDer<'static>,
+    ) {
         use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
         let certified = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
         let cert = certified.cert.der().clone();
@@ -1043,43 +1084,77 @@ mod tests {
             .with_no_client_auth()
             .with_single_cert(vec![cert.clone()], key)
             .unwrap();
-        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+        (tokio_rustls::TlsAcceptor::from(Arc::new(config)), cert)
+    }
 
+    /// 只信任 `cert` 的客户端 TLS 配置。
+    fn client_trusting(
+        cert: rustls::pki_types::CertificateDer<'static>,
+    ) -> Arc<rustls::ClientConfig> {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(cert).unwrap();
+        Arc::new(
+            rustls::ClientConfig::builder()
+                .with_root_certificates(roots)
+                .with_no_client_auth(),
+        )
+    }
+
+    type TlsServerWs =
+        tokio_tungstenite::WebSocketStream<tokio_rustls::server::TlsStream<tokio::net::TcpStream>>;
+
+    /// 起一个本地 **TLS** WebSocket 服务端，握完手把连接交给 `script`。
+    ///
+    /// 这条路径专门防"`CloseCatcher` 套在 TLS 之下"：那样它看到的是密文，
+    /// 会把 TLS 握手字节当 WS 帧去截断，真连 `wss://` 全部失败，而 `ws://` 的测试看不出来。
+    async fn start_tls_server<F, Fut>(acceptor: tokio_rustls::TlsAcceptor, script: F) -> SocketAddr
+    where
+        F: FnOnce(TlsServerWs) -> Fut + Send + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             let (tcp, _) = listener.accept().await.unwrap();
-            let tls = acceptor.accept(tcp).await.unwrap();
-            let mut ws = tokio_tungstenite::accept_async(tls).await.unwrap();
-            ws.send(Message::Text("hello over tls".into()))
-                .await
-                .unwrap();
-            let mut raw = ws.into_inner();
-            let _ = raw.write_all(&oversized_close_frame(1007, reason)).await;
-            let _ = raw.flush().await;
-            tokio::time::sleep(Duration::from_millis(300)).await;
+            let Ok(tls) = acceptor.accept(tcp).await else {
+                return;
+            };
+            let Ok(ws) = tokio_tungstenite::accept_async(tls).await else {
+                return;
+            };
+            script(ws).await;
         });
-        (addr, cert)
+        addr
+    }
+
+    fn wss_request(addr: SocketAddr) -> ConnectRequest {
+        ConnectRequest {
+            url: format!("wss://localhost:{}", addr.port()),
+            auth_header: "Bearer sk-test-key".to_owned(),
+        }
+    }
+
+    /// 先回一条普通文本帧，再甩一条超长 close 帧。
+    async fn text_then_oversized_close(mut ws: TlsServerWs, reason: &'static str) {
+        ws.send(Message::Text("hello over tls".into()))
+            .await
+            .unwrap();
+        let mut raw = ws.into_inner();
+        let _ = raw.write_all(&oversized_close_frame(1007, reason)).await;
+        let _ = raw.flush().await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
     }
 
     #[test]
     fn an_oversized_close_frame_survives_over_tls_too() {
         let rt = test_runtime();
-        let (addr, cert) = rt.block_on(start_tls_oversized_close_server(QUOTA_REASON));
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add(cert).unwrap();
-        let tls = Arc::new(
-            rustls::ClientConfig::builder()
-                .with_root_certificates(roots)
-                .with_no_client_auth(),
-        );
-        let mut transport = WsTransport::new(rt.handle().clone()).with_tls_config(tls);
-        transport
-            .connect(&ConnectRequest {
-                url: format!("wss://localhost:{}", addr.port()),
-                auth_header: "Bearer sk-test-key".to_owned(),
-            })
-            .unwrap();
+        let (acceptor, cert) = tls_fixture();
+        let addr = rt.block_on(start_tls_server(acceptor, |ws| {
+            text_then_oversized_close(ws, QUOTA_REASON)
+        }));
+        let mut transport =
+            WsTransport::new(rt.handle().clone()).with_tls_config(client_trusting(cert));
+        transport.connect(&wss_request(addr)).unwrap();
 
         assert_eq!(
             transport.recv(2000).unwrap(),
@@ -1097,6 +1172,137 @@ mod tests {
             }
             other => panic!("应该是 Closed，实际是 {other:?}"),
         }
+    }
+
+    /// 证书校验必须开着：服务端用自签证书、客户端不信任它 → 连接失败。
+    #[test]
+    fn an_untrusted_certificate_is_refused() {
+        let rt = test_runtime();
+        let (acceptor, _cert) = tls_fixture();
+        let addr = rt.block_on(start_tls_server(acceptor, |ws| async move {
+            drop(ws);
+        }));
+        // 默认配置只信任 webpki 内置根，自签证书不在其中。
+        let mut transport = WsTransport::new(rt.handle().clone());
+        assert!(
+            transport.connect(&wss_request(addr)).is_err(),
+            "自签证书不该被接受"
+        );
+    }
+
+    /// 400 条 2.9–4.7 KB 的文本帧一次灌过来，客户端先睡一会儿再收：底层一次读 16 KiB，
+    /// 而 tungstenite 给的读缓冲只有 4 KiB，`CloseCatcher` 一次吐出的量必须按对方放得下的
+    /// 量分批，否则 `put_slice` 越界 panic、读任务死掉。
+    const BURST_FRAMES: usize = 400;
+
+    fn burst_payload(index: usize) -> String {
+        let len = 2900 + (index * 7) % 1800;
+        let mut text = format!("{index:04}:");
+        text.extend(std::iter::repeat_n('x', len));
+        text
+    }
+
+    fn assert_burst_received(transport: &mut WsTransport) {
+        std::thread::sleep(Duration::from_millis(500));
+        for index in 0..BURST_FRAMES {
+            match transport.recv(5000).unwrap() {
+                Some(Incoming::Text(text)) => {
+                    assert_eq!(text, burst_payload(index), "第 {index} 条要按序原样到达")
+                }
+                other => panic!("第 {index} 条应该是文本帧，实际是 {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_burst_of_large_frames_is_delivered_in_order() {
+        let rt = test_runtime();
+        let listener = rt.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
+        let addr = listener.local_addr().unwrap();
+        rt.spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            for index in 0..BURST_FRAMES {
+                ws.feed(Message::Text(burst_payload(index).into()))
+                    .await
+                    .unwrap();
+            }
+            ws.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        });
+        let mut transport = WsTransport::new(rt.handle().clone());
+        transport.connect(&make_request(addr)).unwrap();
+        assert_burst_received(&mut transport);
+    }
+
+    #[test]
+    fn a_burst_of_large_frames_is_delivered_in_order_over_tls() {
+        let rt = test_runtime();
+        let (acceptor, cert) = tls_fixture();
+        let addr = rt.block_on(start_tls_server(acceptor, |mut ws| async move {
+            for index in 0..BURST_FRAMES {
+                ws.feed(Message::Text(burst_payload(index).into()))
+                    .await
+                    .unwrap();
+            }
+            ws.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }));
+        let mut transport =
+            WsTransport::new(rt.handle().clone()).with_tls_config(client_trusting(cert));
+        transport.connect(&wss_request(addr)).unwrap();
+        assert_burst_received(&mut transport);
+    }
+
+    /// 理由是 "X" + 100 个汉字：第 123 字节落在汉字中间。截断点必须退回字符边界，
+    /// 否则 tungstenite 报 UTF-8 错误、读循环走 Err 分支，原文就丢了。
+    #[test]
+    fn a_multibyte_close_reason_is_cut_on_a_char_boundary() {
+        let reason: &'static str = Box::leak(format!("X{}", "额".repeat(100)).into_boxed_str());
+        assert!(
+            reason.len() > MAX_CONTROL_PAYLOAD
+                && !reason.is_char_boundary(MAX_CONTROL_PAYLOAD - CLOSE_CODE_LEN)
+        );
+        let rt = test_runtime();
+        let addr = rt.block_on(start_oversized_close_server(reason));
+        let mut transport = WsTransport::new(rt.handle().clone());
+        transport.connect(&make_request(addr)).unwrap();
+        match transport.recv(2000).unwrap() {
+            Some(Incoming::Closed(text)) => assert_eq!(
+                text.matches(reason).count(),
+                1,
+                "中文原因要一字不差：{text}"
+            ),
+            other => panic!("应该是 Closed，实际是 {other:?}"),
+        }
+    }
+
+    /// 同上，直接看改写出来的帧：截断后的负载是合法 UTF-8。
+    #[test]
+    fn the_truncated_close_frame_is_valid_utf8() {
+        let reason = format!("X{}", "额".repeat(100));
+        let slot = close_reason_slot();
+        let mut catcher = CloseCatcher::new((), slot);
+        catcher.upgraded = true;
+        let out = catcher.push(&oversized_close_frame(1007, &reason));
+        let (header_len, payload_len, _) = frame_len(&out).unwrap();
+        assert!(payload_len <= MAX_CONTROL_PAYLOAD);
+        assert!(std::str::from_utf8(&out[header_len + CLOSE_CODE_LEN..]).is_ok());
+    }
+
+    /// 64 位长度字段是 `u64::MAX`：加头长会溢出 `usize`。不能 panic，
+    /// 字节原样放行交给 tungstenite 去报错。
+    #[test]
+    fn an_absurd_64_bit_length_does_not_overflow() {
+        let mut frame = vec![0x88u8, 127];
+        frame.extend_from_slice(&u64::MAX.to_be_bytes());
+        frame.extend_from_slice(&[0, 0]);
+        let (_, _, total) = frame_len(&frame).unwrap();
+        assert_eq!(total, None);
+
+        let mut catcher = CloseCatcher::new((), close_reason_slot());
+        catcher.upgraded = true;
+        assert_eq!(catcher.push(&frame), frame, "算不出长度就原样放行");
     }
 
     /// 截帧这层只动超长 close 帧：升级应答原样透传、正常帧原样透传，
@@ -1131,7 +1337,7 @@ mod tests {
         assert!(catcher.push(head).is_empty(), "半帧不能当整帧交出去");
         let truncated = catcher.push(tail);
         let (_, payload_len, total_len) = frame_len(&truncated).expect("要吐一条完整帧");
-        assert_eq!(total_len, truncated.len(), "只能吐一条帧");
+        assert_eq!(total_len, Some(truncated.len()), "只能吐一条帧");
         assert_eq!(payload_len, MAX_CONTROL_PAYLOAD, "负载要截到 RFC 上限之内");
         let caught = slot.lock().unwrap().clone().expect("要截到原文");
         assert_eq!(caught.code, Some(1007));

@@ -290,7 +290,11 @@ function KeyCard({ provider }: { provider: ModelProvider }) {
 
 /* ---- 地区 / 接入点（仅阿里云）------------------------------------- */
 
-const WS_URL = /^wss?:\/\/\S+$/i;
+// 与后端 `usable_base` 同一条规则：`wss://` 任意主机；`ws://` 只许本机回环
+// （密钥会随握手头明文发出，远端必须走 TLS）。
+const WSS_URL = /^wss:\/\/\S+$/i;
+const WS_LOOPBACK_URL = /^ws:\/\/(localhost|127(\.\d{1,3}){3}|\[::1\])(:\d+)?(\/\S*)?$/i;
+const isValidEndpoint = (value: string) => WSS_URL.test(value) || WS_LOOPBACK_URL.test(value);
 
 function EndpointCard() {
   const { settings, patch } = useStore();
@@ -304,7 +308,7 @@ function EndpointCard() {
 
   const commit = () => {
     const value = draft.trim();
-    if (value !== "" && !WS_URL.test(value)) {
+    if (value !== "" && !isValidEndpoint(value)) {
       setInvalid(true);
       return;
     }
@@ -364,6 +368,9 @@ function EndpointCard() {
         />
         <div className={invalid ? "hint hint-danger" : "hint"} style={{ marginTop: 6 }}>
           {invalid ? t("models.endpointInvalid") : t("models.endpointHint")}
+        </div>
+        <div className="hint" style={{ marginTop: 4 }}>
+          {t("models.endpointRestart")}
         </div>
       </details>
     </section>

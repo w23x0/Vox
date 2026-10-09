@@ -107,6 +107,11 @@ pub fn dialect_for_model(
     provider: ModelProvider,
     model_name: &str,
 ) -> Option<&'static DialectInfo> {
+    // 模型 ID 会原样拼进建连 URL 的 query：只认 `[A-Za-z0-9._-]`，
+    // 带 `&`、空格之类的一律当认不出（`...-realtime&x=1` 不能靠前缀混过去）。
+    if !is_valid_model_id(model_name) {
+        return None;
+    }
     let provider_id = provider.as_id();
     // 先按 `models[]` 的显式 id，再按方言的前缀（官方列表里带发布日期后缀的
     // 快照模型表里没有，只能靠前缀认）。
@@ -125,6 +130,14 @@ pub fn dialect_for_model(
         .find(|dialect| dialect.id == id && dialect.provider == provider_id)
 }
 
+/// 模型 ID 的字符集：`[A-Za-z0-9._-]`，非空。
+pub fn is_valid_model_id(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
 fn claims(dialect: &DialectInfo, model_name: &str) -> bool {
     dialect
         .match_prefixes
@@ -135,6 +148,9 @@ fn claims(dialect: &DialectInfo, model_name: &str) -> bool {
 /// 同一个模型名**跨方言**地找（不看 provider）。只给 `cloud::protocol` 用：
 /// 阿里云的两种方言同属一家，模型名已经足够定位。
 pub fn dialect_by_prefix(model_name: &str) -> Option<&'static DialectInfo> {
+    if !is_valid_model_id(model_name) {
+        return None;
+    }
     DIALECTS.iter().find(|dialect| claims(dialect, model_name))
 }
 
@@ -431,6 +447,22 @@ mod tests {
                 && !model.name.starts_with("qwen3-livetranslate")));
         assert!(dialect_by_prefix("gummy-realtime-v1").is_none());
         assert!(dialect_by_prefix("qwen3-livetranslate-flash-realtime").is_none());
+    }
+
+    #[test]
+    fn normalization_rejects_ids_outside_the_safe_charset() {
+        let provider = ModelProvider::Aliyun;
+        let default = provider_info(provider).default_model;
+        for junk in [
+            "qwen3.5-livetranslate-flash-realtime&x=1",
+            "qwen3.8-livetranslate-flash-realtime ",
+            "qwen3.8-livetranslate-flash-realtime/../x",
+        ] {
+            assert_eq!(normalize_model_for(provider, junk), default, "{junk:?}");
+        }
+        // 合法的快照后缀仍然保留。
+        let snapshot = "qwen3.5-livetranslate-flash-realtime-2026-05-19";
+        assert_eq!(normalize_model_for(provider, snapshot), snapshot);
     }
 
     #[test]

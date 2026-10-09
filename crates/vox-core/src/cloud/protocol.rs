@@ -78,8 +78,9 @@ fn endpoint_url_with(env: Option<&str>, endpoint: &AliyunEndpoint, model_name: &
     format!("{base}?model={model}")
 }
 
-/// 挑出一个能用作接入点的地址：必须是 `ws(s)://`。用户贴来的地址可能自带
-/// `?model=...`，query 一律去掉——它要按当前模型重拼。
+/// 挑出一个能用作接入点的地址：`wss://`，或者指向本机回环的 `ws://`（本地调试/代理）。
+/// 其他 `ws://` 一律无效——API 密钥会随握手头明文发出去。
+/// 用户贴来的地址可能自带 `?model=...`，query 一律去掉——它要按当前模型重拼。
 fn usable_base(candidate: &str) -> Option<String> {
     let trimmed = candidate
         .trim()
@@ -88,7 +89,31 @@ fn usable_base(candidate: &str) -> Option<String> {
         .unwrap_or(candidate)
         .trim()
         .trim_end_matches('/');
-    (trimmed.starts_with("wss://") || trimmed.starts_with("ws://")).then(|| trimmed.to_string())
+    let usable = trimmed.starts_with("wss://")
+        || trimmed
+            .strip_prefix("ws://")
+            .is_some_and(is_loopback_authority);
+    usable.then(|| trimmed.to_string())
+}
+
+/// `host[:port][/path]` 的 host 是不是本机回环：`localhost`、127.0.0.0/8、`::1`。
+/// 带 `user@` 的写法一律不认（`ws://localhost@evil.com` 的真主机是后者）。
+fn is_loopback_authority(rest: &str) -> bool {
+    let authority = rest.split('/').next().unwrap_or(rest);
+    if authority.contains('@') {
+        return false;
+    }
+    let host = match authority.strip_prefix('[') {
+        Some(bracketed) => match bracketed.split_once(']') {
+            Some((host, _port)) => host,
+            None => return false,
+        },
+        None => authority.split(':').next().unwrap_or(authority),
+    };
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
 /// 鉴权头的值（`Authorization: Bearer sk-...`）。
@@ -707,6 +732,64 @@ mod tests {
             endpoint_url_with(Some("  "), &setting, LIVE),
             format!("{custom}?model={LIVE}")
         );
+    }
+
+    /// `ws://` 会把密钥明文发出去：只有本机回环放行，其余（含 `localhost@evil` 这类
+    /// 把真主机藏在后面的写法）一律落回地区缺省。
+    #[test]
+    fn plaintext_ws_is_only_allowed_for_loopback() {
+        let url_for = |custom: &str| {
+            endpoint_url_with(
+                None,
+                &AliyunEndpoint {
+                    region: AliyunRegion::Cn,
+                    custom: custom.into(),
+                },
+                LIVE,
+            )
+        };
+        for ok in [
+            "ws://localhost:8080/realtime",
+            "ws://LOCALHOST/realtime",
+            "ws://127.0.0.1:9000",
+            "ws://127.9.8.7/x",
+            "ws://[::1]:9000/x",
+        ] {
+            assert!(url_for(ok).starts_with(ok), "{ok} 应放行：{}", url_for(ok));
+        }
+        for bad in [
+            "ws://example.com/realtime",
+            "ws://10.0.0.5:8080",
+            "ws://localhost@evil.com/x",
+            "ws://127.0.0.1.evil.com/x",
+            "ws://[::2]/x",
+        ] {
+            assert_eq!(
+                url_for(bad),
+                format!("{}?model={LIVE}", catalog::API_BASE),
+                "{bad} 不该放行"
+            );
+        }
+        // wss 不受影响。
+        assert!(url_for("wss://example.com/x").starts_with("wss://example.com/x"));
+    }
+
+    /// 模型 ID 要原样进 query：带 `&` 的名字不能靠前缀被保留下来夹带参数。
+    #[test]
+    fn a_model_id_cannot_smuggle_query_parameters() {
+        for junk in [
+            "qwen3.5-livetranslate-flash-realtime&x=1",
+            "qwen3.8-livetranslate-flash-realtime a",
+            "qwen3.8-livetranslate-flash-realtime#frag",
+            "",
+        ] {
+            let url = endpoint_url_with(None, &cn(), junk);
+            assert_eq!(
+                url,
+                format!("{}?model={LIVE}", catalog::API_BASE),
+                "{junk:?}"
+            );
+        }
     }
 
     #[test]

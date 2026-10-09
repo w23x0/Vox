@@ -92,6 +92,8 @@ pub struct Settings {
     pub aliyun_region: AliyunRegion,
     /// 自定义接入点（工作空间专属 `wss://…`）。空 = 按 `aliyun_region` 缺省。
     /// 环境变量 `VOX_ALIYUN_ENDPOINT` 优先级更高，但那是调试后门。
+    /// 只认 `wss://`，或指向本机回环的 `ws://`；其他地址建连时视为无效。
+    /// **只在下次启动流水线（重新开始翻译）时生效**：运行中的会话不热更新接入点。
     #[serde(default)]
     pub aliyun_endpoint: String,
 }
