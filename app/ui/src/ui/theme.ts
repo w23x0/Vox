@@ -75,7 +75,10 @@ export function setThemeMode(mode: ThemeMode): void {
   const unlock = () => setTimeout(() => lock.remove(), 100);
 
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (!document.startViewTransition || reduce) {
+  // Linux 桌面端的 WebKitGTK 在透明窗口里做 view transition + clip-path 动画会让渲染进程崩溃
+  // （用户实测：切浅色主题直接闪退），那里一律直接切换、不做过渡动画。
+  const webkitGtk = /Linux/.test(navigator.userAgent) && !/Chrome|Chromium/.test(navigator.userAgent);
+  if (!document.startViewTransition || reduce || webkitGtk) {
     apply();
     unlock();
     return;
