@@ -90,7 +90,7 @@ impl PlaybackSink for LinuxPlayback {
         let (cmd_tx, cmd_rx) = pw::channel::channel::<Cmd>();
 
         let thread_shared = Arc::clone(&shared);
-        let device = device.map(|name| name.to_owned());
+        let device = device.map(resolve_sink_name);
         let thread = std::thread::Builder::new()
             .name("vox-playback".into())
             .spawn(move || stream_thread(device, thread_shared, report_tx, cmd_rx))
@@ -203,6 +203,22 @@ impl Drop for LinuxPlayback {
     fn drop(&mut self) {
         self.close();
     }
+}
+
+/// 设置里存的是界面上的显示名（`node.description`，如 "Vox Virtual Mic"），
+/// 而 `target.object` 只认 `node.name`（也认序号）——直接塞显示名会匹配不上，
+/// WirePlumber 就把流丢到默认输出：译音在本机耳机里响、虚拟麦里却是空的。
+/// 所以建流前先把显示名翻成 `node.name`；认不出就原样交回去，让 PipeWire 自己判断。
+fn resolve_sink_name(device: &str) -> String {
+    let Ok(snapshot) = probe::snapshot() else {
+        return device.to_owned();
+    };
+    let sinks = snapshot.nodes_of_class(probe::CLASS_SINK);
+    sinks
+        .iter()
+        .find(|node| node.name == device)
+        .or_else(|| sinks.iter().find(|node| node.description == device))
+        .map_or_else(|| device.to_owned(), |node| node.name.clone())
 }
 
 /// 流线程：建流 → 连流 → 等协商 → 跑主循环。
