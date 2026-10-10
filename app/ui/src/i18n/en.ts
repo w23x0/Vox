@@ -386,7 +386,7 @@ const en = {
     endpoint: "Custom endpoint",
     endpointHint: "Leave empty to use the default endpoint for the region. Workspace-specific addresses are listed in the Model Studio console.",
     endpointInvalid: "The endpoint must start with wss:// (ws:// is only allowed for localhost / 127.0.0.1 / [::1]).",
-    endpointRestart: "Takes effect the next time translation is started.",
+    endpointRestart: "A running translation is restarted automatically to apply it.",
     netTitle: "Network",
     netTest: "Test",
     netTesting: "Testing…",
@@ -406,7 +406,7 @@ const en = {
     netProxyInvalid: "Use an address starting with http://, socks5:// or socks5h://, optionally with user:pass@.",
     netProxyAuthSet:
       "Username and password are set; filling in an address again overwrites them too.",
-    netRestart: "Takes effect the next time translation is started (running sessions keep the old route).",
+    netRestart: "A running translation is restarted automatically to apply it (this is not a hot update).",
     netTakeover:
       "Proxy software has taken over the network, so Aliyun traffic may be routed overseas and slow down. Switch the proxy to rule mode, or add the rule",
     netVia: "Route",

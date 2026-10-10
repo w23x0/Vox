@@ -179,8 +179,8 @@ try {
   await expectCount(page.locator("#dd-home-speak-voice"), 1, "阿里云对外说话应有音色下拉");
   await changeModel(page, "对外说话", "Google Gemini", "gemini-3.5-live-translate-preview");
   await expectCount(page.locator("#dd-home-speak-voice"), 0, "Gemini 对外说话不给选手动音色，字段不应渲染");
-  await page.getByText(/重启「对外说话」后生效/).waitFor({ timeout: 1500 }).catch(() => {
-    failures.push("运行中切换对外说话服务商后没有重启提示");
+  await page.getByText(/已自动重启「对外说话」/).waitFor({ timeout: 1500 }).catch(() => {
+    failures.push("运行中切换对外说话服务商后没有自动重启提示");
   });
 
   await openMore(page, "listen");
@@ -190,8 +190,8 @@ try {
   await expectText(page.locator("#lang-home-listen-source"), "自动识别", "Gemini 听人说话源语言");
   await expectCount(page.getByText("固定为自动识别", { exact: false }), 1, "固定源语言要说明原因");
   await expectCount(page.locator("#dd-home-listen-voice"), 0, "Gemini 听人说话不给选手动音色，字段不应渲染");
-  await page.getByText(/重启「听人说话」后生效/).waitFor({ timeout: 1500 }).catch(() => {
-    failures.push("运行中切换听人说话服务商后没有重启提示");
+  await page.getByText(/已自动重启「听人说话」/).waitFor({ timeout: 1500 }).catch(() => {
+    failures.push("运行中切换听人说话服务商后没有自动重启提示");
   });
 
   const restartCountBeforeLanguage = await page.locator("#toast-container .toast-text").count();
@@ -201,7 +201,7 @@ try {
     { selector: "#toast-container .toast-text", before: restartCountBeforeLanguage },
     { timeout: 1500 },
   ).catch(() => {
-    failures.push("Gemini 运行中切换目标语言后没有重启提示");
+    failures.push("Gemini 运行中切换目标语言后没有自动重启提示");
   });
   const listenAudioToggle = page.getByRole("switch", { name: "播放译音", exact: true });
   await listenAudioToggle.click();

@@ -24,7 +24,7 @@
 | D5 | 系统代理：Linux/macOS 读 `HTTPS_PROXY`→`ALL_PROXY`（大小写都认）+ `NO_PROXY`；Windows 读注册表 `Internet Settings` 的 `ProxyEnable`/`ProxyServer`/`ProxyOverride`（`reg query`，**不新增依赖**）；读不到就直连；回环地址恒直连。 | N1 拍板原文。`reg.exe` 解析是纯函数，在所有平台都有测试。 |
 | D6 | 网卡枚举：Linux/macOS 读 `/sys/class/net`，Windows 跑 `netsh interface show interface`（`CREATE_NO_WINDOW`），其它平台只做假 IP 判定并给 `interfaces_scanned: false`。 | 任务书许可的"不新增重依赖"路线。 |
 | D7 | 测速的 HTTP 那一步**不带密钥**，预期 401/403；收到任何 HTTP 应答即算通，量往返时间。 | 不拿用户密钥做探测。 |
-| D8 | 网络设置只在**建连时**读取（`Runtime::session_config_for` 已把 `Settings::network.of(provider)` 塞进 `SessionParams`/`ConnectRequest`），运行中的会话不热更新；界面给一行说明。 | N6，与 `aliyun_endpoint` 同一条规矩。 |
+| D8 | 网络设置只在**建连时**读取（`Runtime::session_config_for` 已把 `Settings::network.of(provider)` 塞进 `SessionParams`/`ConnectRequest`），运行中的会话不热更新；改了**自动重启**在跑的那条腿（`Runtime::restart_required`，2026-10-10 起，见 `DECISIONS.md` A16），界面那行说明说的是这件事。 | N6，与 `aliyun_endpoint` 同一条规矩。 |
 | D9 | TUN 引导**只对阿里云 + 直连模式**显示；GPT/Gemini 不提示。 | 任务书原文：阿里云直连时被绕到海外才会延迟升高，另两家本来就要代理。 |
 | D10 | 给前端的事件里 `SettingsChanged` 要先脱敏再转发；`SettingsDto` 的 `network` 只带脱敏地址 + `proxy_auth` 一位。 | 密码不许出芯。 |
 

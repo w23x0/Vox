@@ -521,6 +521,37 @@ impl Runtime {
         Self::derive_session_config(settings, pipeline, 0, String::new(), false)
     }
 
+    /// 改了设置之后，这条腿**要不要停掉重开**才算生效。
+    ///
+    /// 判据只有一条：把新旧设置各自折成 [`SessionConfig`]，把**能热更新的那几格换成旧值**
+    /// 再逐格比——不一样就得重开。能热更新的格（走 `HotUpdate` / `SetTranslationAudio` /
+    /// `SetMonitorTranslation` / `SetGateConfig`，都不重连）：
+    ///
+    /// - 阀门（`gate` / `gate_active`）；
+    /// - 译音（`voice` / `output_device` / `monitor_translation`）；
+    /// - 目标语言——**只有「对外说话」+ 认热更新的方言**（`ProviderCapabilities::hot_update_language`
+    ///   为真那家）；「听人说话」的清单里 `session.hot_update` 恒假，只能重开。
+    ///
+    /// **没列进来的格子一律算"启动格"**：`SessionConfig` 将来加字段，默认就是"改了要重启"，
+    /// 不会像从前那样静默失效（换麦克风、换监听程序、换接入点/代理以前都只是"存下来了"）。
+    fn restart_required(old: &Settings, new: &Settings, pipeline: Pipeline) -> bool {
+        let before = Self::session_config_for(old, pipeline);
+        let mut after = Self::session_config_for(new, pipeline);
+        after.session_id = before.session_id;
+        after.api_key = before.api_key.clone();
+        after.gate = before.gate;
+        after.gate_active = before.gate_active;
+        after.voice = before.voice.clone();
+        after.output_device = before.output_device.clone();
+        after.monitor_translation = before.monitor_translation;
+        if pipeline == Pipeline::Speak
+            && catalog::supports(after.provider, Capability::HotUpdateLanguage)
+        {
+            after.target_language = before.target_language.clone();
+        }
+        after != before
+    }
+
     pub fn pipeline_state(&self, pipeline: Pipeline) -> PipelineState {
         self.inner.state.read().pipeline(pipeline).state
     }
@@ -619,13 +650,15 @@ impl Runtime {
     // -- 设置 ---------------------------------------------------------------
 
     /// 改设置。`edit` 在锁内跑；改完自动 normalize，该热更新的热更新，
-    /// 该重启的提示重启。
+    /// 只有重启才生效的**替用户把那条腿停掉重开**（不再要用户自己去点停止/启动）。
     pub fn update_settings<F>(&self, edit: F) -> Settings
     where
         F: FnOnce(&mut Settings),
     {
         let mut events = Vec::new();
         let mut commands = Vec::new();
+        // 改了只有重启才生效的格、而这条腿又在跑：放锁之后停掉重开。
+        let mut restart: Vec<Pipeline> = Vec::new();
         let settings;
         {
             let mut s = self.inner.state.write();
@@ -671,15 +704,13 @@ impl Runtime {
             let (speak_live, speak_session) = Self::live_session(&s, Pipeline::Speak);
 
             if speak_live {
-                // 换服务商/模型必须重连，语言/音色可以热更新。
-                if new.speak.provider != old.speak.provider
-                    || new.speak.model_name != old.speak.model_name
-                    || (!catalog::supports(new.speak.provider, Capability::HotUpdateLanguage)
-                        && new.speak.target_language != old.speak.target_language)
-                {
+                // 只有"会话启动时才读"的格变了才重开：换服务商/模型、换麦克风、关开
+                // 「对外翻译」、改接入点/代理……能热更新的格（语言/音色/播放设备/回听/
+                // 阀门）走下面的活指令，不进这一支。
+                if Self::restart_required(&old, &new, Pipeline::Speak) {
+                    restart.push(Pipeline::Speak);
                     events.push(Event::Notice {
-                        notice: Notice::info(Msg::new(key::RESTART_SPEAK_PROVIDER))
-                            .on(Pipeline::Speak),
+                        notice: Notice::info(Msg::new(key::RESTART_SPEAK)).on(Pipeline::Speak),
                     });
                 } else {
                     let target_language = (new.speak.target_language != old.speak.target_language)
@@ -691,69 +722,58 @@ impl Runtime {
                             voice: None,
                         });
                     }
-                }
 
-                if new.speak.speak_translation != old.speak.speak_translation
-                    || new.speak.voice != old.speak.voice
-                    || new.speak.output_device != old.speak.output_device
-                {
-                    commands.push(PipelineCommand::SetTranslationAudio {
-                        session_id: speak_session,
-                        voice: new.speak.speak_translation.then(|| new.speak.voice.clone()),
-                        output_device: new.speak.output_device.clone(),
-                    });
-                }
+                    if new.speak.speak_translation != old.speak.speak_translation
+                        || new.speak.voice != old.speak.voice
+                        || new.speak.output_device != old.speak.output_device
+                    {
+                        commands.push(PipelineCommand::SetTranslationAudio {
+                            session_id: speak_session,
+                            voice: new.speak.speak_translation.then(|| new.speak.voice.clone()),
+                            output_device: new.speak.output_device.clone(),
+                        });
+                    }
 
-                // 「对外翻译」是按会话启动时决定的：运行中点它发不了活指令，走重启。
-                if new.speak.translate != old.speak.translate && speak_live {
-                    events.push(Event::Notice {
-                        notice: Notice::info(Msg::new(key::RESTART_SPEAK_TRANSLATION))
-                            .on(Pipeline::Speak),
-                    });
-                }
+                    if new.speak.monitor_translation != old.speak.monitor_translation {
+                        commands.push(PipelineCommand::SetMonitorTranslation {
+                            session_id: speak_session,
+                            enabled: new.speak.monitor_translation,
+                        });
+                    }
 
-                if new.speak.monitor_translation != old.speak.monitor_translation {
-                    commands.push(PipelineCommand::SetMonitorTranslation {
-                        session_id: speak_session,
-                        enabled: new.speak.monitor_translation,
-                    });
-                }
-
-                // 阀门参数变了：序号在锁内分配。（坑 3）
-                let old_gate = Self::gate_for(&old);
-                let new_gate = Self::gate_for(&new);
-                if new_gate != old_gate {
-                    commands.push(PipelineCommand::SetGateConfig {
-                        session_id: speak_session,
-                        seq: self.alloc_seq_locked(),
-                        config: new_gate,
-                    });
+                    // 阀门参数变了：序号在锁内分配。（坑 3）
+                    let old_gate = Self::gate_for(&old);
+                    let new_gate = Self::gate_for(&new);
+                    if new_gate != old_gate {
+                        commands.push(PipelineCommand::SetGateConfig {
+                            session_id: speak_session,
+                            seq: self.alloc_seq_locked(),
+                            config: new_gate,
+                        });
+                    }
                 }
             }
 
             let (listen_live, listen_session) = Self::live_session(&s, Pipeline::Listen);
-            if listen_live
-                && (new.listen.provider != old.listen.provider
-                    || new.listen.model_name != old.listen.model_name
-                    || new.listen.target_language != old.listen.target_language)
-            {
-                events.push(Event::Notice {
-                    notice: Notice::info(Msg::new(key::RESTART_LISTEN_MODEL)).on(Pipeline::Listen),
-                });
-            }
-            if listen_live
-                && (new.listen.speak_translation != old.listen.speak_translation
+            if listen_live {
+                if Self::restart_required(&old, &new, Pipeline::Listen) {
+                    restart.push(Pipeline::Listen);
+                    events.push(Event::Notice {
+                        notice: Notice::info(Msg::new(key::RESTART_LISTEN)).on(Pipeline::Listen),
+                    });
+                } else if new.listen.speak_translation != old.listen.speak_translation
                     || new.listen.voice != old.listen.voice
-                    || new.listen.output_device != old.listen.output_device)
-            {
-                commands.push(PipelineCommand::SetTranslationAudio {
-                    session_id: listen_session,
-                    voice: new
-                        .listen
-                        .speak_translation
-                        .then(|| new.listen.voice.clone()),
-                    output_device: new.listen.output_device.clone(),
-                });
+                    || new.listen.output_device != old.listen.output_device
+                {
+                    commands.push(PipelineCommand::SetTranslationAudio {
+                        session_id: listen_session,
+                        voice: new
+                            .listen
+                            .speak_translation
+                            .then(|| new.listen.voice.clone()),
+                        output_device: new.listen.output_device.clone(),
+                    });
+                }
             }
 
             settings = new;
@@ -765,6 +785,13 @@ impl Runtime {
         self.dispatch(commands);
         self.emit(events);
         self.rebind_hotkeys();
+        // **替用户做那次"手动热重启"**：停掉再按新设置重开（`start` 自己会读新设置）。
+        // 放在放锁之后——`stop` / `start` 各自要拿写锁。`stop` 会复位"麦克风活跃"
+        // （坑 5），所以重开之后麦克风是关着的，要按一下热键（或再切一次开关）才开口。
+        for pipeline in restart {
+            self.stop(pipeline);
+            self.start(pipeline);
+        }
         settings
     }
 
@@ -781,7 +808,7 @@ impl Runtime {
         self.inner.gate_seq.fetch_add(1, Ordering::SeqCst) + 1
     }
 
-    /// 这条流水线在跑吗、会话号是多少。改设置时要据此决定"热更新还是提示重启"。
+    /// 这条流水线在跑吗、会话号是多少。改设置时要据此决定"热更新、重开、还是什么都不用做"。
     ///
     /// **必须在持写锁时调用**。
     fn live_session(state: &State, pipeline: Pipeline) -> (bool, u64) {
@@ -2071,6 +2098,92 @@ mod tests {
                 .iter()
                 .any(|c| matches!(c, PipelineCommand::Start(_) | PipelineCommand::Stop { .. })),
             "换语言不该重连：{commands:?}"
+        );
+    }
+
+    #[test]
+    fn a_start_only_change_restarts_the_running_pipeline() {
+        let (rt, rec) = fixture();
+        let session_id = bring_up(&rt, &rec, Pipeline::Speak);
+        // 换麦克风只有重开才生效（清单里没有这一格的热更新）：替用户停掉重开。
+        rt.update_settings(|s| s.speak.input_device = Some("另一个麦克风".into()));
+        let commands = rec.drain();
+        assert!(
+            commands.iter().any(
+                |c| matches!(c, PipelineCommand::Stop { session_id: sid } if *sid == session_id)
+            ),
+            "旧会话要先停掉：{commands:?}"
+        );
+        let restarted = commands.iter().find_map(|command| match command {
+            PipelineCommand::Start(config) if config.pipeline == Pipeline::Speak => Some(config),
+            _ => None,
+        });
+        assert_eq!(
+            restarted.expect("要按新设置重开").input_device.as_deref(),
+            Some("另一个麦克风"),
+        );
+    }
+
+    #[test]
+    fn restarting_tells_the_user_why_the_audio_blipped() {
+        let (rt, rec) = fixture();
+        let session_id = bring_up(&rt, &rec, Pipeline::Speak);
+        let events = Arc::new(Mutex::new(Vec::<Event>::new()));
+        let captured = Arc::clone(&events);
+        rt.add_listener(Arc::new(move |event| captured.lock().push(event.clone())));
+        rt.update_settings(|s| s.speak.translate = false);
+        assert!(
+            rec.drain().iter().any(
+                |c| matches!(c, PipelineCommand::Stop { session_id: sid } if *sid == session_id)
+            ),
+            "关开「对外翻译」也是按会话启动时决定的"
+        );
+        assert!(
+            events.lock().iter().any(|event| matches!(
+                event,
+                Event::Notice { notice } if notice.msg.key == key::RESTART_SPEAK
+            )),
+            "重启要有一条说清楚的通知"
+        );
+    }
+
+    #[test]
+    fn listen_language_change_restarts_the_running_pipeline() {
+        let (rt, rec) = fixture();
+        rt.update_settings(|s| {
+            s.listen.target = Some(crate::settings::ListenTarget {
+                executable: "discord.exe".into(),
+                display_name: "Discord".into(),
+                include_process_tree: true,
+            });
+        });
+        rec.drain();
+        let session_id = bring_up(&rt, &rec, Pipeline::Listen);
+        // 「听人说话」的清单里 `session.hot_update` 恒假：换目标语言只能重开。
+        rt.update_settings(|s| s.listen.target_language = "ja".into());
+        let commands = rec.drain();
+        assert!(
+            commands.iter().any(
+                |c| matches!(c, PipelineCommand::Stop { session_id: sid } if *sid == session_id)
+            ),
+            "旧会话要先停掉：{commands:?}"
+        );
+        let restarted = commands.iter().find_map(|command| match command {
+            PipelineCommand::Start(config) if config.pipeline == Pipeline::Listen => Some(config),
+            _ => None,
+        });
+        assert_eq!(restarted.expect("要按新设置重开").target_language, "ja");
+    }
+
+    #[test]
+    fn an_idle_pipeline_is_not_restarted() {
+        let (rt, rec) = fixture();
+        rt.update_settings(|s| s.speak.input_device = Some("另一个麦克风".into()));
+        assert!(
+            rec.drain()
+                .iter()
+                .all(|c| !matches!(c, PipelineCommand::Start(_) | PipelineCommand::Stop { .. })),
+            "没在跑的腿不必重开"
         );
     }
 

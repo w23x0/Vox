@@ -41,7 +41,7 @@ pub trait Ledger: Send {
     fn audio_apps(&self) -> Vec<AudioApp>;
 
     /// 写设置。**唯一写入口**：`edit` 在芯的写锁内跑，改完自动 `normalize`、发事件、该热更新的
-    /// 热更新、该提示重启的提示重启。
+    /// 热更新、只有重启才生效的**替用户把那条腿停掉重开**。
     fn update_settings(&self, edit: &mut dyn FnMut(&mut Settings));
 
     /// 这条流水线现在跑到哪一步了。

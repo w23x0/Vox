@@ -26,20 +26,15 @@
       "en": "API keys are stored in plain text (mode 0600) at {path}: this build has no Secret Service, so this file is the fallback",
       "ja": "API キーは {path} に平文（0600）で保存されています。この環境には Secret Service がないため、このファイルが代替です"
     },
-    "notice.restartSpeakProvider": {
-      "zh": "服务商/模型设置已保存，重启「对外说话」后生效",
-      "en": "Provider/model settings saved. Restart \"Speak\" for them to take effect",
-      "ja": "プロバイダー／モデル設定を保存しました。「発話」を再起動すると反映されます"
+    "notice.restartSpeak": {
+      "zh": "设置已改：已自动重启「对外说话」后生效",
+      "en": "Settings changed: \"Speak\" was restarted automatically to apply them",
+      "ja": "設定を変更しました：「発話」を自動で再起動して反映しました"
     },
-    "notice.restartSpeakTranslation": {
-      "zh": "对外翻译设置已保存，重启「对外说话」后生效",
-      "en": "Translation settings saved. Restart \"Speak\" for them to take effect",
-      "ja": "翻訳設定を保存しました。「発話」を再起動すると反映されます"
-    },
-    "notice.restartListenModel": {
-      "zh": "模型设置已保存，重启「听人说话」后生效",
-      "en": "Model settings saved. Restart \"Listen\" for them to take effect",
-      "ja": "モデル設定を保存しました。「聞き取り」を再起動すると反映されます"
+    "notice.restartListen": {
+      "zh": "设置已改：已自动重启「听人说话」后生效",
+      "en": "Settings changed: \"Listen\" was restarted automatically to apply them",
+      "ja": "設定を変更しました：「聞き取り」を自動で再起動して反映しました"
     },
     "notice.apiKeyMissing": {
       "zh": "请先配置 API 密钥",

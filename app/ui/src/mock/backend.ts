@@ -3,11 +3,11 @@
  * 电平条会动、字幕会流进来、token 会涨、通知会冒出来。
  *
  * 行为刻意抄 runtime.rs 的规则：没密钥不许启动、听人说话必须先选程序、
- * 运行中换模型只提示重启、切激活方式会清掉 mic_active。
+ * 运行中改了只有重启才生效的格就替用户停掉重开、切激活方式会清掉 mic_active。
  */
 
 import { DEFAULT_SETTINGS, cloneSettings } from "../defaults";
-import type { ModelProvider, PipelineName, PipelineState, Track } from "../types";
+import type { ModelProvider, PipelineName, PipelineState, Settings, Track } from "../types";
 import * as catalog from "../catalog";
 import { HOST_CAPABILITIES, UNAVAILABLE_REASONS } from "../capabilities";
 import type {
@@ -53,6 +53,41 @@ interface Lane {
   voice: FakeVoice;
   gateImpl: FakeGate;
   typer: FakeTyper | null;
+}
+
+/**
+ * 改了设置之后这条腿要不要**停掉重开**（真芯：`Runtime::restart_required`——把新旧设置
+ * 各折成 `SessionConfig`，能热更新的那几格换成旧值再比）。这里按同一份"启动格"清单比：
+ * 能热更新的是语言（只限认热更新的方言） / 音色 / 播放设备 / 回听 / 阀门，其余都算启动格。
+ */
+function needsRestart(before: Settings, after: Settings, pipeline: PipelineName): boolean {
+  const a = before[pipeline];
+  const b = after[pipeline];
+  if (a.provider !== b.provider || a.model_name !== b.model_name) return true;
+  if (pipeline === "speak") {
+    if (
+      before.speak.input_device !== after.speak.input_device ||
+      before.speak.translate !== after.speak.translate ||
+      before.speak.denoise !== after.speak.denoise ||
+      before.speak.voice_clone_frequency !== after.speak.voice_clone_frequency ||
+      (!catalog.supportsHotUpdateLanguage(after.speak.provider) &&
+        before.speak.target_language !== after.speak.target_language)
+    ) {
+      return true;
+    }
+  } else if (
+    before.listen.target_language !== after.listen.target_language ||
+    before.listen.source_language !== after.listen.source_language ||
+    JSON.stringify(before.listen.target) !== JSON.stringify(after.listen.target)
+  ) {
+    return true;
+  }
+  // 接入点 / 地区 / 网络出口只在建连时读（NET D8）：改了也得重开。
+  return (
+    (before.aliyun_endpoint ?? "") !== (after.aliyun_endpoint ?? "") ||
+    before.aliyun_region !== after.aliyun_region ||
+    JSON.stringify(before.network) !== JSON.stringify(after.network)
+  );
 }
 
 export function createMockApi(): VoxApi {
@@ -496,21 +531,16 @@ export function createMockApi(): VoxApi {
       const next = normalizeSettings(mergePatch(cloneSettings(settings), patch));
       if (JSON.stringify(before) === JSON.stringify(next)) return cloneSettings(settings);
       settings = next;
-      if (
-        (before.speak.provider !== next.speak.provider ||
-          before.speak.model_name !== next.speak.model_name ||
-          (!catalog.supportsHotUpdateLanguage(next.speak.provider) &&
-            before.speak.target_language !== next.speak.target_language)) &&
-        isRunning(lanes.speak.state)
-      ) {
-        notify("info", "notice.restartSpeakProvider", "speak");
+      // 只有重启才生效的格改了、这条腿又在跑：发一条通知，等下把这条腿停掉重开
+      // （真芯是 `Runtime::restart_required` + 放锁后 `stop`/`start`）。
+      const restarted: PipelineName[] = [];
+      if (isRunning(lanes.speak.state) && needsRestart(before, next, "speak")) {
+        notify("info", "notice.restartSpeak", "speak");
+        restarted.push("speak");
       }
-      if (
-        (before.listen.provider !== next.listen.provider ||
-          before.listen.model_name !== next.listen.model_name) &&
-        isRunning(lanes.listen.state)
-      ) {
-        notify("info", "notice.restartListenModel", "listen");
+      if (isRunning(lanes.listen.state) && needsRestart(before, next, "listen")) {
+        notify("info", "notice.restartListen", "listen");
+        restarted.push("listen");
       }
       if (before.speak.activation_mode !== next.speak.activation_mode) {
         holdUntil = 0;
@@ -518,6 +548,10 @@ export function createMockApi(): VoxApi {
         setMic(false);
       }
       emit({ kind: "settings_changed", settings: cloneSettings(settings) });
+      for (const pipeline of restarted) {
+        await stop(pipeline);
+        await start(pipeline);
+      }
       return cloneSettings(settings);
     },
     async setApiKey(provider, key) {

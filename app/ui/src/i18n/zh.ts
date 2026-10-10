@@ -389,7 +389,7 @@ const zh = {
     endpoint: "自定义接入点",
     endpointHint: "留空则按地区使用默认接入点。工作空间专属地址可在百炼控制台找到。",
     endpointInvalid: "接入点需要以 wss:// 开头（ws:// 只允许 localhost / 127.0.0.1 / [::1]）。",
-    endpointRestart: "重新启动翻译后生效。",
+    endpointRestart: "改动会自动重启正在跑的翻译后生效。",
     netTitle: "网络",
     netTest: "测速",
     netTesting: "测速中…",
@@ -407,7 +407,7 @@ const zh = {
     netProxyHint: "支持 http://、socks5://、socks5h://（由代理解析域名），可带 账号:密码@。",
     netProxyInvalid: "只能填 http://、socks5:// 或 socks5h:// 开头的地址，可带 账号:密码@。",
     netProxyAuthSet: "已设置账号密码；重新填写地址会一并覆盖账号密码。",
-    netRestart: "改动在下次启动翻译时生效（运行中的会话不热更新）。",
+    netRestart: "改动会自动重启正在跑的翻译后生效（不是热更新）。",
     netTakeover:
       "检测到代理软件接管了网络，阿里云流量可能被绕到海外导致延迟升高。请把代理切到规则模式，或添加规则",
     netVia: "当前出口",

@@ -389,7 +389,7 @@ const ja = {
     endpoint: "カスタムエンドポイント",
     endpointHint: "空欄の場合はリージョンの既定エンドポイントを使います。ワークスペース専用のアドレスは Model Studio のコンソールで確認できます。",
     endpointInvalid: "エンドポイントは wss:// で始まる必要があります（ws:// は localhost / 127.0.0.1 / [::1] のみ可）。",
-    endpointRestart: "翻訳を再開始すると反映されます。",
+    endpointRestart: "実行中の翻訳は自動で再起動して反映されます。",
     netTitle: "ネットワーク",
     netTest: "速度テスト",
     netTesting: "テスト中…",
@@ -407,7 +407,7 @@ const ja = {
     netProxyHint: "http://、socks5://、socks5h://（プロキシ側で名前解決）に対応。user:pass@ も指定できます。",
     netProxyInvalid: "http://、socks5://、socks5h:// で始まるアドレスを入力してください。user:pass@ も指定できます。",
     netProxyAuthSet: "ユーザー名とパスワードが設定済みです。アドレスを入力し直すと一緒に上書きされます。",
-    netRestart: "翻訳を再開始すると反映されます（実行中のセッションは元の経路のまま）。",
+    netRestart: "実行中の翻訳は自動で再起動して反映されます（ホットアップデートではありません）。",
     netTakeover:
       "プロキシソフトがネットワークを乗っ取っているため、阿里雲の通信が海外に回されて遅くなる可能性があります。プロキシをルールモードにするか、次のルールを追加してください",
     netVia: "現在の経路",

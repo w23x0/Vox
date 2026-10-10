@@ -34,7 +34,7 @@ catalog/notices.json
 
 | 层 | 发出点 | key |
 |---|---|---|
-| `vox-core::runtime` | 能力位越界、读/存密钥失败、三条"重启后生效"、缺密钥、没选监听程序、热键注册失败、流水线失败 | `hostFactsExcess` `keyReadFailed` `keySaveFailed` `restartSpeakProvider` `restartSpeakTranslation` `restartListenModel` `apiKeyMissing` `listenTargetMissing` `hotkeyRegisterFailed` `pipelineFailed` |
+| `vox-core::runtime` | 能力位越界、读/存密钥失败、两条"已自动重启"、缺密钥、没选监听程序、热键注册失败、流水线失败 | `hostFactsExcess` `keyReadFailed` `keySaveFailed` `restartSpeak` `restartListen` `apiKeyMissing` `listenTargetMissing` `hotkeyRegisterFailed` `pipelineFailed` |
 | `vox-core::pipeline` | 装配清单不合法 / 无输入、连不上、播放/采集/链失败（按**阶段**补 key）、原声输出/回听/译音输出失败、降噪降级、服务端 close/错误 | `sessionPlanInvalid` `noCaptureInput` `connectFailed` `playbackOpenFailed` `captureStartFailed` `chainBuildFailed` `passthroughOutputFailed` `monitorFailed` `translationOutputFailed` `denoiseDisabled` `server.*`（8 条，`explain_error` / `explain_close`） |
 | `vox-host` | 控制面没起来、明文密钥提示 | `controlPlaneDown` `plaintextKeys` |
 | 装配层（桌面/无屏） | 启动提示 4 条（PipeWire、托盘、无屏需 Linux）、悬浮窗 3 条、设备扫描线程、全局热键、托盘、虚拟麦 2 条 | `pipewireMissing(Headless)` `trayMissing` `headlessNeedsLinux` `overlay*` `deviceScanCrashed` `hotkeyHostFailed` `trayFailed` `cableHideFailed` `cableRestoreFailed` |

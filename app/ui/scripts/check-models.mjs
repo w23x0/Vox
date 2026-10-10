@@ -81,7 +81,10 @@ try {
     await endpoint.fill("ws://localhost:8080/realtime");
     await endpoint.blur();
     expect((await endpoint.getAttribute("aria-invalid")) === "false", "回环 ws:// 允许");
-    expect((await page.locator(".adv-details").innerText()).includes("重新启动翻译后生效"), "要说明重新启动翻译后生效");
+    expect(
+      (await page.locator(".adv-details").innerText()).includes("自动重启"),
+      "要说明改了会自动重启翻译",
+    );
     const good = "wss://ws1.cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime";
     await endpoint.fill(good);
     await endpoint.blur();
