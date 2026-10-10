@@ -187,6 +187,7 @@ fn connect_any(
     bind: Option<&str>,
 ) -> Result<(TcpStream, Option<String>), DialError> {
     // 绑不上就整个函数后续都不再试绑。
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut bind = bind;
     let started = Instant::now();
     let mut last: Option<io::Error> = None;
@@ -197,6 +198,7 @@ fn connect_any(
         }
         let share = (remaining / (addrs.len() - i) as u32).max(Duration::from_millis(200));
         let timeout = share.min(remaining);
+        #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
         let mut bound = None;
         let attempt = match bind.filter(|_| !addr.ip().is_loopback()) {
             #[cfg(target_os = "linux")]

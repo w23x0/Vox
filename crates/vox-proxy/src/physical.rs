@@ -8,6 +8,7 @@
 //! 非 Linux 上整个模块是空操作。
 
 /// 一行 `/proc/net/route` 里和默认路由有关的字段。
+#[cfg(any(target_os = "linux", test))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DefaultRoute {
     iface: String,
@@ -15,6 +16,7 @@ struct DefaultRoute {
 }
 
 /// 解析 `/proc/net/route` 全文，取出所有"启用的默认路由"。
+#[cfg(any(target_os = "linux", test))]
 fn parse_default_routes(text: &str) -> Vec<DefaultRoute> {
     text.lines()
         .skip(1)
@@ -37,6 +39,7 @@ fn parse_default_routes(text: &str) -> Vec<DefaultRoute> {
 }
 
 /// 名字像虚拟 / 隧道 / 容器网卡（不是出国门的物理口）。
+#[cfg(any(target_os = "linux", test))]
 fn virtual_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     [
@@ -55,6 +58,7 @@ fn virtual_name(name: &str) -> bool {
 }
 
 /// 在默认路由里挑物理网卡：跳过虚拟网卡与 `is_tun` 判定为 TUN 的，取 metric 最小的。
+#[cfg(any(target_os = "linux", test))]
 fn choose_iface(routes: &[DefaultRoute], is_tun: impl Fn(&str) -> bool) -> Option<String> {
     routes
         .iter()
