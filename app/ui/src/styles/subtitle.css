@@ -7,7 +7,7 @@
 
 .subtitle-preview {
   border-radius: var(--radius);
-  padding: 18px;
+  padding: 12px 14px;
   /* 棋盘底，用来看穿背景不透明度。悬浮窗实际是透明的，这里要能看出「透」到什么程度 */
   background-color: #101419;
   background-image:
@@ -80,13 +80,13 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 4px 0 16px;
+  padding: 4px 0 12px;
 }
 
 .pos-map {
   position: relative;
   inline-size: 100%;
-  max-inline-size: 420px;
+  max-inline-size: 240px;
   border: 1px solid var(--border, rgba(148, 163, 184, 0.35));
   border-radius: var(--radius);
   background: #101419;
@@ -209,5 +209,25 @@
   font-size: 12px;
 }
 .pos-field input {
-  inline-size: 84px;
+  inline-size: 68px;
 }
+
+/* 字幕页「高级」折叠组：<details> 收起时内容不可聚焦 */
+.sub-advanced > summary {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  padding-block-end: 8px;
+}
+.sub-advanced > summary::-webkit-details-marker { display: none; }
+.sub-advanced > summary::before {
+  content: "▸";
+  display: inline-block;
+  inline-size: 1.1em;
+  color: var(--accent);
+}
+.sub-advanced[open] > summary::before { content: "▾"; }
+
+/* 字幕页设置项很多，行距收紧一点，整页才不会滚太长 */
+.sub-compact .settings-item { padding-block: 12px; }
+.sub-compact .subtitle-preview-wrap { padding-block-end: 12px; }

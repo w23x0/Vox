@@ -112,7 +112,7 @@ export interface SubtitleSettings {
   char_fade_ms: number;
   /** 每条轨的区域放几行（1–4）。 */
   lines_per_track: number;
-  /** 0 类字（纯噪声/填充词/无意义发音）始终以 `dim_alpha` 淡显，随整块一起淡出清空。 */
+  /** 0 类字（纯噪声/填充词/无意义发音）始终以 `dim_alpha` 淡显，淡出按视觉行算（一行只要还有活字就整行活着）。 */
   dim_zeros: boolean;
   /** 0 类字的显示 alpha（0..1），越小越淡。 */
   dim_alpha: number;

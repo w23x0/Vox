@@ -83,8 +83,9 @@ export function SubtitlePage() {
   }
 
   return (
-    <>
+    <div className="sub-compact">
       <div className="settings-group">
+        <div className="group-title">{t("subtitle.groupAppearance")}</div>
         <SettingsItem
           title={t("subtitle.visible")}
           desc={t("subtitle.visibleDesc")}
@@ -100,9 +101,6 @@ export function SubtitlePage() {
         <div className="subtitle-preview-wrap">
           <SubtitlePreview sub={sub} />
         </div>
-      </div>
-
-      <div className="settings-group">
         <SettingsItem
           wide
           htmlFor="dd-subtitle-font"
@@ -185,6 +183,24 @@ export function SubtitlePage() {
       </div>
 
       <div className="settings-group">
+        <div className="group-title">{t("subtitle.groupBehavior")}</div>
+        <SettingsItem
+          wide
+          title={t("subtitle.linesPerTrack")}
+          desc={t("subtitle.linesPerTrackDesc")}
+          control={
+            <Slider
+              value={sub.lines_per_track}
+              min={LINES_PER_TRACK_RANGE.min}
+              max={LINES_PER_TRACK_RANGE.max}
+              step={1}
+              disabled={loading}
+              label={t("subtitle.linesPerTrack")}
+              format={(v) => t("subtitle.linesSuffix", { v })}
+              onChange={(lines_per_track) => patch({ subtitle: { lines_per_track } })}
+            />
+          }
+        />
         <SettingsItem
           wide
           title={t("subtitle.charTtl")}
@@ -232,23 +248,36 @@ export function SubtitlePage() {
             />
           }
         />
+      </div>
+
+      <div className="settings-group">
+        <div className="group-title">{t("subtitle.groupPosition")}</div>
         <SettingsItem
-          wide
-          title={t("subtitle.linesPerTrack")}
-          desc={t("subtitle.linesPerTrackDesc")}
+          title={t("subtitle.positionSize")}
+          desc={t("subtitle.positionSizeDesc")}
           control={
-            <Slider
-              value={sub.lines_per_track}
-              min={LINES_PER_TRACK_RANGE.min}
-              max={LINES_PER_TRACK_RANGE.max}
-              step={1}
-              disabled={loading}
-              label={t("subtitle.linesPerTrack")}
-              format={(v) => t("subtitle.linesSuffix", { v })}
-              onChange={(lines_per_track) => patch({ subtitle: { lines_per_track } })}
-            />
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              data-focus-item
+              onClick={() => patch({ subtitle: { geometry: null } })}
+            >
+              {t("subtitle.resetDefault")}
+            </button>
           }
         />
+        <PositionPicker
+          geometry={sub.geometry}
+          disabled={loading}
+          loadScreen={loadScreen}
+          onChange={(geometry) => patch({ subtitle: { geometry } })}
+        />
+      </div>
+
+      <details className="settings-group sub-advanced">
+        <summary data-focus-item className="group-title">
+          {t("subtitle.groupAdvanced")}
+        </summary>
         <SettingsItem
           title={t("subtitle.dimZeros")}
           desc={t("subtitle.dimZerosDesc")}
@@ -278,30 +307,7 @@ export function SubtitlePage() {
             />
           }
         />
-      </div>
-
-      <div className="settings-group">
-        <SettingsItem
-          title={t("subtitle.positionSize")}
-          desc={t("subtitle.positionSizeDesc")}
-          control={
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              data-focus-item
-              onClick={() => patch({ subtitle: { geometry: null } })}
-            >
-              {t("subtitle.resetDefault")}
-            </button>
-          }
-        />
-        <PositionPicker
-          geometry={sub.geometry}
-          disabled={loading}
-          loadScreen={loadScreen}
-          onChange={(geometry) => patch({ subtitle: { geometry } })}
-        />
-      </div>
-    </>
+      </details>
+    </div>
   );
 }
