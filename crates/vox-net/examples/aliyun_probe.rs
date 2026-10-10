@@ -1958,12 +1958,13 @@ mod tests {
         assert_eq!(draft.object["translation"]["language"], "ja");
         assert_eq!(draft.object["output_modalities"], json!(["text", "audio"]));
 
-        // `--audio off` 落到纯文字：不要音色，也别报 audio 模态。
+        // `--audio off` 落到纯文字：别报 audio 模态；3.8 仍要带一个有效音色，
+        // 否则服务端填它自己的缺省 `Chelsie`，3.8 不认，整个会话被拒。
         args.audio = false;
         args.voice = None;
         let text_only = build_session_object(&args).unwrap().object;
         assert_eq!(text_only["output_modalities"], json!(["text"]));
-        assert!(text_only["audio"]["output"].get("voice").is_none());
+        assert!(text_only["audio"]["output"]["voice"].is_string());
     }
 
     /// `--session-json` 与语言/音色开关互斥。这两样同时给的时候到底听谁的说不清，
@@ -2106,7 +2107,7 @@ mod tests {
         assert!(!params.audio_enabled(), "前提：yue 不支持语音输出");
         let silent = params.to_session_object();
         assert_eq!(silent["output_modalities"], json!(["text"]));
-        assert!(silent["audio"]["output"].get("voice").is_none());
+        assert!(silent["audio"]["output"]["voice"].is_string());
 
         // 同一个语言配 `--audio off` 就合法——要文字本来就不该带音色。
         args.audio = false;
