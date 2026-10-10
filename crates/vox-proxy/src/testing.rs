@@ -192,19 +192,27 @@ fn serve_socks5(
 
 /// 回环上一个会回显固定字节的 TCP 服务（测隧道通不通用）。
 pub fn echo_server() -> SocketAddr {
+    fn serve(listener: TcpListener) {
+        thread::spawn(move || {
+            for mut s in listener.incoming().flatten() {
+                thread::spawn(move || {
+                    let mut buf = [0u8; 256];
+                    while let Ok(n) = s.read(&mut buf) {
+                        if n == 0 || s.write_all(&buf[..n]).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+    }
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    thread::spawn(move || {
-        for mut s in listener.incoming().flatten() {
-            thread::spawn(move || {
-                let mut buf = [0u8; 256];
-                while let Ok(n) = s.read(&mut buf) {
-                    if n == 0 || s.write_all(&buf[..n]).is_err() {
-                        break;
-                    }
-                }
-            });
-        }
-    });
+    // `localhost` 在有的机器（比如 CI）上先解析成 `::1`：同端口再听一份 IPv6 回环，
+    // 绑不上（没有 IPv6 或端口被占）就算了，只影响那条走 `localhost` 的测试。
+    if let Ok(v6) = TcpListener::bind(("::1", addr.port())) {
+        serve(v6);
+    }
+    serve(listener);
     addr
 }
