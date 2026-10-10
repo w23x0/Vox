@@ -9,3 +9,6 @@ license.workspace = true
 vox-core.workspace = true
 tracing.workspace = true
 unicode-linebreak.workspace = true
+rustybuzz.workspace = true
+unicode-bidi.workspace = true
+unicode-script.workspace = true

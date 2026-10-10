@@ -8,6 +8,10 @@
 //! 跑法：`cargo run -p vox-overlay-linux --example snapshot [输出目录]`
 //! 缺省输出目录：`/tmp/claude-1000/overlay-captions/`
 //!
+//! 复杂文字一组（阿拉伯语 / 希伯来语 / 泰语 / 印地语 / 双向混排 / RTL 句子增长）：
+//! `cargo run -p vox-overlay-linux --example snapshot shaping [输出目录]`
+//! 缺省输出目录：`/tmp/claude-1000/overlay-shaping/`
+//!
 //! 为什么要合成到背景上：分层窗的像素是预乘 BGRA，单看 RGB 通道偏黑，跟屏幕上
 //! 的样子不是一回事。只有按 `dst = src + dst * (1 - a)` 混一遍，看到的才是真效果。
 
@@ -46,10 +50,18 @@ struct Scene {
 }
 
 fn main() {
-    let dir = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp/claude-1000/overlay-captions"));
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let shaping = args.first().is_some_and(|a| a == "shaping");
+    if shaping {
+        args.remove(0);
+    }
+    let dir = args.first().map(PathBuf::from).unwrap_or_else(|| {
+        PathBuf::from(if shaping {
+            "/tmp/claude-1000/overlay-shaping"
+        } else {
+            "/tmp/claude-1000/overlay-captions"
+        })
+    });
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("建输出目录 {} 失败: {e}", dir.display());
         std::process::exit(1);
@@ -58,7 +70,7 @@ fn main() {
     let mut problems: Vec<String> = Vec::new();
     let mut before_trim: Option<Vec<u8>> = None;
     println!("输出目录: {}", dir.display());
-    for scene in scenes() {
+    for scene in if shaping { shaping_scenes() } else { scenes() } {
         let settings = SubtitleSettings::default();
         let mut renderer = match Renderer::new(&settings, DPI, font_factory()) {
             Ok(renderer) => renderer,
@@ -201,6 +213,89 @@ fn nonstop_speech() -> (Vec<(u64, Event)>, u64) {
         t += 120;
     }
     (events, t)
+}
+
+const ARABIC: &str = "مرحبا بكم في ترجمة الصوت الفورية، هذا اختبار للخط العربي المتصل";
+const HEBREW: &str = "שלום עולם, זוהי בדיקה של כתיבה מימין לשמאל עם ניקוד: בְּרֵאשִׁית בָּרָא";
+const THAI: &str = "สวัสดีครับ ยินดีที่ได้รู้จัก ภาษาไทยมีวรรณยุกต์และสระซ้อนกัน เช่น ผู้ใหญ่ ก็ ที่นี่";
+const HINDI: &str = "नमस्ते दुनिया, यह एक परीक्षण है। क्षत्रिय श्रीमान् हिन्दी में संयुक्ताक्षर होते हैं";
+const BIDI: &str = "Vox 实时翻译 مرحبا بالعالم (2026) works with العربية and 中文 mixed";
+
+/// 复杂文字：连写、方向、附标、混排、RTL 句子增长的中间帧。
+fn shaping_scenes() -> Vec<Scene> {
+    use Event::Update;
+    use Track::{Listen, Speak};
+    let growth = [
+        "مرحبا بكم في",
+        "مرحبا بكم في ترجمة الصوت الفورية، هذا",
+        "مرحبا بكم في ترجمة الصوت الفورية، هذا اختبار للخط العربي المتصل عندما تطول الجملة وتلتف على أكثر من سطر",
+    ];
+    vec![
+        Scene {
+            name: "s1-arabic",
+            what: "阿拉伯语：字母连写、从右往左、右对齐",
+            events: vec![(0, Update(Listen, ARABIC, ARABIC))],
+            shot_at: 600,
+        },
+        Scene {
+            name: "s2-hebrew",
+            what: "希伯来语：从右往左、右对齐、点号（niqqud）落在字母上",
+            events: vec![(0, Update(Listen, HEBREW, HEBREW))],
+            shot_at: 600,
+        },
+        Scene {
+            name: "s3-thai",
+            what: "泰语：元音与声调符号叠在辅音上方/下方，不散开",
+            events: vec![(0, Update(Listen, THAI, THAI))],
+            shot_at: 600,
+        },
+        Scene {
+            name: "s4-hindi",
+            what: "印地语：连字（क्ष、श्री）、短 i 的 matra 在辅音左边、上方的横线连成一片",
+            events: vec![(0, Update(Listen, HINDI, HINDI))],
+            shot_at: 600,
+        },
+        Scene {
+            name: "s5-bidi-mixed",
+            what: "中英阿混排（整句从左往右）：英文/中文保持从左往右，阿拉伯词整体反向，括号与数字位置正确",
+            events: vec![(0, Update(Listen, BIDI, BIDI))],
+            shot_at: 600,
+        },
+        Scene {
+            name: "s6a-rtl-grow-1",
+            what: "RTL 句子增长（1/3）：短句靠右",
+            events: vec![(0, Update(Speak, growth[0], growth[0]))],
+            shot_at: 300,
+        },
+        Scene {
+            name: "s6b-rtl-grow-2",
+            what: "RTL 句子增长（2/3）：已显示的字右边缘不动，新字长在左边",
+            events: vec![
+                (0, Update(Speak, growth[0], growth[0])),
+                (200, Update(Speak, growth[1], growth[1])),
+            ],
+            shot_at: 500,
+        },
+        Scene {
+            name: "s6c-rtl-grow-3",
+            what: "RTL 句子增长（3/3）：折成两行，两行共用右边缘，上一行不再变",
+            events: vec![
+                (0, Update(Speak, growth[0], growth[0])),
+                (200, Update(Speak, growth[1], growth[1])),
+                (400, Update(Speak, growth[2], growth[2])),
+            ],
+            shot_at: 900,
+        },
+        Scene {
+            name: "s7-two-tracks",
+            what: "两条轨：听（阿拉伯语，右对齐）在上，说（印地语，左对齐）在下",
+            events: vec![
+                (0, Update(Listen, ARABIC, ARABIC)),
+                (0, Update(Speak, HINDI, HINDI)),
+            ],
+            shot_at: 700,
+        },
+    ]
 }
 
 fn scenes() -> Vec<Scene> {

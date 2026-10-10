@@ -8,7 +8,10 @@
 //! - I4 轨道独立：一条轨上的事件不改变另一条轨的任何坐标；
 //! - I5 不丢旧句：定稿过的句子永远留在轨上，且不打头重排。
 //!
-//! 用**固定种子的伪随机事件序列**跑（2000 条 × 每条多步），每一步之后逐条检查。
+//! 用**固定种子的伪随机事件序列**跑（每种文字 2000 条 × 每条多步），每一步之后逐条检查。
+//! 文字分四种（`Mode`）：拉丁/中文、纯从右往左（阿拉伯语 + 希伯来语）、双向混排、
+//! 带附标的组合字形（泰语、印地语、希伯来语点号）。I1 在**逻辑顺序**上成立：
+//! 位置 = (行号, 簇的左边缘 x)，从右往左的轨靠右对齐，所以新字长在左边、老字不动。
 //! 没有引入 proptest：这里的随机源只需要"稳定可复现"，自己写一个 LCG 更省依赖。
 
 use std::time::{Duration, Instant};
@@ -17,14 +20,20 @@ use vox_core::ports::{SubtitleFrame, SubtitleLine};
 use vox_core::settings::SubtitleSettings;
 use vox_core::subtitle::{confirmed_char_count, RenderedChar, SubtitleTiming, Subtitles, Track};
 use vox_overlay_core::render::{FrameInput, Renderer};
-use vox_overlay_core::text::{FontMetrics, GlyphSource};
+use vox_overlay_core::text::GlyphSource;
+
+mod common;
+use common::{is_mark, FakeFont};
+
+/// 从左往右的轨，行首字的绝对 x（窗口内边距 18 + 底衬内边距 14）。
+const LEFT_EDGE: i32 = 32;
 
 /// 视口宽度（像素）。固定值：换宽度会整块重排，不属于"内容变了不许动"的范畴。
 const WIDTH: i32 = 900;
 /// 每条轨放几行。
 const LINES_PER_TRACK: u32 = 3;
-/// 事件序列条数（施工稿 §3：至少 2000）。
-const SEQUENCES: u64 = 2000;
+/// 事件序列条数（施工稿 §3：至少 2000）。四种文字各 2000 条。
+const SEQUENCES: u64 = 8000;
 /// 每条序列的步数上限。
 const STEPS: u64 = 14;
 /// 时间刻度：一步 = 120 ms。
@@ -45,35 +54,28 @@ fn timing() -> SubtitleTiming {
     }
 }
 
-/// 等宽假光栅器：CJK 26 px，其余 14 px；行高 40，基线 32。
-/// 不变量只关心"坐标有没有动"，跟真实字形无关，所以量得准不准无所谓。
-struct FakeFont;
-
-impl GlyphSource for FakeFont {
-    fn metrics(&self) -> FontMetrics {
-        FontMetrics {
-            line_height: 40,
-            ascent: 32,
-        }
-    }
-
-    fn advance(&mut self, ch: char) -> i32 {
-        if is_wide(ch) {
-            26
-        } else {
-            14
-        }
-    }
-
-    fn glyph(&mut self, _ch: char) -> Option<&vox_overlay_core::text::Glyph> {
-        // 只测布局，不需要真的墨迹。
-        None
-    }
+/// 序列用哪种文字。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Mode {
+    /// 拉丁字母 + 中文（原有的覆盖）。
+    Ltr,
+    /// 阿拉伯语 + 希伯来语，整条字幕从右往左。
+    Rtl,
+    /// 阿拉伯语里夹英文单词与数字（双向混排）。
+    Mixed,
+    /// 泰语、印地语、希伯来语点号：附标并进前一个簇，簇不可拆。
+    Marks,
 }
 
-fn is_wide(ch: char) -> bool {
-    matches!(ch as u32,
-        0x2E80..=0x303F | 0x3040..=0x30FF | 0x4E00..=0x9FFF | 0xFF00..=0xFF60)
+impl Mode {
+    fn of(seed: u64) -> Self {
+        match (seed / 2) % 4 {
+            0 => Mode::Ltr,
+            1 => Mode::Rtl,
+            2 => Mode::Mixed,
+            _ => Mode::Marks,
+        }
+    }
 }
 
 struct Rng(u64);
@@ -108,24 +110,94 @@ const WORDS: [&str; 10] = [
     "实时",
     "翻译",
 ];
+const RTL_WORDS: [&str; 10] = [
+    "مرحبا",
+    "بالعالم",
+    "ترجمة",
+    "شكرا",
+    "שלום",
+    "עולם",
+    "תרגום",
+    "نعم",
+    "الترجمة",
+    "בְּרֵאשִׁית",
+];
+const MIXED_WORDS: [&str; 10] = [
+    "مرحبا",
+    "hello",
+    "ترجمة",
+    "2026",
+    "بالعالم",
+    "overlay",
+    "שלום",
+    "yes",
+    "نعم",
+    "supercalifragilistic",
+];
+const MARK_WORDS: [&str; 10] = [
+    "สวัสดี",
+    "ภาษาไทย",
+    "ที่นี่",
+    "नमस्ते",
+    "हिन्दी",
+    "क्षत्रिय",
+    "कृपया",
+    "คำแปล",
+    "world",
+    "भाषा",
+];
+
+fn words_of(mode: Mode) -> &'static [&'static str; 10] {
+    match mode {
+        Mode::Ltr => &WORDS,
+        Mode::Rtl => &RTL_WORDS,
+        Mode::Mixed => &MIXED_WORDS,
+        Mode::Marks => &MARK_WORDS,
+    }
+}
+
 /// 几个字母，不带空格：模拟一个词在逐字往后长。
-fn letters(rng: &mut Rng) -> String {
-    (0..1 + rng.below(6))
-        .map(|_| char::from(b'a' + rng.below(26) as u8))
-        .collect()
+fn letters(rng: &mut Rng, mode: Mode) -> String {
+    let pool: &[char] = match mode {
+        Mode::Ltr => &[],
+        Mode::Rtl => &['ب', 'ت', 'ا', 'ل', 'ם', 'ש', 'ر', 'ن'],
+        Mode::Mixed => &['ب', 'a', 'ت', 'b', 'ا', 'c', '7'],
+        Mode::Marks => &['ส', 'ว', 'ั', 'ด', 'ี', 'न', 'म', 'स', '्', 'े', 'क'],
+    };
+    let mut out: String = (0..1 + rng.below(6))
+        .map(|_| {
+            if pool.is_empty() {
+                char::from(b'a' + rng.below(26) as u8)
+            } else {
+                pool[rng.below(pool.len() as u64) as usize]
+            }
+        })
+        .collect();
+    // 一个词不会以附标开头（附标没有可依附的字母）。
+    if out.chars().next().is_some_and(is_mark) {
+        out.insert(0, 'ส');
+    }
+    out
 }
 
 const TAILS: [&str; 6] = ["", "。", "，字幕", " 的意思。", "！", "テスト"];
+const RTL_TAILS: [&str; 5] = ["", "،", "؟", " (ok)", "."];
 
 /// 一句假的话。混中英与标点，好让折行/悬挂标点那条路径也被随机走到。
-fn phrase(rng: &mut Rng) -> String {
+fn phrase(rng: &mut Rng, mode: Mode) -> String {
+    let words = words_of(mode);
     let mut out = String::new();
     let n = 1 + rng.below(5);
     for _ in 0..n {
-        out.push_str(WORDS[rng.below(WORDS.len() as u64) as usize]);
+        out.push_str(words[rng.below(words.len() as u64) as usize]);
         out.push(' ');
     }
-    out.push_str(TAILS[rng.below(TAILS.len() as u64) as usize]);
+    match mode {
+        Mode::Ltr | Mode::Marks => out.push_str(TAILS[rng.below(TAILS.len() as u64) as usize]),
+        Mode::Rtl | Mode::Mixed => {
+            out.push_str(RTL_TAILS[rng.below(RTL_TAILS.len() as u64) as usize])
+        }
+    }
     out
 }
 
@@ -134,6 +206,9 @@ fn phrase(rng: &mut Rng) -> String {
 struct PlacedLine {
     y: f32,
     plate_x: i32,
+    /// 底衬右边缘。从右往左的轨，所有行的右边缘必须相同。
+    plate_right: i32,
+    rtl: bool,
     chars: Vec<char>,
     xs: Vec<i32>,
     /// 第一个字的**绝对下标**（`SubtitleLine::origin` + 帧内下标），模型丢队首也不变。
@@ -180,11 +255,25 @@ impl Placed {
     }
 
     /// 末尾那个还在增长的词（连续字母数字）的起点；末尾不是词就没有。
-    fn growing_word_start(&self) -> Option<u64> {
+    fn growing_word_start(&self, mode: Mode) -> Option<u64> {
         let slots = self.slots();
+        if mode != Mode::Ltr {
+            // UAX #14 的"词"可以带着空格（空格后面跟 `.` `،` 这类不许在前面断的标点），
+            // 所以整词挪行时挪的是"最后一个断点之后"的全部；双向混排还要再加上末尾那段反向文字。
+            let unit = last_break_start(&slots);
+            return Some(if mode == Mode::Mixed {
+                unit.min(trailing_run_start(&slots))
+            } else {
+                unit
+            });
+        }
         let mut start = None;
         for (&abs, &(_, _, ch)) in slots.iter().rev() {
-            if ch.is_ascii_alphanumeric() {
+            let in_word = match mode {
+                Mode::Ltr => ch.is_ascii_alphanumeric(),
+                _ => !ch.is_whitespace(),
+            };
+            if in_word {
                 start = Some(abs);
             } else {
                 break;
@@ -192,6 +281,50 @@ impl Placed {
         }
         start
     }
+}
+
+/// 字的方向类别：L = 拉丁字母，R = 阿拉伯/希伯来字母，其余是中性（空格、标点）。
+fn strong_class(ch: char) -> Option<bool> {
+    // 数字没有自己的方向：跟着前面的强方向字符走（阿拉伯字母后面的数字归 RTL 块）。
+    if ch.is_ascii_alphabetic() {
+        Some(false)
+    } else if matches!(ch as u32, 0x0590..=0x06FF) && ch != '،' && !ch.is_whitespace() {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+/// 末尾那一段同方向的文字（连同夹在里面的空格标点）的起点：双向文字里，这一段每长一个字，
+/// 它自己的老字都会被推开（LTR 轨里的 RTL 段靠左贴着长，RTL 轨里的 LTR 段靠右贴着长）。
+fn trailing_run_start(slots: &std::collections::BTreeMap<u64, Slot>) -> u64 {
+    let mut run_class = None;
+    let mut start = slots.keys().next_back().map_or(0, |k| k + 1);
+    for (&abs, &(_, _, ch)) in slots.iter().rev() {
+        match (strong_class(ch), run_class) {
+            (Some(c), None) => run_class = Some(c),
+            (Some(c), Some(rc)) if c != rc => break,
+            _ => {}
+        }
+        start = abs;
+    }
+    start
+}
+
+/// 最后一个 UAX #14 断点之后的那一段（正在增长、折行时不可拆的"词"）的起点。
+fn last_break_start(slots: &std::collections::BTreeMap<u64, Slot>) -> u64 {
+    let abs: Vec<u64> = slots.keys().copied().collect();
+    let text: String = slots.values().map(|s| s.2).collect();
+    let mut start_byte = 0usize;
+    for (pos, _) in unicode_linebreak::linebreaks(&text) {
+        if pos < text.len() {
+            start_byte = pos;
+        }
+    }
+    let index = text[..start_byte].chars().count();
+    abs.get(index)
+        .copied()
+        .unwrap_or_else(|| abs.last().map_or(0, |k| k + 1))
 }
 
 /// 一帧的完整样子。
@@ -214,6 +347,7 @@ struct World {
     committed: [Vec<String>; 2],
     /// 这条序列要不要模拟"服务端只确认一部分"（C3）。
     partial_confirm: bool,
+    mode: Mode,
 }
 
 impl World {
@@ -238,6 +372,7 @@ impl World {
             sentence: [String::new(), String::new()],
             committed: [Vec::new(), Vec::new()],
             partial_confirm: seed.is_multiple_of(2),
+            mode: Mode::of(seed),
         }
     }
 
@@ -323,14 +458,25 @@ impl World {
             now: self.epoch + Duration::from_millis(self.now + SETTLE_MS * 4),
         });
         View {
-            listen: placed_of(layout.listen.as_ref(), &frame, Track::Listen),
-            speak: placed_of(layout.speak.as_ref(), &frame, Track::Speak),
+            listen: placed_of(
+                &mut self.renderer,
+                layout.listen.as_ref(),
+                &frame,
+                Track::Listen,
+            ),
+            speak: placed_of(
+                &mut self.renderer,
+                layout.speak.as_ref(),
+                &frame,
+                Track::Speak,
+            ),
             height: layout.client_height,
         }
     }
 }
 
 fn placed_of(
+    renderer: &mut Renderer,
     region: Option<&vox_overlay_core::layout::TrackLayout>,
     frame: &SubtitleFrame,
     track: Track,
@@ -355,17 +501,23 @@ fn placed_of(
         ..Placed::default()
     };
     for line in &region.lines {
-        let mut x = 0;
+        // 渲染器给的是显示顺序的簇；不变量按**逻辑顺序**认字，所以按字符下标排回来。
+        let mut cells = renderer.cells(track, line);
+        cells.sort_by_key(|c| c.first);
         let mut line_xs = Vec::new();
         let mut line_chars = Vec::new();
-        for ch in chars.iter().take(line.last).skip(line.first) {
-            line_xs.push(x);
-            x += if is_wide(*ch) { 26 } else { 14 };
-            line_chars.push(*ch);
+        for cell in &cells {
+            for ch in &chars[cell.first..cell.last] {
+                // 相对左内边距：从左往右的行首字恒为 0；从右往左的行是靠右对齐的绝对坐标。
+                line_xs.push(cell.x - LEFT_EDGE);
+                line_chars.push(*ch);
+            }
         }
         placed.lines.push(PlacedLine {
             y: line.y - region.region.0 as f32,
             plate_x: line.plate_x,
+            plate_right: line.plate_x + line.plate_w,
+            rtl: line.rtl,
             chars: line_chars,
             xs: line_xs,
             first_abs: origin + line.first as u64,
@@ -388,12 +540,12 @@ enum Step {
     Wait(u64),
 }
 
-fn make_step(rng: &mut Rng) -> Step {
+fn make_step(rng: &mut Rng, mode: Mode) -> Step {
     match rng.below(13) {
-        0..=3 => Step::Extend(phrase(rng)),
-        4..=6 => Step::Grow(letters(rng)),
-        7..=9 => Step::Rewrite(phrase(rng)),
-        10 => Step::Finish(phrase(rng)),
+        0..=3 => Step::Extend(phrase(rng, mode)),
+        4..=6 => Step::Grow(letters(rng, mode)),
+        7..=9 => Step::Rewrite(phrase(rng, mode)),
+        10 => Step::Finish(phrase(rng, mode)),
         _ => Step::Wait(STEP_MS * (1 + rng.below(3))),
     }
 }
@@ -420,24 +572,56 @@ fn divergence(
     }
 }
 
-fn check_i1(where_: &str, prev: &Placed, cur: &Placed) -> Result<(), String> {
+fn check_i1(where_: &str, mode: Mode, prev: &Placed, cur: &Placed) -> Result<(), String> {
     let (pm, cm) = (prev.slots(), cur.slots());
     // 分歧点：两帧都有的字里第一个内容不同的绝对下标。
     let d = divergence(&pm, &cm);
+    // 双向混排：改动落在一段反向文字里时，这一段里更早的字也会被推开（整段是一个视觉块），
+    // 所以分歧点往前退到它所在那一段的起点。
+    let d = match (mode, d) {
+        (Mode::Mixed, Some(d)) => {
+            let before: std::collections::BTreeMap<u64, Slot> =
+                pm.range(..d).map(|(k, v)| (*k, *v)).collect();
+            Some(trailing_run_start(&before).min(d))
+        }
+        (_, d) => d,
+    };
     // 例外条款（施工稿 §1 I1）：仅当前行尾、仍在增长的那个词，在增长导致超宽时
     // 整体移到下一行一次；其余字不动。
-    let word = prev.growing_word_start();
+    // 折行时不可拆的"词"整体跳到下一行，才算例外发生了。
+    let unit = if mode == Mode::Ltr {
+        prev.growing_word_start(mode)
+    } else {
+        Some(last_break_start(&pm))
+    };
+    let hop = unit.filter(|w| hopped(prev, cur, *w));
+    // 双向混排里，行尾那段反向文字一边长一边把自己的老字推开——那是双向文字的本质，
+    // 所以整段豁免。其余文字里，词没换行就一个字都不许动（只有"整词跳到下一行"才豁免）。
+    let word = if mode == Mode::Mixed {
+        prev.growing_word_start(mode)
+    } else {
+        hop
+    };
+    // 双向混排里整词跳行，还会把它原来那一行里的反向块拆开重排（块的逻辑尾巴走了，
+    // 块里更早的字跟着挪），所以那一行整行豁免。其余文字没有这个豁免。
+    let hop_line = if mode == Mode::Mixed {
+        hop.and_then(|w| pm.get(&w).map(|s| s.0))
+    } else {
+        None
+    };
     let visible_from = prev.total_lines().saturating_sub(LINES_PER_TRACK as usize);
     for (&abs, &(line, x, ch)) in &pm {
         if d.is_some_and(|d| abs >= d) || word.is_some_and(|w| abs >= w) {
             break;
         }
         match cm.get(&abs) {
-            Some(&(l2, x2, _)) if (line, x) != (l2, x2) => {
+            Some(&(l2, x2, _)) if (line, x) != (l2, x2) && hop_line != Some(line) => {
                 return Err(format!(
-                    "{where_}: I1 位置不动——绝对第 {abs} 个字 {ch:?} 的 (行号,x) 从 {:?} 变成了 {:?}",
+                    "{where_}: I1 位置不动——绝对第 {abs} 个字 {ch:?} 的 (行号,x) 从 {:?} 变成了 {:?}\n前一帧 {:?}\n这一帧 {:?}",
                     (line, x),
-                    (l2, x2)
+                    (l2, x2),
+                    prev.lines.iter().map(|l| l.chars.iter().collect::<String>()).collect::<Vec<_>>(),
+                    cur.lines.iter().map(|l| l.chars.iter().collect::<String>()).collect::<Vec<_>>()
                 ));
             }
             Some(_) => {}
@@ -450,6 +634,15 @@ fn check_i1(where_: &str, prev: &Placed, cur: &Placed) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// 词 `start` 开头的那个字换了行。
+fn hopped(prev: &Placed, cur: &Placed, start: u64) -> bool {
+    let (pm, cm) = (prev.slots(), cur.slots());
+    match (pm.get(&start), cm.get(&start)) {
+        (Some(a), Some(b)) => a.0 != b.0,
+        _ => true,
+    }
 }
 
 fn check_i2(where_: &str, prev: &Placed, cur: &Placed) -> Result<(), String> {
@@ -491,15 +684,19 @@ fn check_i2(where_: &str, prev: &Placed, cur: &Placed) -> Result<(), String> {
 }
 
 fn check_i3(where_: &str, cur: &Placed) -> Result<(), String> {
-    // 一条轨里的行必须左对齐到同一个 x，且行距恒定（只允许整块平移）。
+    // 一条轨里的行必须同侧对齐（从左往右的靠左，从右往左的靠右），且行距恒定（只允许整块平移）。
     let Some(first) = cur.lines.first() else {
         return Ok(());
     };
     for (li, line) in cur.lines.iter().enumerate() {
-        if line.plate_x != first.plate_x {
+        let (edge, first_edge) = if first.rtl {
+            (line.plate_right, first.plate_right)
+        } else {
+            (line.plate_x, first.plate_x)
+        };
+        if line.rtl != first.rtl || edge != first_edge {
             return Err(format!(
-                "{where_}: I3 不许横向运动——第 {li} 行底衬 x={} 与首行 x={}",
-                line.plate_x, first.plate_x
+                "{where_}: I3 不许横向运动——第 {li} 行底衬靠边 x={edge} 与首行 x={first_edge}"
             ));
         }
     }
@@ -572,6 +769,20 @@ fn check_i5(where_: &str, world: &World, track: Track) -> Result<(), String> {
     Ok(())
 }
 
+/// 簇不可拆：附标永远不会落在一行的开头（它得跟着前面的字母走）。
+fn check_marks(where_: &str, cur: &Placed) -> Result<(), String> {
+    for (li, line) in cur.lines.iter().enumerate() {
+        if let Some(&ch) = line.chars.first() {
+            if is_mark(ch) {
+                return Err(format!(
+                    "{where_}: 簇被拆开——第 {li} 行以附标 {ch:?} 开头：{line:?}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 
 fn run_sequence(seed: u64) -> Result<(), String> {
@@ -585,7 +796,7 @@ fn run_sequence(seed: u64) -> Result<(), String> {
         } else {
             Track::Speak
         };
-        let step = make_step(&mut rng);
+        let step = make_step(&mut rng, world.mode);
         let where_ = format!("seq#{seed} step#{step_index} {track:?}");
         match step {
             Step::Extend(text) => {
@@ -608,7 +819,8 @@ fn run_sequence(seed: u64) -> Result<(), String> {
         let me = World::index(track);
         let other = 1 - me;
 
-        check_i1(&where_, &prev[me], &cur[me])?;
+        check_i1(&where_, world.mode, &prev[me], &cur[me])?;
+        check_marks(&where_, &cur[me])?;
         check_i2(&where_, &prev[me], &cur[me])?;
         check_i3(&where_, &cur[me])?;
         // I4：另一条轨一个坐标都不能动。
@@ -813,7 +1025,7 @@ fn a_growing_word_hops_to_the_next_line_once_and_nothing_else_moves() {
         sentence.push(char::from(b'a' + i));
         world.feed(Track::Listen, &sentence);
         let cur = world.view().listen;
-        check_i1("growing word", &prev, &cur).expect("词之外的字不许动");
+        check_i1("growing word", Mode::Ltr, &prev, &cur).expect("词之外的字不许动");
         check_i2("growing word", &prev, &cur).expect("封口的行不许变");
         let home = cur.slots().get(&word_start).map(|s| (s.0, s.1));
         if last_home.is_some() && home != last_home {
@@ -863,7 +1075,7 @@ fn five_thousand_chars_of_nonstop_speech_never_reflow_visible_chars() {
             world.feed(Track::Listen, &sentence);
             let cur = world.view().listen;
             let where_ = format!("fed={fed} chars={}", sentence.chars().count());
-            check_i1(&where_, &prev, &cur).unwrap_or_else(|e| panic!("{e}"));
+            check_i1(&where_, Mode::Ltr, &prev, &cur).unwrap_or_else(|e| panic!("{e}"));
             check_i2(&where_, &prev, &cur).unwrap_or_else(|e| panic!("{e}"));
             check_i3(&where_, &cur).unwrap_or_else(|e| panic!("{e}"));
             prev = cur;

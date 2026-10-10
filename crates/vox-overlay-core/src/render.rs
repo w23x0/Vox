@@ -9,14 +9,17 @@
 
 use std::time::Instant;
 
+use unicode_bidi::{BidiInfo, Direction, Level};
 use vox_core::ports::{SubtitleFrame, SubtitleLine};
 use vox_core::settings::SubtitleSettings;
-use vox_core::subtitle::{RenderedChar, Track};
+use vox_core::subtitle::Track;
 
 use crate::canvas::{Canvas, Mask};
 use crate::color::{alpha_to_u8, parse_hex_rgb_or, Rgb};
-use crate::layout::{fill_breaks, layout_regions, FrameLayout, Metrics, PlacedLine, TrackText};
-use crate::text::{FontFactory, GlyphSource};
+use crate::layout::{
+    fill_breaks, layout_regions, visual_order, FrameLayout, Metrics, PlacedLine, TrackText,
+};
+use crate::text::{FontFactory, GlyphSource, Shaped};
 
 /// 字幕底衬的颜色（近黑）。alpha 由设置里的 `background_alpha` 给。
 const PLATE_COLOR: Rgb = Rgb::new(0, 0, 0);
@@ -124,6 +127,10 @@ struct TrackAnchor {
     abs: u64,
     /// 锚点之前已经折出、早已滚出区域的行数。
     lines: usize,
+    /// 锚点往前推过之后，整条字幕的基础方向就钉死在推之前的值上：
+    /// 否则开头那几个定方向的字被丢掉，剩下的第一个强方向字可能不同，整条字幕会翻面。
+    /// `None` = 锚点还在帧首，方向每帧按"第一个强方向字符"重新判。
+    rtl_pin: Option<bool>,
 }
 
 /// 锚点之后至少再留几行"区域之外"的行才允许把锚点往前推。
@@ -132,20 +139,43 @@ struct TrackAnchor {
 /// 缩水不超过这个数的改译不会让已经丢开的行需要重现。
 const ANCHOR_SLACK_EXTRA: usize = 1;
 
-/// 一条轨每帧复用的缓冲。渲染每帧都会跑，**这里不做新分配**。
+/// 一条轨的排版缓冲：整形、双向分析、度量都只在**文字变了**的时候重做，
+/// 动画帧（文字没变）直接复用，所以渲染每帧不做新分配。
 #[derive(Debug, Default)]
 struct TrackScratch {
+    /// 上一次排版用的输入（控制字符已换成空格），逐字比对用来判断文字变没变。
+    src: Vec<char>,
+    /// `src` 拼成的串，整形与 UAX #14 / UAX #9 都吃它。
     text: String,
+    /// 钉死的方向（见 [`TrackAnchor::rtl_pin`]）是否与上次排版时一致。
+    pinned: Option<bool>,
+    valid: bool,
+    rtl: bool,
+    shaped: Shaped,
+    /// 以下都是**每个单元（字形簇）**一项。
     chars: Vec<char>,
     advances: Vec<i32>,
     breaks: Vec<bool>,
+    unit_bytes: Vec<u32>,
+    /// 单元的第一个字符在 `src` 里的下标，末尾多一项 = `src.len()`。
+    unit_chars: Vec<u32>,
+    levels: Vec<u8>,
     line_height: i32,
     ascent: i32,
     /// 本帧这条轨第 0 个字的绝对下标。
     origin: u64,
-    /// 排版起点在本帧字序列里的下标（锚点换算出来的）。
+    /// 排版起点（锚点）在本帧字符序列里的下标。
     base: usize,
     first_line: usize,
+}
+
+/// 控制字符与段落分隔符一律当空格：它们没有字形，还会让 UAX #9 把一条字幕劈成多个段落。
+fn normalize(ch: char) -> char {
+    if ch.is_control() || ch == '\u{2028}' || ch == '\u{2029}' {
+        ' '
+    } else {
+        ch
+    }
 }
 
 impl TrackScratch {
@@ -159,11 +189,13 @@ impl TrackScratch {
         anchor: &mut TrackAnchor,
         font: &mut dyn GlyphSource,
     ) -> Measured {
-        self.chars.clear();
-        self.advances.clear();
-        self.breaks.clear();
-        self.text.clear();
         let Some(line) = line else {
+            self.valid = false;
+            self.src.clear();
+            self.text.clear();
+            self.chars.clear();
+            self.advances.clear();
+            self.breaks.clear();
             let had = *anchor != TrackAnchor::default();
             *anchor = TrackAnchor::default();
             return if had {
@@ -182,17 +214,27 @@ impl TrackScratch {
             *anchor = TrackAnchor {
                 abs: line.origin,
                 lines: 0,
+                rtl_pin: None,
             };
             fresh = true;
         }
         self.base = (anchor.abs - line.origin) as usize;
         self.first_line = anchor.lines;
-        for rc in &line.chars[self.base..] {
-            self.chars.push(rc.ch);
-            self.advances.push(font.advance(rc.ch).max(0));
-            self.text.push(rc.ch);
+        let source = &line.chars[self.base..];
+        let unchanged = self.valid
+            && self.pinned == anchor.rtl_pin
+            && self.src.len() == source.len()
+            && source
+                .iter()
+                .zip(&self.src)
+                .all(|(rc, ch)| normalize(rc.ch) == *ch);
+        if !unchanged {
+            self.relayout(
+                source.iter().map(|rc| normalize(rc.ch)),
+                anchor.rtl_pin,
+                font,
+            );
         }
-        fill_breaks(&self.text, &self.chars, &mut self.breaks);
         if fresh {
             Measured::Fresh
         } else {
@@ -200,11 +242,86 @@ impl TrackScratch {
         }
     }
 
+    /// 文字变了：重新判方向、双向分层、整形、分簇、填断行机会。
+    fn relayout(
+        &mut self,
+        chars: impl Iterator<Item = char>,
+        pin: Option<bool>,
+        font: &mut dyn GlyphSource,
+    ) {
+        self.src.clear();
+        self.src.extend(chars);
+        self.text.clear();
+        self.text.extend(self.src.iter());
+        self.pinned = pin;
+        self.valid = true;
+        self.shaped.clear();
+        self.chars.clear();
+        self.advances.clear();
+        self.unit_bytes.clear();
+        self.unit_chars.clear();
+        self.levels.clear();
+        self.breaks.clear();
+        if self.text.is_empty() {
+            self.rtl = pin.unwrap_or(false);
+            return;
+        }
+        // 整条字幕的基础方向：第一个强方向字符定（全是中性字符就从左往右）。
+        self.rtl = pin.unwrap_or_else(|| {
+            unicode_bidi::get_base_direction(self.text.as_str()) == Direction::Rtl
+        });
+        let base_level = if self.rtl { Level::rtl() } else { Level::ltr() };
+        let info = BidiInfo::new(&self.text, Some(base_level));
+        // 按层级切成同方向的段，逐段整形；簇永远按逻辑顺序追加。
+        let mut run_start = 0usize;
+        let mut run_level = info.levels.first().copied().unwrap_or(base_level);
+        for (byte, _) in self.text.char_indices().skip(1) {
+            if info.levels[byte] != run_level {
+                font.shape(
+                    &self.text[run_start..byte],
+                    run_level.is_rtl(),
+                    run_start as u32,
+                    &mut self.shaped,
+                );
+                run_start = byte;
+                run_level = info.levels[byte];
+            }
+        }
+        font.shape(
+            &self.text[run_start..],
+            run_level.is_rtl(),
+            run_start as u32,
+            &mut self.shaped,
+        );
+
+        // 簇 → 单元数组。簇的 `start` 单调不减，字节偏移换字符下标用双指针。
+        let (mut ci, mut bp) = (0usize, 0usize);
+        for cluster in &self.shaped.clusters {
+            let start = cluster.start as usize;
+            while ci < self.src.len() && bp + self.src[ci].len_utf8() <= start {
+                bp += self.src[ci].len_utf8();
+                ci += 1;
+            }
+            let first = self.src.get(ci).copied().unwrap_or(' ');
+            self.chars.push(first);
+            self.advances.push(cluster.advance.max(0));
+            self.unit_bytes.push(cluster.start);
+            self.unit_chars.push(ci as u32);
+            let level = info.levels.get(start).copied().unwrap_or(base_level);
+            self.levels.push(level.number());
+        }
+        self.unit_chars.push(self.src.len() as u32);
+        fill_breaks(&self.text, &self.unit_bytes, &mut self.breaks);
+    }
+
     fn text(&self) -> TrackText<'_> {
         TrackText {
             chars: &self.chars,
             advances: &self.advances,
             breaks: &self.breaks,
+            unit_chars: &self.unit_chars,
+            levels: &self.levels,
+            rtl: self.rtl,
             line_height: self.line_height,
             ascent: self.ascent,
             base: self.base,
@@ -236,6 +353,7 @@ impl Measured {
 fn advance_anchor(
     anchor: &mut TrackAnchor,
     origin: u64,
+    rtl: bool,
     region: &crate::layout::TrackLayout,
     lines_per_track: usize,
 ) {
@@ -249,6 +367,7 @@ fn advance_anchor(
     // 第 k 行的行首就是新锚点：它之前的 k 行都在区域上方、且留够了余量。
     anchor.abs = origin + region.lines[k].first as u64;
     anchor.lines = region.first_line + k;
+    anchor.rtl_pin = Some(rtl);
 }
 
 /// 一帧一帧往 `Canvas` 上画。持有字体，所以只能在窗口线程上用。
@@ -269,8 +388,22 @@ pub struct Renderer {
     speak_scroll: TrackScroll,
     listen_anchor: TrackAnchor,
     speak_anchor: TrackAnchor,
+    /// 一行重排成显示顺序时用的复用缓冲。
+    order: Vec<u32>,
+    order_levels: Vec<u8>,
     epoch: Instant,
     last_frame_ms: u64,
+}
+
+/// 一个排好版的单元（字形簇）落在哪：测试与画图共用这一份。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cell {
+    /// 簇覆盖整帧字符序列里的 `[first, last)`。
+    pub first: usize,
+    pub last: usize,
+    /// 簇的左边缘与宽度（物理像素，已按显示顺序摆好）。
+    pub x: i32,
+    pub width: i32,
 }
 
 impl Renderer {
@@ -297,6 +430,8 @@ impl Renderer {
             speak_scroll: TrackScroll::default(),
             listen_anchor: TrackAnchor::default(),
             speak_anchor: TrackAnchor::default(),
+            order: Vec::new(),
+            order_levels: Vec::new(),
             epoch,
             last_frame_ms: 0,
         })
@@ -389,6 +524,7 @@ impl Renderer {
             advance_anchor(
                 &mut self.listen_anchor,
                 self.listen_scratch.origin,
+                self.listen_scratch.rtl,
                 region,
                 lines_per_track as usize,
             );
@@ -397,6 +533,7 @@ impl Renderer {
             advance_anchor(
                 &mut self.speak_anchor,
                 self.speak_scratch.origin,
+                self.speak_scratch.rtl,
                 region,
                 lines_per_track as usize,
             );
@@ -431,9 +568,23 @@ impl Renderer {
                 plate_alpha: input.settings.background_alpha,
                 radius: metrics.plate_radius as f32,
             };
+            let scratch = match track {
+                Track::Listen => &self.listen_scratch,
+                Track::Speak => &self.speak_scratch,
+            };
             canvas.push_clip(region.region.0 + dy as i32, region.region.1 + dy as i32);
             for placed in &region.lines {
-                self.draw_line(canvas, placed, line, style, dy);
+                draw_line(
+                    self.font.as_mut(),
+                    &mut self.order,
+                    &mut self.order_levels,
+                    canvas,
+                    placed,
+                    line,
+                    scratch,
+                    style,
+                    dy,
+                );
             }
             canvas.pop_clip();
         }
@@ -443,74 +594,119 @@ impl Renderer {
         }
     }
 
-    fn draw_line(
-        &mut self,
-        canvas: &mut Canvas,
-        placed: &PlacedLine,
-        line: &SubtitleLine,
-        style: RowStyle,
-        dy: f32,
-    ) {
-        // 正在移出区域顶部的那一行按被裁的比例淡出：底衬和墨迹一起淡。
-        let fade = placed.clip;
-        if fade <= 0.0 {
-            return;
-        }
-        let y = (placed.y + dy).round() as i32;
-        let plate_alpha = (style.plate_alpha as f32 * fade).round() as u8;
-        if plate_alpha > 0 {
-            canvas.fill_round_rect(
-                crate::geom::RectI::new(placed.plate_x, y, placed.plate_w, placed.plate_h),
-                style.radius,
-                PLATE_COLOR,
-                plate_alpha,
-            );
-        }
-        let baseline_y = (placed.baseline_y + dy).round() as i32;
-        let mut x = placed.text_x;
-        for rc in line.chars.iter().take(placed.last).skip(placed.first) {
-            x += draw_char_with(
-                self.font.as_mut(),
-                canvas,
-                x,
-                baseline_y,
-                rc,
-                style.color,
-                fade,
-            );
-        }
+    /// 最近一次 [`Renderer::plan`] / [`Renderer::draw`] 之后，`placed` 这一行里每个簇落在哪
+    /// （按显示顺序，从左到右）。不变量测试靠它读"字最终摆在哪"。
+    pub fn cells(&mut self, track: Track, placed: &PlacedLine) -> Vec<Cell> {
+        let scratch = match track {
+            Track::Listen => &self.listen_scratch,
+            Track::Speak => &self.speak_scratch,
+        };
+        let mut out = Vec::new();
+        for_each_cell(
+            &mut self.order,
+            &mut self.order_levels,
+            placed,
+            scratch,
+            |unit, x| {
+                out.push(Cell {
+                    first: scratch.base + scratch.unit_chars[unit] as usize,
+                    last: scratch.base + scratch.unit_chars[unit + 1] as usize,
+                    x,
+                    width: scratch.advances[unit],
+                });
+            },
+        );
+        out
     }
 }
 
-/// 画一个字，返回下一个字的起笔步进。
-fn draw_char_with(
-    font: &mut dyn GlyphSource,
-    canvas: &mut Canvas,
-    pen_x: i32,
-    baseline_y: i32,
-    rc: &RenderedChar,
-    color: Rgb,
-    extra_fade: f32,
-) -> i32 {
-    let alpha = alpha_to_u8(rc.alpha * extra_fade);
-    let Some(g) = font.glyph(rc.ch) else {
-        return 0;
-    };
-    let advance = g.advance;
-    if alpha == 0 || g.w <= 0 || g.h <= 0 {
-        return advance;
-    }
-    canvas.blend_mask(
-        (pen_x + g.off_x, baseline_y + g.off_y),
-        Mask {
-            w: g.w,
-            h: g.h,
-            cov: &g.cov,
-        },
-        color,
-        alpha,
+/// 按显示顺序走一遍这一行的簇，给出每个簇（单元下标）的左边缘 x。
+fn for_each_cell(
+    order: &mut Vec<u32>,
+    levels: &mut Vec<u8>,
+    placed: &PlacedLine,
+    scratch: &TrackScratch,
+    mut visit: impl FnMut(usize, i32),
+) {
+    let text = scratch.text();
+    let (first, last) = (placed.unit_first, placed.unit_last.min(scratch.chars.len()));
+    visual_order(
+        &text,
+        first,
+        last,
+        |unit| scratch.chars[unit].is_whitespace(),
+        order,
+        levels,
     );
-    advance
+    let mut x = placed.text_x;
+    for &k in order.iter() {
+        let unit = first + k as usize;
+        visit(unit, x);
+        x += scratch.advances[unit];
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_line(
+    font: &mut dyn GlyphSource,
+    order: &mut Vec<u32>,
+    levels: &mut Vec<u8>,
+    canvas: &mut Canvas,
+    placed: &PlacedLine,
+    line: &SubtitleLine,
+    scratch: &TrackScratch,
+    style: RowStyle,
+    dy: f32,
+) {
+    // 正在移出区域顶部的那一行按被裁的比例淡出：底衬和墨迹一起淡。
+    let fade = placed.clip;
+    if fade <= 0.0 {
+        return;
+    }
+    let y = (placed.y + dy).round() as i32;
+    let plate_alpha = (style.plate_alpha as f32 * fade).round() as u8;
+    if plate_alpha > 0 {
+        canvas.fill_round_rect(
+            crate::geom::RectI::new(placed.plate_x, y, placed.plate_w, placed.plate_h),
+            style.radius,
+            PLATE_COLOR,
+            plate_alpha,
+        );
+    }
+    let baseline_y = (placed.baseline_y + dy).round() as i32;
+    for_each_cell(order, levels, placed, scratch, |unit, x| {
+        // 簇的透明度取它第一个字符的（未确认尾巴是逐字 0.7 的，簇很少跨过那条边界）。
+        let char_index = scratch.base + scratch.unit_chars[unit] as usize;
+        let alpha = line.chars.get(char_index).map_or(1.0, |rc| rc.alpha);
+        let alpha = alpha_to_u8(alpha * fade);
+        if alpha == 0 {
+            return;
+        }
+        let cluster = scratch.shaped.clusters[unit];
+        let mut pen = x;
+        for glyph in
+            &scratch.shaped.glyphs[cluster.glyph_start as usize..cluster.glyph_end as usize]
+        {
+            if let Some(g) = font.glyph(glyph.face, glyph.id) {
+                if g.w > 0 && g.h > 0 {
+                    canvas.blend_mask(
+                        (
+                            pen + glyph.x_offset + g.off_x,
+                            baseline_y - glyph.y_offset + g.off_y,
+                        ),
+                        Mask {
+                            w: g.w,
+                            h: g.h,
+                            cov: &g.cov,
+                        },
+                        style.color,
+                        alpha,
+                    );
+                }
+            }
+            pen += glyph.advance;
+        }
+    });
 }
 
 fn find_line(frame: &SubtitleFrame, track: Track) -> Option<&SubtitleLine> {
@@ -537,11 +733,26 @@ mod tests {
             }
         }
 
-        fn advance(&mut self, _ch: char) -> i32 {
-            self.advance
+        fn shape(&mut self, run: &str, _rtl: bool, base: u32, out: &mut crate::text::Shaped) {
+            for (i, _) in run.char_indices() {
+                let glyph = out.glyphs.len() as u32;
+                out.glyphs.push(crate::text::ShapedGlyph {
+                    face: 0,
+                    id: 0,
+                    x_offset: 0,
+                    y_offset: 0,
+                    advance: self.advance,
+                });
+                out.clusters.push(crate::text::Cluster {
+                    start: base + i as u32,
+                    advance: self.advance,
+                    glyph_start: glyph,
+                    glyph_end: glyph + 1,
+                });
+            }
         }
 
-        fn glyph(&mut self, _ch: char) -> Option<&crate::text::Glyph> {
+        fn glyph(&mut self, _face: u16, _id: u16) -> Option<&crate::text::Glyph> {
             None
         }
     }
@@ -574,7 +785,7 @@ mod tests {
                     origin: 0,
                     chars: text
                         .chars()
-                        .map(|ch| RenderedChar { ch, alpha: 1.0 })
+                        .map(|ch| vox_core::subtitle::RenderedChar { ch, alpha: 1.0 })
                         .collect(),
                     color: "#ffffff".into(),
                 })
@@ -676,6 +887,81 @@ mod tests {
             layout_a.listen, layout_b.listen,
             "对外那条轨有内容，不该挪动听人那条轨"
         );
+    }
+
+    #[test]
+    fn base_direction_follows_the_first_strong_char() {
+        let mut r = renderer(30);
+        let settings = settings();
+        let arabic = frame(&[(Track::Listen, "\u{0628}\u{0628} abc")]);
+        let latin = frame(&[(Track::Listen, "abc \u{0628}\u{0628}")]);
+        let a = r.plan(&input(&arabic, &settings, Instant::now()));
+        assert!(
+            a.listen.expect("区域").lines[0].rtl,
+            "阿拉伯字母打头 = 从右往左"
+        );
+        let b = r.plan(&input(&latin, &settings, Instant::now()));
+        assert!(
+            !b.listen.expect("区域").lines[0].rtl,
+            "拉丁字母打头 = 从左往右"
+        );
+        let digits = frame(&[(Track::Listen, "123 ...")]);
+        let c = r.plan(&input(&digits, &settings, Instant::now()));
+        assert!(
+            !c.listen.expect("区域").lines[0].rtl,
+            "全是中性字符就从左往右"
+        );
+    }
+
+    #[test]
+    fn direction_stays_pinned_after_the_anchor_moves_past_the_first_strong_char() {
+        // 阿拉伯字母打头（整条字幕从右往左），后面是很长的英文：锚点推到英文里之后，
+        // 从锚点起的第一个强方向字符是拉丁字母——方向若不钉住，整条字幕会翻面、所有行换边。
+        let mut r = renderer(30);
+        let settings = settings();
+        let text = format!("\u{0628} {}", "word ".repeat(400));
+        let f = frame(&[(Track::Listen, &text)]);
+        let first = r.plan(&input(&f, &settings, Instant::now()));
+        assert!(first.listen.expect("区域").lines[0].rtl);
+        for _ in 0..3 {
+            let layout = r.plan(&input(&f, &settings, Instant::now()));
+            let region = layout.listen.expect("区域");
+            assert!(
+                region.first_line > 0,
+                "锚点必须真的往前推过，否则这条测试没测到东西"
+            );
+            assert!(
+                region.lines.iter().all(|l| l.rtl),
+                "锚点推过之后方向不许翻：{:?}",
+                region.lines.iter().map(|l| l.rtl).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn cells_follow_the_visual_order_of_a_mixed_line() {
+        // 假字体每个字符一个簇、宽 30。"ab" + 两个阿拉伯字母 + "cd"，从左往右的句子：
+        // 阿拉伯字母这一小段在视觉上整体反向。
+        let mut r = renderer(30);
+        let settings = settings();
+        let f = frame(&[(Track::Listen, "ab\u{0628}\u{062A}cd")]);
+        let layout = r.plan(&input(&f, &settings, Instant::now()));
+        let line = layout.listen.expect("区域").lines[0].clone();
+        let cells = r.cells(Track::Listen, &line);
+        let visual: Vec<usize> = cells.iter().map(|c| c.first).collect();
+        assert_eq!(visual, vec![0, 1, 3, 2, 4, 5], "第 2、3 个字符在视觉上互换");
+        let xs: Vec<i32> = cells.iter().map(|c| c.x).collect();
+        assert!(xs.windows(2).all(|w| w[0] < w[1]), "x 严格递增：{xs:?}");
+    }
+
+    #[test]
+    fn control_chars_never_split_the_line_into_paragraphs() {
+        let mut r = renderer(30);
+        let settings = settings();
+        let f = frame(&[(Track::Listen, "ab\ncd\u{2029}ef")]);
+        let layout = r.plan(&input(&f, &settings, Instant::now()));
+        let line = layout.listen.expect("区域").lines[0].clone();
+        assert_eq!((line.first, line.last), (0, 8), "八个字符一个不丢");
     }
 
     #[test]

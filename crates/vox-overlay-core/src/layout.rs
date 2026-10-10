@@ -10,8 +10,12 @@
 //!
 //! 1. **不横向滚动**：一行排不下就换行，绝不从左侧丢掉老字（那是旧 `layout_rows`
 //!    的行为，每来一个字整行左移一格）。
-//! 2. **左右对齐**：所有视觉行的起笔 x 相同，所以换行/上浮都不会产生横向运动。
+//! 2. **同侧对齐**：从左往右的轨，所有视觉行的起笔 x 相同；从右往左的轨，所有视觉行的
+//!    **右边缘**相同（右对齐，新字长在左边）。所以换行/上浮都不会产生横向运动。
 //! 3. **两条轨各占一个区域**：听在上、说在下，区域高度固定，谁也不推谁。
+//!
+//! 排版单元是**字形簇**（见 `text::Cluster`）：折行永远在逻辑顺序上做，一行排定之后
+//! 才按 UAX #9 的 L1/L2 把这一行里的簇重排成显示顺序（[`visual_order`]）。
 
 use unicode_linebreak::linebreaks;
 
@@ -68,9 +72,10 @@ impl Metrics {
 
 /// 一条轨要排的文字 + 度量。
 ///
-/// `chars` 是**排版单元**序列：现在一个单元就是一个 `char`；接入字形引擎之后
-/// 一个单元可以是一整个字素簇或双向片段——`advances` 与 `breaks` 按同一下标约定
-/// 逐个对应即可，布局代码不用改（C11：不在本单做复杂文字，但口子留着）。
+/// `chars` 是**排版单元**序列（OVERLAY-CAPTIONS C11 留的口子，OVERLAY-SHAPING 接上了）：
+/// 一个单元是一个字形簇——阿拉伯语的一个连写词形、印地语的一个音节、泰语的"字母 + 附标"，
+/// 也可以只是一个拉丁字母；`chars[i]` 是该簇的第一个字符。`advances` 与 `breaks` 按同一
+/// 下标逐个对应，折行代码只认这三个数组。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TrackText<'a> {
     pub chars: &'a [char],
@@ -78,10 +83,17 @@ pub struct TrackText<'a> {
     /// `breaks[i]` = 能不能在第 `i` 个单元**之前**断行。长度与 `chars` 一致，
     /// 由 [`fill_breaks`] 按 UAX #14 填好。
     pub breaks: &'a [bool],
+    /// `unit_chars[i]` = 第 `i` 个单元的第一个字符在**锚点起的字符序列**里的下标，
+    /// 末尾多一项 = 字符总数。空 = 一个单元一个字符（等价于恒等映射）。
+    pub unit_chars: &'a [u32],
+    /// 每个单元的 UAX #9 嵌入层级（偶数 = 从左往右）。空 = 全部是段落层级。
+    pub levels: &'a [u8],
+    /// 整条字幕的基础方向：`true` = 从右往左（右对齐）。
+    pub rtl: bool,
     pub line_height: i32,
     pub ascent: i32,
-    /// `chars[0]` 在整帧字序列里的下标。排版只从渲染侧记住的行首锚点开始，
-    /// 锚点之前的字不再参与折行，这里把下标换回整帧的。
+    /// 锚点（`chars` 的第 0 个单元）的第一个字符在整帧字符序列里的下标。排版只从渲染侧记住的
+    /// 行首锚点开始，锚点之前的字不再参与折行，这里把下标换回整帧的。
     pub base: usize,
     /// 锚点之前已经折出（并且早已滚出区域）的行数。
     pub first_line: usize,
@@ -94,6 +106,21 @@ impl<'a> TrackText<'a> {
 
     fn len(&self) -> usize {
         self.chars.len().min(self.advances.len())
+    }
+
+    /// 第 `unit` 个单元的第一个字符下标（`unit == len` 时是字符总数）。
+    pub fn char_at(&self, unit: usize) -> usize {
+        self.unit_chars.get(unit).map_or(unit, |c| *c as usize)
+    }
+
+    /// 段落层级：从右往左是 1，否则 0。
+    pub fn base_level(&self) -> u8 {
+        u8::from(self.rtl)
+    }
+
+    /// 第 `unit` 个单元的嵌入层级。
+    pub fn level_at(&self, unit: usize) -> u8 {
+        self.levels.get(unit).copied().unwrap_or(self.base_level())
     }
 }
 
@@ -109,9 +136,14 @@ pub struct PlacedLine {
     pub text_x: i32,
     /// 基线 y（同一个小数偏移）。
     pub baseline_y: f32,
-    /// 这一行盖住 `chars[first..last]`。
+    /// 这一行盖住整帧字符序列里的 `[first, last)`（字符下标，已加上锚点偏移）。
     pub first: usize,
     pub last: usize,
+    /// 同一行盖住的排版单元区间 `[unit_first, unit_last)`（锚点起的单元下标）。
+    pub unit_first: usize,
+    pub unit_last: usize,
+    /// 这一行所属字幕的基础方向（`true` = 右对齐的从右往左）。
+    pub rtl: bool,
     /// 顶部被区域裁掉的程度：1 = 完整可见，越小越淡。
     pub clip: f32,
 }
@@ -148,24 +180,73 @@ pub struct Segment {
 
 /// 按 UAX #14 填出"能不能在第 i 个单元之前断行"。
 ///
-/// `text` 与 `chars` 必须是同一段内容的两种表示（`text` 用来跑断行算法，
-/// `chars` 用来对齐下标）。结果写进 `out`（复用缓冲，渲染每帧都会调）。
-pub fn fill_breaks(text: &str, chars: &[char], out: &mut Vec<bool>) {
+/// `text` 是整段文字，`unit_bytes[i]` 是第 `i` 个单元在 `text` 里的起始**字节**偏移（单调不减）。
+/// 落在单元内部的断行机会（比如连写词中间）直接忽略——单元不可拆。这是 UAX #14 的字节位置
+/// 换算成单元下标的**唯一**地方。结果写进 `out`（复用缓冲，渲染每帧都会调）。
+pub fn fill_breaks(text: &str, unit_bytes: &[u32], out: &mut Vec<bool>) {
     out.clear();
-    out.resize(chars.len(), false);
-    // 断行机会给的是**字节**位置，换算成"第几个字之前"。
-    let mut char_index = 0usize;
-    let mut byte_pos = 0usize;
+    out.resize(unit_bytes.len(), false);
+    let mut unit = 0usize;
     for (pos, _) in linebreaks(text) {
         if pos >= text.len() {
             break;
         }
-        while char_index < chars.len() && byte_pos + chars[char_index].len_utf8() <= pos {
-            byte_pos += chars[char_index].len_utf8();
-            char_index += 1;
+        while unit < unit_bytes.len() && (unit_bytes[unit] as usize) < pos {
+            unit += 1;
         }
-        if char_index < chars.len() && byte_pos == pos {
-            out[char_index] = true;
+        if unit < unit_bytes.len() && unit_bytes[unit] as usize == pos {
+            out[unit] = true;
+        }
+    }
+}
+
+/// 一行里的簇按显示顺序排好：`order` 里是**行内单元下标**（0 = `first`），从左到右。
+///
+/// UAX #9 的 L1 + L2：行尾空白回到段落层级；然后从最高层级到最低奇数层级，
+/// 逐层把连续的 ≥ 该层级的片段整体倒过来。`is_space(unit)` 说第 `unit` 个单元是不是空白。
+/// `levels` 是调用方给的复用缓冲。
+pub fn visual_order(
+    text: &TrackText<'_>,
+    first: usize,
+    last: usize,
+    is_space: impl Fn(usize) -> bool,
+    order: &mut Vec<u32>,
+    levels: &mut Vec<u8>,
+) {
+    order.clear();
+    levels.clear();
+    for unit in first..last {
+        order.push((unit - first) as u32);
+        levels.push(text.level_at(unit));
+    }
+    // L1：行尾的空白按段落层级排，免得它们被拽到行的另一头。
+    let base = text.base_level();
+    for unit in (first..last).rev() {
+        if !is_space(unit) {
+            break;
+        }
+        levels[unit - first] = base;
+    }
+    let Some(&highest) = levels.iter().max() else {
+        return;
+    };
+    let Some(lowest_odd) = levels.iter().copied().filter(|l| l % 2 == 1).min() else {
+        return;
+    };
+    // L2：从最高层往下，到最低的奇数层为止。
+    for level in (lowest_odd..=highest).rev() {
+        let mut i = 0usize;
+        while i < order.len() {
+            if levels[order[i] as usize] < level {
+                i += 1;
+                continue;
+            }
+            let mut j = i;
+            while j < order.len() && levels[order[j] as usize] >= level {
+                j += 1;
+            }
+            order[i..j].reverse();
+            i = j;
         }
     }
 }
@@ -198,6 +279,10 @@ fn no_line_start(ch: char) -> bool {
             | '‥'
             | '～'
             | '〜'
+            | '،'
+            | '؛'
+            | '؟'
+            | '۔'
             | '％'
             | '℃'
             | '\''
@@ -338,17 +423,34 @@ where
             let y = top as f32 + (text.first_line + index) as f32 * step - scroll;
             // 正在移出区域顶部的那一行按被裁的比例淡出。
             let visible = (y + plate_h as f32 - top as f32).max(0.0) / plate_h as f32;
-            let plate_w =
-                (segment.width + 2 * metrics.plate_pad_x).min(inner_width + metrics.plate_pad_x);
+            // 从右往左的轨右对齐：所有行共用右边缘，新字长在左边；底衬贴着文字。
+            let (plate_x, text_x, plate_w) = if text.rtl {
+                let text_x = metrics.padding + inner_width - metrics.plate_pad_x - segment.width;
+                (
+                    text_x - metrics.plate_pad_x,
+                    text_x,
+                    segment.width + 2 * metrics.plate_pad_x,
+                )
+            } else {
+                (
+                    metrics.padding,
+                    metrics.padding + metrics.plate_pad_x,
+                    (segment.width + 2 * metrics.plate_pad_x)
+                        .min(inner_width + metrics.plate_pad_x),
+                )
+            };
             track.lines.push(PlacedLine {
                 y,
-                plate_x: metrics.padding,
+                plate_x,
                 plate_w: plate_w.max(1),
                 plate_h,
-                text_x: metrics.padding + metrics.plate_pad_x,
+                text_x,
                 baseline_y: y + metrics.plate_pad_y as f32 + text.ascent as f32,
-                first: text.base + segment.first,
-                last: text.base + segment.last,
+                first: text.base + text.char_at(segment.first),
+                last: text.base + text.char_at(segment.last),
+                unit_first: segment.first,
+                unit_last: segment.last,
+                rtl: text.rtl,
                 clip: visible.clamp(0.0, 1.0),
             });
         }
@@ -385,7 +487,8 @@ mod tests {
         let chars: Vec<char> = text.chars().collect();
         let advances: Vec<i32> = chars.iter().map(|_| 30).collect();
         let mut breaks = vec![false; chars.len()];
-        fill_breaks(text, &chars, &mut breaks);
+        let bytes: Vec<u32> = text.char_indices().map(|(i, _)| i as u32).collect();
+        fill_breaks(text, &bytes, &mut breaks);
         (chars, advances, breaks)
     }
 
@@ -594,8 +697,9 @@ mod tests {
     #[test]
     fn fill_breaks_maps_uax_positions_to_char_indices() {
         let chars: Vec<char> = "hello world".chars().collect();
+        let bytes: Vec<u32> = (0..chars.len() as u32).collect();
         let mut breaks = Vec::new();
-        fill_breaks("hello world", &chars, &mut breaks);
+        fill_breaks("hello world", &bytes, &mut breaks);
         assert_eq!(breaks.len(), chars.len());
         assert!(!breaks[0], "行首不能是断点");
         assert!(breaks[6], "hello 之后可以断");
@@ -676,6 +780,139 @@ mod tests {
         assert_eq!(r.center_x(), work.center_x());
         assert!(r.x >= work.x && r.right() <= work.right());
         assert_eq!(r.bottom(), work.bottom() - 80);
+    }
+
+    /// 给一行造一组带层级的单元，返回显示顺序（行内单元下标）。
+    fn ordered(levels: &[u8], rtl: bool, space: &[usize]) -> Vec<u32> {
+        let chars: Vec<char> = levels.iter().map(|_| 'x').collect();
+        let advances: Vec<i32> = levels.iter().map(|_| 10).collect();
+        let text = TrackText {
+            chars: &chars,
+            advances: &advances,
+            levels,
+            rtl,
+            ..Default::default()
+        };
+        let (mut order, mut scratch) = (Vec::new(), Vec::new());
+        visual_order(
+            &text,
+            0,
+            levels.len(),
+            |unit| space.contains(&unit),
+            &mut order,
+            &mut scratch,
+        );
+        order
+    }
+
+    #[test]
+    fn visual_order_reverses_a_pure_rtl_line() {
+        assert_eq!(ordered(&[1, 1, 1, 1], true, &[]), vec![3, 2, 1, 0]);
+    }
+
+    #[test]
+    fn visual_order_keeps_an_ltr_line_as_is() {
+        assert_eq!(ordered(&[0, 0, 0], false, &[]), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn visual_order_reverses_only_the_embedded_rtl_run() {
+        // 从左往右的句子里嵌了一段从右往左的文字（单元 2..5）。
+        assert_eq!(
+            ordered(&[0, 0, 1, 1, 1, 0], false, &[]),
+            vec![0, 1, 4, 3, 2, 5]
+        );
+    }
+
+    #[test]
+    fn visual_order_keeps_an_ltr_run_inside_an_rtl_line_readable() {
+        // 从右往左的句子里嵌了一段数字/拉丁（层级 2，单元 2..4）：
+        // 先把层级 2 的片段倒一次、再把整行倒一次，结果片段自己仍是从左往右读。
+        assert_eq!(ordered(&[1, 1, 2, 2, 1], true, &[]), vec![4, 2, 3, 1, 0]);
+    }
+
+    #[test]
+    fn trailing_whitespace_goes_back_to_the_paragraph_level() {
+        // 行尾的空格（单元 2）不跟着前面的从右往左片段走：它留在行尾（右边）。
+        assert_eq!(ordered(&[1, 1, 1], false, &[2]), vec![1, 0, 2]);
+    }
+
+    #[test]
+    fn rtl_lines_share_the_right_edge_and_hug_their_text() {
+        let chars: Vec<char> = "abcdefghij klmn".chars().collect();
+        let advances: Vec<i32> = chars.iter().map(|_| 30).collect();
+        let mut breaks = vec![false; chars.len()];
+        let bytes: Vec<u32> = (0..chars.len() as u32).collect();
+        let text_str: String = chars.iter().collect();
+        fill_breaks(&text_str, &bytes, &mut breaks);
+        let text = TrackText {
+            chars: &chars,
+            advances: &advances,
+            breaks: &breaks,
+            rtl: true,
+            line_height: 40,
+            ascent: 32,
+            ..Default::default()
+        };
+        let layout = layout_regions(Some(text), None, |_, _| 0.0, 300, 4, m());
+        let lines = layout.listen.expect("区域").lines;
+        assert!(lines.len() >= 2, "300px 宽放不下，要折行");
+        let right = lines[0].plate_x + lines[0].plate_w;
+        for line in &lines {
+            assert!(line.rtl);
+            assert_eq!(line.plate_x + line.plate_w, right, "所有行共用右边缘");
+            assert_eq!(
+                line.text_x + (line.plate_w - 2 * m().plate_pad_x),
+                right - m().plate_pad_x,
+                "文字贴着底衬右内边距"
+            );
+        }
+        assert!(
+            lines[0].plate_w != lines[1].plate_w,
+            "底衬贴合各行文字宽度（不是统一宽度）"
+        );
+    }
+
+    #[test]
+    fn breaks_inside_a_cluster_are_ignored() {
+        // "ab cd"：UAX #14 在 "cd" 前（字节 3）有断点；第二个单元从字节 4 起，
+        // 断点落在第一个单元内部，必须忽略，不能挪到别的单元上。
+        let mut breaks = Vec::new();
+        fill_breaks("ab cd", &[0, 4], &mut breaks);
+        assert_eq!(breaks, vec![false, false]);
+        fill_breaks("ab cd", &[0, 3], &mut breaks);
+        assert_eq!(breaks, vec![false, true]);
+    }
+
+    #[test]
+    fn units_map_back_to_frame_chars_when_a_cluster_spans_several_chars() {
+        // 三个单元覆盖 2 + 1 + 3 个字符；折行后的字符区间要按单元边界换算。
+        let chars = ['a', 'b', 'c'];
+        let advances = [100, 100, 100];
+        let breaks = [false, true, true];
+        let unit_chars = [0u32, 2, 3, 6];
+        let text = TrackText {
+            chars: &chars,
+            advances: &advances,
+            breaks: &breaks,
+            unit_chars: &unit_chars,
+            line_height: 40,
+            ascent: 32,
+            base: 10,
+            ..Default::default()
+        };
+        let layout = layout_regions(Some(text), None, |_, _| 0.0, 250, 4, m());
+        let lines = layout.listen.expect("区域").lines;
+        let spans: Vec<(usize, usize)> = lines.iter().map(|l| (l.first, l.last)).collect();
+        assert!(
+            spans.iter().all(|(f, l)| *f >= 10 && *l <= 16 && f < l),
+            "字符区间落在 [base, base+6)：{spans:?}"
+        );
+        assert_eq!(spans.first().map(|s| s.0), Some(10));
+        assert_eq!(spans.last().map(|s| s.1), Some(16));
+        for pair in spans.windows(2) {
+            assert_eq!(pair[0].1, pair[1].0, "相邻两行的字符区间首尾相接");
+        }
     }
 
     #[test]
