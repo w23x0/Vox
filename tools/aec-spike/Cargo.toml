@@ -1,0 +1,18 @@
+[workspace]
+
+[package]
+name = "aec-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+sonora = "0.2"
+sonora-aec3 = "=0.2.0"
+
+# 跟仓库 [profile.release] 对齐：opt-level 3 + lto="thin" + codegen-units=1。
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = false
