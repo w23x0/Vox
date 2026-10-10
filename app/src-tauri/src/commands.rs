@@ -220,11 +220,23 @@ pub fn osc_set_avatar(state: State<'_>, on: bool) -> Result<(), Msg> {
 
 // ─── 悬浮字幕 ──────────────────────────────────────────────────────────────────
 
-/// 进入/退出悬浮字幕窗的「调整位置」模式（仅 Linux 有实际效果；Windows 恒 `Ok`，
-/// 窗口没起来也是 `Ok`）。编辑状态不落盘。
+/// 主显示器的位置与大小（设置页「位置」示意图用）。单位跟 `subtitle.geometry` 一致：
+/// Linux（GTK）是逻辑像素，Windows 是物理像素。拿不到显示器返回 `None`，前端退回 1920×1080。
 #[tauri::command]
-pub fn overlay_set_edit_mode(enabled: bool) -> Result<(), Msg> {
-    crate::platform::overlay_set_edit_mode(enabled)
+pub fn screen_rect(app: tauri::AppHandle) -> Option<[i32; 4]> {
+    let monitor = app.primary_monitor().ok().flatten()?;
+    let (pos, size) = (monitor.position(), monitor.size());
+    if cfg!(target_os = "linux") {
+        let scale = monitor.scale_factor().max(1.0);
+        let logical = |v: i32| (f64::from(v) / scale).round() as i32;
+        return Some([
+            logical(pos.x),
+            logical(pos.y),
+            logical(size.width as i32),
+            logical(size.height as i32),
+        ]);
+    }
+    Some([pos.x, pos.y, size.width as i32, size.height as i32])
 }
 
 // ─── 用量 ──────────────────────────────────────────────────────────────────────

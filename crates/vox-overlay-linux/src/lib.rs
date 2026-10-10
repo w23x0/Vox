@@ -8,9 +8,9 @@
 
 #![cfg(target_os = "linux")]
 
-mod edit;
 mod font;
 mod mailbox;
+mod placement;
 mod window;
 
 use std::sync::Arc;
@@ -44,11 +44,13 @@ impl SubtitleView for Overlay {
         self.request_redraw();
     }
 
-    /// 外观变了（字体、字号、底衬透明度）。真正换字体在主线程的重画里做。
+    /// 外观变了（字体、字号、底衬透明度、几何）。真正换字体在主线程的重画里做。
     fn restyle(&self, settings: &SubtitleSettings) {
         if let Ok(mut mailbox) = self.mailbox().lock() {
             mailbox.set_settings(settings);
         }
+        // 几何也在设置里：设置页改位置/大小、「重置默认」都靠这里实时搬窗。
+        self.apply_settings_geometry(settings.geometry);
         self.request_redraw();
     }
 }
@@ -58,7 +60,7 @@ pub fn spawn(settings: &SubtitleSettings) -> PortResult<Arc<Overlay>> {
     Overlay::spawn(settings, font_factory(), None)
 }
 
-/// 同 [`spawn`]，另带几何回写：「调整位置」模式里拖完/缩放完（去抖后）调它。
+/// 同 [`spawn`]，另带几何回写回调（目前无人触发，见 [`GeometryCallback`]）。
 pub fn spawn_with_geometry(
     settings: &SubtitleSettings,
     on_geometry: GeometryCallback,

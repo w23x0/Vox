@@ -546,8 +546,9 @@ export function createMockApi(): VoxApi {
     async oscSetAvatar() {
       await wait(180);
     },
-    async overlaySetEditMode() {
-      await wait(60);
+    async screenRect() {
+      await wait(40);
+      return { x: 0, y: 0, width: 1920, height: 1080 };
     },
     async resetUsage() {
       usage = {};

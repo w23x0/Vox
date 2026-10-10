@@ -175,8 +175,8 @@ pub fn spawn_overlay(
     settings: &SubtitleSettings,
     on_geometry: GeometryCallback,
 ) -> Result<OverlayHandle, OverlayFailure> {
-    // 平时永久鼠标穿透（`docs/architecture/DECISIONS.md` A5），几何只会在用户进入
-    // 「调整位置」模式（`overlay_set_edit_mode`）并拖完/缩放完后回写。
+    // 永久鼠标穿透（`docs/architecture/DECISIONS.md` A5）；位置由设置页改 `subtitle.geometry`，
+    // 经 `restyle` 实时搬窗。回调保留（目前无人触发）。
     let overlay =
         vox_overlay_linux::spawn_with_geometry(settings, on_geometry).map_err(|error| {
             OverlayFailure {
@@ -193,14 +193,6 @@ pub fn spawn_overlay(
 /// 窗口还活着吗。帧线程靠它发现"窗被关了"。
 pub fn overlay_running() -> bool {
     OVERLAY.get().is_some_and(|overlay| overlay.is_running())
-}
-
-/// 进入/退出悬浮字幕窗的「调整位置」模式。窗口没起来就什么也不做（返回 `Ok`）。
-pub fn overlay_set_edit_mode(enabled: bool) -> Result<(), vox_core::Msg> {
-    if let Some(overlay) = OVERLAY.get() {
-        overlay.set_edit_mode(enabled);
-    }
-    Ok(())
 }
 
 pub fn shutdown_overlay() {

@@ -1,8 +1,9 @@
 /** 字幕外观：悬浮窗的显示开关、字体、颜色、整句淡出，加一块按真实参数渲染的预览。 */
 
-import { useEffect, useState } from "react";
-import { hostBit, overlayNeedsEditMode } from "../capabilities";
+import { useCallback } from "react";
+import { hostBit } from "../capabilities";
 import { CapabilityNote } from "../components/Capability";
+import { PositionPicker } from "../components/PositionPicker";
 import {
   BACKGROUND_ALPHA_RANGE,
   CHAR_FADE_RANGE,
@@ -65,16 +66,7 @@ function SubtitlePreview({ sub }: { sub: SubtitleSettings }) {
 export function SubtitlePage() {
   const { api, snapshot, settings, patch } = useStore();
   const loading = snapshot === null;
-  const needsEditMode = overlayNeedsEditMode(snapshot);
-  // 「调整位置」是否开着（只是界面侧的镜像；后端 Esc / 30 秒无操作也会自己退出，此时再点一下即可对齐）。
-  const [editing, setEditing] = useState(false);
-  // 离开本页就退出编辑模式，不把可交互的字幕窗留在后面。
-  useEffect(
-    () => () => {
-      void api.overlaySetEditMode(false);
-    },
-    [api],
-  );
+  const loadScreen = useCallback(() => api.screenRect(), [api]);
   const sub = settings.subtitle;
   const t = useT();
   /**
@@ -291,33 +283,23 @@ export function SubtitlePage() {
       <div className="settings-group">
         <SettingsItem
           title={t("subtitle.positionSize")}
-          desc={t(needsEditMode ? "subtitle.positionSizeDescEdit" : "subtitle.positionSizeDesc")}
+          desc={t("subtitle.positionSizeDesc")}
           control={
-            <>
-              {needsEditMode && (
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  data-focus-item
-                  onClick={() => {
-                    const next = !editing;
-                    setEditing(next);
-                    void api.overlaySetEditMode(next);
-                  }}
-                >
-                  {t(editing ? "subtitle.editPositionDone" : "subtitle.editPosition")}
-                </button>
-              )}
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                data-focus-item
-                onClick={() => patch({ subtitle: { geometry: null } })}
-              >
-                {t("subtitle.resetDefault")}
-              </button>
-            </>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              data-focus-item
+              onClick={() => patch({ subtitle: { geometry: null } })}
+            >
+              {t("subtitle.resetDefault")}
+            </button>
           }
+        />
+        <PositionPicker
+          geometry={sub.geometry}
+          disabled={loading}
+          loadScreen={loadScreen}
+          onChange={(geometry) => patch({ subtitle: { geometry } })}
         />
       </div>
     </>

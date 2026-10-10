@@ -74,3 +74,140 @@
   border: none;
   border-radius: calc(var(--radius-ctl) - 3px);
 }
+
+/* 位置示意图：缩小的显示器 + 代表字幕窗口的矩形（拖动 / 拖边缘缩放） */
+.pos-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 0 16px;
+}
+
+.pos-map {
+  position: relative;
+  inline-size: 100%;
+  max-inline-size: 420px;
+  border: 1px solid var(--border, rgba(148, 163, 184, 0.35));
+  border-radius: var(--radius);
+  background: #101419;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.pos-rect {
+  position: absolute;
+  box-sizing: border-box;
+  min-inline-size: 6px;
+  min-block-size: 4px;
+  border: 2px solid #3f9eff;
+  border-radius: 3px;
+  background: rgba(63, 158, 255, 0.28);
+  cursor: move;
+  outline: none;
+  touch-action: none;
+}
+
+.pos-rect:focus-visible,
+.pos-rect--adjusting {
+  box-shadow: 0 0 0 2px #fff;
+}
+
+.pos-rect__tag {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.85);
+  pointer-events: none;
+}
+
+.pos-handle {
+  position: absolute;
+  inline-size: 10px;
+  block-size: 10px;
+  background: #3f9eff;
+  border-radius: 2px;
+}
+.pos-handle--n,
+.pos-handle--s {
+  inset-inline: 10px;
+  inline-size: auto;
+  block-size: 8px;
+  cursor: ns-resize;
+}
+.pos-handle--e,
+.pos-handle--w {
+  inset-block: 10px;
+  block-size: auto;
+  inline-size: 8px;
+  cursor: ew-resize;
+}
+.pos-handle--n { inset-block-start: -5px; }
+.pos-handle--s { inset-block-end: -5px; }
+.pos-handle--w { inset-inline-start: -5px; }
+.pos-handle--e { inset-inline-end: -5px; }
+.pos-handle--nw { inset-block-start: -5px; inset-inline-start: -5px; cursor: nwse-resize; }
+.pos-handle--se { inset-block-end: -5px; inset-inline-end: -5px; cursor: nwse-resize; }
+.pos-handle--ne { inset-block-start: -5px; inset-inline-end: -5px; cursor: nesw-resize; }
+.pos-handle--sw { inset-block-end: -5px; inset-inline-start: -5px; cursor: nesw-resize; }
+
+.pos-hint {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.pos-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.pos-presets {
+  display: grid;
+  grid-template-columns: repeat(3, 28px);
+  gap: 4px;
+}
+
+.pos-preset {
+  inline-size: 28px;
+  block-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border, rgba(148, 163, 184, 0.35));
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+.pos-preset > span {
+  inline-size: 6px;
+  block-size: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
+}
+.pos-preset:hover:not(:disabled) > span,
+.pos-preset:focus-visible > span {
+  opacity: 1;
+}
+
+.pos-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.pos-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+.pos-field input {
+  inline-size: 84px;
+}

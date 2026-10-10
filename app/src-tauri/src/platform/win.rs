@@ -78,11 +78,6 @@ pub fn overlay_running() -> bool {
     OVERLAY.get().is_some_and(|overlay| overlay.is_running())
 }
 
-/// Windows 的悬浮窗任何时候都能直接拖，没有「调整位置」模式：空操作。
-pub fn overlay_set_edit_mode(_enabled: bool) -> Result<(), vox_core::Msg> {
-    Ok(())
-}
-
 pub fn shutdown_overlay() {
     if let Some(overlay) = OVERLAY.get() {
         overlay.shutdown();
