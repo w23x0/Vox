@@ -283,13 +283,7 @@ impl GlyphSource for TextOutRaster {
         };
         for (i, c) in run.char_indices() {
             let end = i + c.len_utf8();
-            if c.is_whitespace() {
-                if start < i {
-                    push(self, start, i, out);
-                }
-                push(self, i, end, out);
-                start = end;
-            } else if is_unjoined(c) {
+            if c.is_whitespace() || is_unjoined(c) {
                 if start < i {
                     push(self, start, i, out);
                 }

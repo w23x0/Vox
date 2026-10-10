@@ -138,7 +138,7 @@ pub(crate) fn find_device(flow: EDataFlow, name: Option<&str>) -> PortResult<IMM
                 (key::INPUT_DEVICE_NOT_FOUND, "input")
             };
             PortError::user(
-                Msg::new(user_key).param("name", &wanted),
+                Msg::new(user_key).param("name", wanted),
                 format!("no {kind} device named '{wanted}' (it may be disabled or unplugged)"),
             )
         })
