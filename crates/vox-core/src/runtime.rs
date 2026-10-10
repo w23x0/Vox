@@ -25,6 +25,7 @@ use crate::catalog::{self, ActivationMode};
 use crate::event::{Event, Notice, Pipeline, PipelineState};
 use crate::gate::{GateConfig, GateStatus};
 use crate::latency::LatencySnapshot;
+use crate::notice::{key, Msg};
 use crate::pipeline::OpTiming;
 use crate::ports::{
     AudioApp, Clock, DeviceInfo, HotkeyBindings, HotkeyEvent, HotkeyHost, PortResult, SecretStore,
@@ -119,7 +120,7 @@ pub struct PipelineStatus {
     /// 当前会话号。回调拿着旧号来就丢弃。
     pub session_id: u64,
     pub gate: Option<GateStatus>,
-    pub last_error: Option<String>,
+    pub last_error: Option<Msg>,
     pub latency: LatencySnapshot,
     /// 各算子节的耗时与实时倍率，一次一快照。`None` = 这一轮还没报过
     /// （会话刚起、或压根没跑过音频，例如直通模式没有 `emit_latency` 那个节流点）。
@@ -174,7 +175,7 @@ pub struct PipelineSnapshot {
     pub state_label: &'static str,
     pub gate_rms: f32,
     pub gate_open: bool,
-    pub last_error: Option<String>,
+    pub last_error: Option<Msg>,
     pub latency: LatencySnapshot,
 }
 
@@ -360,10 +361,9 @@ impl Runtime {
         self.inner.state.write().facts = facts;
         if !excess.is_empty() {
             // 放开状态锁之后再发（监听器可能回头读快照）。
-            self.notify(Notice::warning(format!(
-                "外壳报了能力位上限之外的关闭项（已忽略）：{}",
-                excess.join(", ")
-            )));
+            self.notify(Notice::warning(
+                Msg::new(key::HOST_FACTS_EXCESS).param("bits", excess.join(", ")),
+            ));
         }
     }
 
@@ -407,7 +407,9 @@ impl Runtime {
             }
         }
         for err in errors {
-            self.notify(Notice::warning(format!("读取密钥失败：{err}")));
+            self.notify(Notice::warning(
+                Msg::new(key::KEY_READ_FAILED).detail(err.message),
+            ));
         }
     }
 
@@ -588,7 +590,9 @@ impl Runtime {
                 store.store_api_key_for(provider, &key)
             };
             if let Err(err) = result {
-                self.notify(Notice::warning(format!("密钥保存失败：{err}")));
+                self.notify(Notice::warning(
+                    Msg::new(key::KEY_SAVE_FAILED).detail(err.message),
+                ));
             }
         }
         self.emit(vec![Event::SettingsChanged {
@@ -674,7 +678,7 @@ impl Runtime {
                         && new.speak.target_language != old.speak.target_language)
                 {
                     events.push(Event::Notice {
-                        notice: Notice::info("服务商/模型设置已保存，重启「对外说话」后生效")
+                        notice: Notice::info(Msg::new(key::RESTART_SPEAK_PROVIDER))
                             .on(Pipeline::Speak),
                     });
                 } else {
@@ -703,7 +707,7 @@ impl Runtime {
                 // 「对外翻译」是按会话启动时决定的：运行中点它发不了活指令，走重启。
                 if new.speak.translate != old.speak.translate && speak_live {
                     events.push(Event::Notice {
-                        notice: Notice::info("对外翻译设置已保存，重启「对外说话」后生效")
+                        notice: Notice::info(Msg::new(key::RESTART_SPEAK_TRANSLATION))
                             .on(Pipeline::Speak),
                     });
                 }
@@ -734,8 +738,7 @@ impl Runtime {
                     || new.listen.target_language != old.listen.target_language)
             {
                 events.push(Event::Notice {
-                    notice: Notice::info("模型设置已保存，重启「听人说话」后生效")
-                        .on(Pipeline::Listen),
+                    notice: Notice::info(Msg::new(key::RESTART_LISTEN_MODEL)).on(Pipeline::Listen),
                 });
             }
             if listen_live
@@ -838,12 +841,14 @@ impl Runtime {
                 .or_else(|| (!needs_key_or_translate).then(String::new))
             else {
                 drop(s);
-                self.notify(Notice::error("请先配置 API 密钥").on(pipeline));
+                self.notify(Notice::error(Msg::new(key::API_KEY_MISSING)).on(pipeline));
                 return;
             };
             if pipeline == Pipeline::Listen && s.settings.listen.target.is_none() {
                 drop(s);
-                self.notify(Notice::error("请先选择监听程序").on(Pipeline::Listen));
+                self.notify(
+                    Notice::error(Msg::new(key::LISTEN_TARGET_MISSING)).on(Pipeline::Listen),
+                );
                 return;
             }
 
@@ -1006,7 +1011,9 @@ impl Runtime {
             }
         };
         if let Err(err) = host.rebind(bindings) {
-            self.notify(Notice::warning(format!("热键注册失败：{err}")));
+            self.notify(Notice::warning(
+                Msg::new(key::HOTKEY_REGISTER_FAILED).detail(err.message),
+            ));
         }
     }
 
@@ -1081,7 +1088,7 @@ impl Runtime {
     }
 
     /// 流水线挂了。
-    pub fn on_pipeline_failed(&self, pipeline: Pipeline, session_id: u64, error: String) {
+    pub fn on_pipeline_failed(&self, pipeline: Pipeline, session_id: u64, error: Msg) {
         let mut events = Vec::new();
         {
             let mut s = self.inner.state.write();
@@ -1846,7 +1853,7 @@ mod tests {
         let (rt, rec) = fixture();
         let session_id = bring_up(&rt, &rec, Pipeline::Speak);
         rt.set_mic_active(true);
-        rt.on_pipeline_failed(Pipeline::Speak, session_id, "连不上".into());
+        rt.on_pipeline_failed(Pipeline::Speak, session_id, Msg::new(key::CONNECT_FAILED));
         assert!(!rt.mic_active(), "挂了也要复位");
         assert_eq!(rt.pipeline_state(Pipeline::Speak), PipelineState::Failed);
     }
@@ -1918,7 +1925,10 @@ mod tests {
         assert!(rec.drain().is_empty(), "没密钥不该发启动命令");
         assert_eq!(rt.pipeline_state(Pipeline::Speak), PipelineState::Idle);
         let notices = rt.snapshot().notices;
-        assert!(notices.iter().any(|n| n.text.contains("密钥")));
+        assert!(notices
+            .iter()
+            .any(|n| n.msg.key == key::API_KEY_MISSING
+                && n.severity == crate::event::Severity::Error));
     }
 
     #[test]
@@ -1937,7 +1947,7 @@ mod tests {
             !rt.snapshot()
                 .notices
                 .iter()
-                .any(|n| n.text.contains("密钥") || n.text.contains("API")),
+                .any(|n| n.msg.key == key::API_KEY_MISSING),
             "直通不需密钥，不该提示配置密钥"
         );
     }
@@ -1948,7 +1958,9 @@ mod tests {
         rt.start(Pipeline::Listen);
         assert!(rec.drain().is_empty(), "没选程序不该启动");
         let notices = rt.snapshot().notices;
-        assert!(notices.iter().any(|n| n.text.contains("程序")));
+        assert!(notices
+            .iter()
+            .any(|n| n.msg.key == key::LISTEN_TARGET_MISSING));
     }
 
     #[test]

@@ -66,9 +66,13 @@ export interface DeviceSnapshot {
   virtual_cable_16ch_status: "visible" | "hidden" | "absent";
 }
 
+/** 后端通知。文案不在这里：`key` + `params` + `detail`（原文）由界面按语言渲染（`i18n/notice.ts`）。 */
 export interface Notice {
   severity: Severity;
-  text: string;
+  key: string;
+  params: Record<string, string>;
+  /** 服务端 / 系统给的原文，不翻译。 */
+  detail?: string;
   pipeline: PipelineName | null;
 }
 

@@ -105,7 +105,7 @@ function ProviderDetail({ provider }: { provider: ModelProvider }) {
 function KeyCard({ provider }: { provider: ModelProvider }) {
   const { api, snapshot, reload } = useStore();
   const toast = useToast();
-  const { uiLang, t } = useLang();
+  const { uiLang, t, msg } = useLang();
   const [hasDraft, setHasDraft] = useState(false);
   const [replacing, setReplacing] = useState(false);
   const [busy, setBusy] = useState<"save" | "clear" | null>(null);
@@ -142,7 +142,7 @@ function KeyCard({ provider }: { provider: ModelProvider }) {
       toast(
         "danger",
         t("models.saveFailed", {
-          error: String(error).replaceAll(key, t("models.keyHidden")),
+          error: msg(error).replaceAll(key, t("models.keyHidden")),
         }),
       );
     } finally {
@@ -161,7 +161,7 @@ function KeyCard({ provider }: { provider: ModelProvider }) {
       void fetchModels(api, provider, true);
       toast("success", t("models.clearedToast", { name }));
     } catch (error: unknown) {
-      toast("danger", t("models.clearFailed", { error: String(error) }));
+      toast("danger", t("models.clearFailed", { error: msg(error) }));
     } finally {
       busyRef.current = false;
       setBusy(null);

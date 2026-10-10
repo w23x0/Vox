@@ -11,6 +11,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { getApi } from "./api";
+import { isMsg, type Msg } from "./i18n/notice";
 import type { VoxApi } from "./api";
 import { DEFAULT_SETTINGS, cloneSettings } from "./defaults";
 import { mergePatch } from "./mock/merge";
@@ -33,7 +34,8 @@ export interface Store {
   live: Live;
   /** 正在发的补丁数，>0 时头部显示「保存中」。 */
   saving: number;
-  error: string | null;
+  /** 通信 / 命令失败：后端消息（按语言渲染）或其它错误的字符串。 */
+  error: Msg | string | null;
   patch(patch: SettingsPatch): void;
   dismissNotice(index: number): void;
   reload(): void;
@@ -55,7 +57,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(() => cloneSettings(DEFAULT_SETTINGS));
   const [live, setLive] = useState<Live>(EMPTY_LIVE);
   const [saving, setSaving] = useState(0);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Msg | string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   /** 本地最新设置的镜像，供补丁合并用，避免闭包拿到旧值。 */
   const settingsRef = useRef(settings);
@@ -71,7 +73,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setSettings(s.settings);
         setError(null);
       })
-      .catch((e: unknown) => alive && setError(String(e)));
+      .catch((e: unknown) => alive && setError(isMsg(e) ? e : String(e)));
     return () => {
       alive = false;
     };
@@ -191,7 +193,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (p.control !== undefined) refreshControl();
         })
         .catch((e: unknown) => {
-          setError(String(e));
+          setError(isMsg(e) ? e : String(e));
           setSettings(cloneSettings(settingsRef.current));
         })
         .finally(() => setSaving((n) => n - 1));

@@ -5,18 +5,53 @@
 
 use std::fmt;
 
+use crate::notice::Msg;
 use crate::subtitle::{RenderedChar, Track};
 
 /// 外壳侧的失败。内核只关心"失败了、原因是什么"，不关心是哪个 HRESULT。
+///
+/// `message` 是给开发者 / 日志看的诊断串（OS 错误、errno…），**不翻译**。
+/// 要给用户看时，由 [`PortError::into_msg`] 变成 [`Msg`]：外壳认得出的失败
+/// （找不到设备、程序没在出声…）用 [`PortError::user`] 直接带 key；其余由内核按
+/// 失败发生的**阶段**补 key，诊断串作为 `detail` 原样跟在后面。
 #[derive(Debug, Clone)]
 pub struct PortError {
     pub message: String,
+    /// 外壳已经给出的、用户能照着做的说法。
+    pub user: Option<Msg>,
 }
 
 impl PortError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            user: None,
+        }
+    }
+
+    /// 带用户可读 key 的失败；`message` 仍是诊断串。
+    pub fn user(user: Msg, message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            user: Some(user),
+        }
+    }
+
+    /// 标上"失败发生在哪一阶段"：外壳没给 key 就用 `stage`，诊断串当 `detail`；
+    /// 外壳给过的保持不动。
+    pub fn at(mut self, stage: &'static str) -> Self {
+        if self.user.is_none() {
+            self.user = Some(Msg::new(stage).detail(self.message.clone()));
+        }
+        self
+    }
+
+    /// 变成给用户看的消息：外壳给过 key 就用它（它自己的 detail 优先），
+    /// 否则用 `stage` 这个 key，诊断串当 `detail`。
+    pub fn into_msg(self, stage: &'static str) -> Msg {
+        match self.user {
+            Some(user) => user,
+            None => Msg::new(stage).detail(self.message),
         }
     }
 }

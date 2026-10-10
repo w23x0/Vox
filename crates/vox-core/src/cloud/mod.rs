@@ -18,6 +18,7 @@ pub use protocol::{
     INPUT_SAMPLE_RATE, OUTPUT_SAMPLE_RATE,
 };
 
+use crate::notice::{key, Msg};
 use crate::ports::{PortError, PortResult};
 use crate::settings::{ModelProvider, NetworkSetting};
 
@@ -413,25 +414,28 @@ fn normalize_code(code: &str) -> String {
         .collect()
 }
 
-/// 把服务端错误翻译成给人看的话。密钥类的错最常见，说清楚该去哪改。
-pub fn explain_error(code: Option<&str>, message: &str) -> String {
+/// 把服务端错误变成给人看的消息。密钥类的错最常见，说清楚该去哪改。
+/// 服务端原话放 `detail`，原样保留。
+pub fn explain_error(code: Option<&str>, message: &str) -> Msg {
     let flat = normalize_code(code.unwrap_or_default());
     if flat.contains("resourceexhausted") || flat.contains("ratelimit") {
-        return format!("模型服务请求过快或项目额度暂时耗尽，请稍后再试：{message}");
+        return Msg::new(key::SERVER_RATE_LIMITED).detail(message);
     }
     if is_fatal_error(code, message) {
         let lower = message.to_ascii_lowercase();
         if flat.contains("arrearage") || flat.contains("quota") || lower.contains("quota") {
-            return format!("模型服务账户欠费或额度用完了：{message}");
+            return Msg::new(key::SERVER_QUOTA_EXHAUSTED).detail(message);
         }
         if flat.contains("model") {
-            return format!("这个模型不可用，换一个试试：{message}");
+            return Msg::new(key::SERVER_MODEL_UNAVAILABLE).detail(message);
         }
-        return format!("API 密钥不对，去设置里重新填一次：{message}");
+        return Msg::new(key::SERVER_INVALID_KEY).detail(message);
     }
     match code {
-        Some(code) => format!("翻译服务报错（{code}）：{message}"),
-        None => format!("翻译服务报错：{message}"),
+        Some(code) => Msg::new(key::SERVER_ERROR_CODE)
+            .param("code", code)
+            .detail(message),
+        None => Msg::new(key::SERVER_ERROR).detail(message),
     }
 }
 
@@ -442,7 +446,7 @@ pub fn explain_error(code: Option<&str>, message: &str) -> String {
 /// 认得出的那几类（`free tier` / `quota` / `arrearage` / 余额不足）是真连踩到的：
 /// 百炼在额度用尽时用 close 帧回一条超长的说明（见 `MODEL-TABLE.md` §1.3），
 /// 不接住它用户只看到一个看不懂的协议错误。
-pub fn explain_close(reason: &str) -> Option<String> {
+pub fn explain_close(reason: &str) -> Option<Msg> {
     let lower = reason.to_ascii_lowercase();
     let quota = [
         "free tier",
@@ -454,12 +458,10 @@ pub fn explain_close(reason: &str) -> Option<String> {
     .iter()
     .any(|needle| lower.contains(needle));
     if quota {
-        return Some(format!(
-            "该模型的额度已用完，请到服务商控制台检查额度或关闭『仅使用免费额度』。服务端原话：{reason}"
-        ));
+        return Some(Msg::new(key::SERVER_CLOSE_QUOTA).detail(reason));
     }
     if is_fatal_error(None, reason) {
-        return Some(format!("翻译服务拒绝了这次连接：{reason}"));
+        return Some(Msg::new(key::SERVER_CLOSE_REFUSED).detail(reason));
     }
     None
 }
@@ -468,7 +470,8 @@ pub fn explain_close(reason: &str) -> Option<String> {
 pub fn error_to_port_error(event: &ServerEvent) -> Option<PortError> {
     match event {
         ServerEvent::Error { code, message } => {
-            Some(PortError::new(explain_error(code.as_deref(), message)))
+            let explained = explain_error(code.as_deref(), message);
+            Some(PortError::user(explained.clone(), explained.render_en()))
         }
         _ => None,
     }
@@ -871,20 +874,48 @@ mod tests {
     fn fatal_codes_are_matched_regardless_of_casing_and_separators() {
         for code in ["InvalidApiKey", "invalid_api_key", "invalid-api-key"] {
             assert!(is_fatal_error(Some(code), ""), "{code} 应该是致命错误");
-            assert!(explain_error(Some(code), "bad").contains("密钥"));
+            assert_eq!(
+                explain_error(Some(code), "bad").key,
+                key::SERVER_INVALID_KEY
+            );
         }
-        assert!(explain_error(Some("InsufficientQuota"), "x").contains("欠费"));
-        assert!(explain_error(Some("ModelNotFound"), "x").contains("换一个"));
+        assert_eq!(
+            explain_error(Some("InsufficientQuota"), "x").key,
+            key::SERVER_QUOTA_EXHAUSTED
+        );
+        assert_eq!(
+            explain_error(Some("ModelNotFound"), "x").key,
+            key::SERVER_MODEL_UNAVAILABLE
+        );
     }
 
     #[test]
     fn error_explanations_point_at_the_fix() {
-        assert!(explain_error(Some("invalid_api_key"), "bad key").contains("设置里重新填"));
-        assert!(explain_error(Some("arrearage"), "no money").contains("欠费"));
-        assert!(explain_error(Some("model_not_found"), "nope").contains("换一个"));
+        let invalid = explain_error(Some("invalid_api_key"), "bad key");
+        assert_eq!(invalid.key, key::SERVER_INVALID_KEY);
+        assert_eq!(
+            invalid.detail.as_deref(),
+            Some("bad key"),
+            "服务端原话原样保留"
+        );
+        assert_eq!(
+            explain_error(Some("arrearage"), "no money").key,
+            key::SERVER_QUOTA_EXHAUSTED
+        );
+        assert_eq!(
+            explain_error(Some("model_not_found"), "nope").key,
+            key::SERVER_MODEL_UNAVAILABLE
+        );
         let generic = explain_error(Some("server_error"), "boom");
-        assert!(generic.contains("server_error") && generic.contains("boom"));
-        assert!(explain_error(None, "boom").contains("boom"));
+        assert_eq!(generic.key, key::SERVER_ERROR_CODE);
+        assert_eq!(
+            generic.params.get("code").map(String::as_str),
+            Some("server_error")
+        );
+        assert_eq!(generic.detail.as_deref(), Some("boom"));
+        let bare = explain_error(None, "boom");
+        assert_eq!(bare.key, key::SERVER_ERROR);
+        assert_eq!(bare.detail.as_deref(), Some("boom"));
     }
 
     #[test]
@@ -894,7 +925,7 @@ mod tests {
             message: "bad".into(),
         })
         .unwrap();
-        assert!(err.message.contains("密钥"));
+        assert_eq!(err.user.expect("带 key").key, key::SERVER_INVALID_KEY);
         assert!(error_to_port_error(&ServerEvent::SessionUpdated).is_none());
     }
 
@@ -926,12 +957,16 @@ mod tests {
     #[test]
     fn an_exhausted_quota_close_is_explained_with_its_own_words() {
         let explained = explain_close(QUOTA_CLOSE).expect("额度用尽要给友好提示");
-        assert!(explained.contains("额度"), "{explained}");
-        assert!(explained.contains("控制台"), "{explained}");
-        assert!(explained.contains("仅使用免费额度"), "{explained}");
+        assert_eq!(explained.key, key::SERVER_CLOSE_QUOTA);
+        assert_eq!(
+            explained.detail.as_deref(),
+            Some(QUOTA_CLOSE),
+            "服务端原话要原样附上"
+        );
         assert!(
-            explained.contains(QUOTA_CLOSE),
-            "服务端原话要原样附上：{explained}"
+            explained.render_en().ends_with(QUOTA_CLOSE),
+            "英文渲染里原话在最后：{}",
+            explained.render_en()
         );
     }
 

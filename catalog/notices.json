@@ -1,0 +1,432 @@
+{
+  "schema_version": 1,
+  "detail_separator": { "zh": "：", "en": ": ", "ja": "：" },
+  "messages": {
+    "notice.hostFactsExcess": {
+      "zh": "外壳报了能力位上限之外的关闭项（已忽略）：{bits}",
+      "en": "The platform shell reported switched-off capabilities beyond the tier ceiling (ignored): {bits}",
+      "ja": "プラットフォーム側が上限を超える無効化項目を報告しました（無視しました）：{bits}"
+    },
+    "notice.keyReadFailed": {
+      "zh": "读取密钥失败",
+      "en": "Could not read the stored API keys",
+      "ja": "保存済みの API キーを読み込めませんでした"
+    },
+    "notice.keySaveFailed": {
+      "zh": "密钥保存失败",
+      "en": "Could not save the API key",
+      "ja": "API キーを保存できませんでした"
+    },
+    "notice.plaintextKeys": {
+      "zh": "API 密钥以明文（0600）存在 {path}：这一档没有 Secret Service，这一份就是兜底",
+      "en": "API keys are stored in plain text (mode 0600) at {path}: this build has no Secret Service, so this file is the fallback",
+      "ja": "API キーは {path} に平文（0600）で保存されています。この環境には Secret Service がないため、このファイルが代替です"
+    },
+    "notice.restartSpeakProvider": {
+      "zh": "服务商/模型设置已保存，重启「对外说话」后生效",
+      "en": "Provider/model settings saved. Restart \"Speak\" for them to take effect",
+      "ja": "プロバイダー／モデル設定を保存しました。「発話」を再起動すると反映されます"
+    },
+    "notice.restartSpeakTranslation": {
+      "zh": "对外翻译设置已保存，重启「对外说话」后生效",
+      "en": "Translation settings saved. Restart \"Speak\" for them to take effect",
+      "ja": "翻訳設定を保存しました。「発話」を再起動すると反映されます"
+    },
+    "notice.restartListenModel": {
+      "zh": "模型设置已保存，重启「听人说话」后生效",
+      "en": "Model settings saved. Restart \"Listen\" for them to take effect",
+      "ja": "モデル設定を保存しました。「聞き取り」を再起動すると反映されます"
+    },
+    "notice.apiKeyMissing": {
+      "zh": "请先配置 API 密钥",
+      "en": "Set up an API key first",
+      "ja": "先に API キーを設定してください"
+    },
+    "notice.listenTargetMissing": {
+      "zh": "请先选择监听程序",
+      "en": "Pick the program to listen to first",
+      "ja": "先に聞き取り対象のプログラムを選んでください"
+    },
+    "notice.hotkeyRegisterFailed": {
+      "zh": "热键注册失败",
+      "en": "Could not register the hotkey",
+      "ja": "ホットキーを登録できませんでした"
+    },
+    "notice.hotkeyHostFailed": {
+      "zh": "全局热键起不来，只能用界面上的开关",
+      "en": "Global hotkeys could not start; use the on-screen switches instead",
+      "ja": "グローバルホットキーを起動できません。画面上のスイッチを使ってください"
+    },
+    "notice.pipelineFailed": {
+      "zh": "出错了",
+      "en": "Something went wrong",
+      "ja": "エラーが発生しました"
+    },
+    "notice.sessionPlanInvalid": {
+      "zh": "这条会话的装配清单不合法",
+      "en": "The assembly plan for this session is invalid",
+      "ja": "このセッションの構成が不正です"
+    },
+    "notice.noCaptureInput": {
+      "zh": "这台设备的采集能力已关闭，没有可用的声音输入",
+      "en": "Audio capture is switched off on this device, so there is no input to use",
+      "ja": "この端末では音声キャプチャが無効のため、入力がありません"
+    },
+    "notice.connectFailed": {
+      "zh": "连不上翻译服务",
+      "en": "Could not connect to the translation service",
+      "ja": "翻訳サービスに接続できません"
+    },
+    "notice.playbackOpenFailed": {
+      "zh": "译音输出设备打不开",
+      "en": "Could not open the playback device",
+      "ja": "再生デバイスを開けません"
+    },
+    "notice.captureStartFailed": {
+      "zh": "声音采集启动失败",
+      "en": "Could not start audio capture",
+      "ja": "音声キャプチャを開始できません"
+    },
+    "notice.chainBuildFailed": {
+      "zh": "音频处理链搭建失败",
+      "en": "Could not set up the audio processing chain",
+      "ja": "音声処理チェーンを構築できません"
+    },
+    "notice.passthroughOutputFailed": {
+      "zh": "原声输出失败",
+      "en": "Original-voice output failed",
+      "ja": "原音の出力に失敗しました"
+    },
+    "notice.monitorFailed": {
+      "zh": "回听译音失败",
+      "en": "Could not monitor the translated voice",
+      "ja": "翻訳音声のモニターに失敗しました"
+    },
+    "notice.translationOutputFailed": {
+      "zh": "译音输出失败",
+      "en": "Translated-voice output failed",
+      "ja": "翻訳音声の出力に失敗しました"
+    },
+    "notice.denoiseDisabled": {
+      "zh": "降噪启动失败，本次已关闭",
+      "en": "Noise suppression failed to start and is off for this session",
+      "ja": "ノイズ抑制を開始できなかったため、今回は無効にしました"
+    },
+    "notice.server.rateLimited": {
+      "zh": "模型服务请求过快或项目额度暂时耗尽，请稍后再试",
+      "en": "The model service is rate-limited or the project quota is temporarily used up. Try again later",
+      "ja": "モデルサービスのリクエストが多すぎるか、プロジェクトの枠が一時的に尽きました。しばらくしてからお試しください"
+    },
+    "notice.server.quotaExhausted": {
+      "zh": "模型服务账户欠费或额度用完了",
+      "en": "The model service account is overdue or its quota is used up",
+      "ja": "モデルサービスのアカウントが未払い、または枠を使い切りました"
+    },
+    "notice.server.modelUnavailable": {
+      "zh": "这个模型不可用，换一个试试",
+      "en": "This model is unavailable. Try another one",
+      "ja": "このモデルは利用できません。別のモデルをお試しください"
+    },
+    "notice.server.invalidKey": {
+      "zh": "API 密钥不对，去设置里重新填一次",
+      "en": "The API key is not valid. Re-enter it in Settings",
+      "ja": "API キーが正しくありません。設定で入力し直してください"
+    },
+    "notice.server.error": {
+      "zh": "翻译服务报错",
+      "en": "The translation service reported an error",
+      "ja": "翻訳サービスがエラーを返しました"
+    },
+    "notice.server.errorCode": {
+      "zh": "翻译服务报错（{code}）",
+      "en": "The translation service reported an error ({code})",
+      "ja": "翻訳サービスがエラーを返しました（{code}）"
+    },
+    "notice.server.closeQuota": {
+      "zh": "该模型的额度已用完，请到服务商控制台检查额度或关闭「仅使用免费额度」。服务端原话",
+      "en": "This model's quota is used up. Check the quota in the provider console or turn off \"free tier only\". Server said",
+      "ja": "このモデルの枠を使い切りました。プロバイダーのコンソールで枠を確認するか「無料枠のみ使用」をオフにしてください。サーバーの応答"
+    },
+    "notice.server.closeRefused": {
+      "zh": "翻译服务拒绝了这次连接",
+      "en": "The translation service refused this connection",
+      "ja": "翻訳サービスが今回の接続を拒否しました"
+    },
+    "notice.controlPlaneDown": {
+      "zh": "控制面没起来（Agent 连不上）",
+      "en": "The control plane did not start (agents cannot connect)",
+      "ja": "コントロールプレーンが起動しませんでした（エージェントは接続できません）"
+    },
+    "notice.overlayFailed": {
+      "zh": "悬浮字幕窗未能启动",
+      "en": "The floating caption window could not start",
+      "ja": "フローティング字幕ウィンドウを起動できませんでした"
+    },
+    "notice.overlayThreadCrashed": {
+      "zh": "字幕刷新线程异常退出，悬浮窗内容不再更新。重启应用可恢复。",
+      "en": "The caption refresh thread crashed and the overlay no longer updates. Restart the app to recover.",
+      "ja": "字幕更新スレッドが異常終了し、オーバーレイは更新されません。アプリを再起動すると復旧します。"
+    },
+    "notice.overlayThreadMissing": {
+      "zh": "字幕刷新线程未能启动，悬浮窗不会更新内容",
+      "en": "The caption refresh thread could not start, so the overlay will not update",
+      "ja": "字幕更新スレッドを起動できなかったため、オーバーレイは更新されません"
+    },
+    "notice.deviceScanCrashed": {
+      "zh": "设备枚举线程异常退出，设备列表不再自动刷新。可以手动点「重新扫描设备」。",
+      "en": "The device scan thread crashed and the device list no longer refreshes by itself. Click \"Rescan devices\" to refresh it manually.",
+      "ja": "デバイス検出スレッドが異常終了し、デバイス一覧は自動更新されません。「デバイスを再スキャン」で手動更新できます。"
+    },
+    "notice.trayFailed": {
+      "zh": "托盘图标没建起来",
+      "en": "The tray icon could not be created",
+      "ja": "トレイアイコンを作成できませんでした"
+    },
+    "notice.trayMissing": {
+      "zh": "系统托盘不会显示图标：关窗会最小化，不会收进托盘。GNOME 默认不带系统托盘，装上 AppIndicator/KStatusNotifier 扩展后图标才会出现。",
+      "en": "The system tray will not show an icon: closing the window minimizes it instead of hiding to the tray. GNOME has no tray by default; install the AppIndicator/KStatusNotifier extension to get one.",
+      "ja": "システムトレイにアイコンは表示されません。ウィンドウを閉じても最小化されるだけです。GNOME は既定でトレイがないため、AppIndicator/KStatusNotifier 拡張を入れるとアイコンが出ます。"
+    },
+    "notice.pipewireMissing": {
+      "zh": "没连上 PipeWire：Linux 音频后端以 PipeWire 为前提（主流发行版默认就有）。",
+      "en": "Could not reach PipeWire. The Linux audio backend needs it (most mainstream distributions ship it by default).",
+      "ja": "PipeWire に接続できません。Linux の音声バックエンドは PipeWire を前提としています（主要ディストリビューションでは標準で入っています）。"
+    },
+    "notice.pipewireMissingHeadless": {
+      "zh": "没连上 PipeWire：Linux 音频后端以 PipeWire 为前提（主流发行版默认就有；无屏盒子上要装 daemon + 会话管理器）。",
+      "en": "Could not reach PipeWire. The Linux audio backend needs it (most distributions ship it; on a headless box install the daemon and a session manager).",
+      "ja": "PipeWire に接続できません。Linux の音声バックエンドは PipeWire を前提としています（ヘッドレス機ではデーモンとセッションマネージャーを入れてください）。"
+    },
+    "notice.headlessNeedsLinux": {
+      "zh": "这个构建要在 Linux（ARM64 小主板那类）上跑：非 Linux 宿主没有音频后端。",
+      "en": "This build must run on Linux (e.g. ARM64 single-board computers). Other hosts have no audio backend.",
+      "ja": "このビルドは Linux（ARM64 の小型ボードなど）で動かします。Linux 以外には音声バックエンドがありません。"
+    },
+    "notice.cableHideFailed": {
+      "zh": "虚拟麦克风已安装，但 16 声道端点未能自动隐藏",
+      "en": "The virtual microphone is installed, but the 16-channel endpoint could not be hidden automatically",
+      "ja": "仮想マイクはインストールされましたが、16 チャンネルのエンドポイントを自動で非表示にできませんでした"
+    },
+    "notice.cableRestoreFailed": {
+      "zh": "虚拟麦克风已安装，但系统默认声音设备没有恢复",
+      "en": "The virtual microphone is installed, but the system default audio devices were not restored",
+      "ja": "仮想マイクはインストールされましたが、システム既定のオーディオデバイスを元に戻せませんでした"
+    },
+    "notice.inputDeviceNotFound": {
+      "zh": "找不到输入设备「{name}」（可能被禁用或拔掉了）",
+      "en": "Input device \"{name}\" was not found (it may be disabled or unplugged)",
+      "ja": "入力デバイス「{name}」が見つかりません（無効化されたか、取り外された可能性があります）"
+    },
+    "notice.outputDeviceNotFound": {
+      "zh": "找不到输出设备「{name}」（可能被禁用或拔掉了）",
+      "en": "Output device \"{name}\" was not found (it may be disabled or unplugged)",
+      "ja": "出力デバイス「{name}」が見つかりません（無効化されたか、取り外された可能性があります）"
+    },
+    "notice.programSilent": {
+      "zh": "「{name}」现在没有在放声音（按程序抓音只抓它正在播的流）",
+      "en": "\"{name}\" is not playing any sound right now (per-program capture only takes streams that are playing)",
+      "ja": "「{name}」は今、音を出していません（プログラム単位のキャプチャは再生中のストリームだけを取ります）"
+    },
+    "notice.programNotRunning": {
+      "zh": "没找到正在运行的「{name}」（软件没开，或者名字不对）",
+      "en": "\"{name}\" is not running (the program is closed, or the name is wrong)",
+      "ja": "実行中の「{name}」が見つかりません（起動していないか、名前が違います）"
+    },
+    "notice.inputPermission": {
+      "zh": "没有权限读键盘/鼠标输入设备：Linux 全局热键需要把用户加进 input 组（sudo usermod -aG input $USER），然后重新登录",
+      "en": "No permission to read keyboard/mouse input devices. Linux global hotkeys need your user in the input group (sudo usermod -aG input $USER); then log in again",
+      "ja": "キーボード／マウスの入力デバイスを読む権限がありません。Linux のグローバルホットキーにはユーザーを input グループへ追加（sudo usermod -aG input $USER）し、再ログインが必要です"
+    },
+    "notice.captureByProgramUnsupported": {
+      "zh": "ALSA 后端不能按程序抓音，请改用 PipeWire 后端",
+      "en": "The ALSA backend cannot capture per program. Use the PipeWire backend instead",
+      "ja": "ALSA バックエンドではプログラム単位のキャプチャはできません。PipeWire バックエンドを使ってください"
+    },
+
+    "error.modelListTask": {
+      "zh": "模型列表任务失败",
+      "en": "The model list task failed",
+      "ja": "モデル一覧の取得タスクが失敗しました"
+    },
+    "error.settingsSerialize": {
+      "zh": "序列化当前设置失败",
+      "en": "Could not serialize the current settings",
+      "ja": "現在の設定をシリアライズできませんでした"
+    },
+    "error.settingsInvalid": {
+      "zh": "设置格式不合法",
+      "en": "The settings are not valid",
+      "ja": "設定の形式が不正です"
+    },
+    "error.oscNotStarted": {
+      "zh": "OSC 未启动",
+      "en": "OSC is not running",
+      "ja": "OSC が起動していません"
+    },
+    "error.oscAvatarParamMissing": {
+      "zh": "尚未配置 OSC 头像参数",
+      "en": "No OSC avatar parameter is configured yet",
+      "ja": "OSC のアバターパラメーターが未設定です"
+    },
+    "error.oscFailed": {
+      "zh": "OSC 出错",
+      "en": "OSC error",
+      "ja": "OSC エラー"
+    },
+    "error.deviceScanTask": {
+      "zh": "设备枚举线程异常",
+      "en": "The device scan task failed",
+      "ja": "デバイス検出タスクが異常終了しました"
+    },
+    "error.unknownPipeline": {
+      "zh": "未知的流水线：{name}",
+      "en": "Unknown pipeline: {name}",
+      "ja": "不明なパイプライン：{name}"
+    },
+    "error.unknownProvider": {
+      "zh": "未知模型服务商：{name}",
+      "en": "Unknown model provider: {name}",
+      "ja": "不明なモデルプロバイダー：{name}"
+    },
+    "error.configDir": {
+      "zh": "取配置目录失败",
+      "en": "Could not locate the config directory",
+      "ja": "設定ディレクトリを取得できませんでした"
+    },
+    "error.openBrowser": {
+      "zh": "打开浏览器失败",
+      "en": "Could not open the browser",
+      "ja": "ブラウザーを開けませんでした"
+    },
+    "error.catalog.client": {
+      "zh": "构造 HTTP 客户端失败",
+      "en": "Could not build the HTTP client",
+      "ja": "HTTP クライアントを作成できませんでした"
+    },
+    "error.catalog.connect": {
+      "zh": "连接更新源失败",
+      "en": "Could not reach the update source",
+      "ja": "更新元に接続できませんでした"
+    },
+    "error.catalog.status": {
+      "zh": "远程目录返回 {status}",
+      "en": "The remote catalog returned {status}",
+      "ja": "リモートカタログが {status} を返しました"
+    },
+    "error.catalog.read": {
+      "zh": "读取远程目录失败",
+      "en": "Could not read the remote catalog",
+      "ja": "リモートカタログを読み取れませんでした"
+    },
+    "error.catalog.invalidJson": {
+      "zh": "远程目录不是合法 JSON",
+      "en": "The remote catalog is not valid JSON",
+      "ja": "リモートカタログが正しい JSON ではありません"
+    },
+    "error.catalog.tooOld": {
+      "zh": "远程目录 schema_version 过旧（{version}，至少应为 2）",
+      "en": "The remote catalog schema_version is too old ({version}; at least 2 is required)",
+      "ja": "リモートカタログの schema_version が古すぎます（{version}、2 以上が必要）"
+    },
+    "error.catalog.noVerifiedAt": {
+      "zh": "远程目录缺少 verified_at",
+      "en": "The remote catalog has no verified_at",
+      "ja": "リモートカタログに verified_at がありません"
+    },
+    "error.catalog.write": {
+      "zh": "写入目录失败",
+      "en": "Could not write the catalog",
+      "ja": "カタログを書き込めませんでした"
+    },
+    "error.catalog.readback": {
+      "zh": "目录写好后却读不回来",
+      "en": "The catalog was written but could not be read back",
+      "ja": "カタログを書き込みましたが、読み戻せませんでした"
+    },
+    "error.catalog.parseApplied": {
+      "zh": "已落盘目录解析失败",
+      "en": "The saved catalog could not be parsed",
+      "ja": "保存したカタログを解析できませんでした"
+    },
+    "error.virtualCableNotNeeded": {
+      "zh": "Linux 不需要安装虚拟声卡：虚拟麦克风由 PipeWire 原生提供，在目标程序的录音设置里选「Vox 虚拟麦」即可。",
+      "en": "Linux does not need a virtual sound card: PipeWire provides the virtual microphone natively. Pick \"Vox virtual mic\" in the target program's recording settings.",
+      "ja": "Linux では仮想サウンドカードのインストールは不要です。仮想マイクは PipeWire が標準で提供します。対象プログラムの録音設定で「Vox 仮想マイク」を選んでください。"
+    },
+    "error.cableTask": {
+      "zh": "驱动管理线程异常",
+      "en": "The driver management task failed",
+      "ja": "ドライバー管理タスクが異常終了しました"
+    },
+    "error.cableBlockersTask": {
+      "zh": "占用检测线程异常",
+      "en": "The in-use check task failed",
+      "ja": "使用中チェックのタスクが異常終了しました"
+    },
+    "error.cableEndpointTask": {
+      "zh": "音频端点管理线程异常",
+      "en": "The audio endpoint task failed",
+      "ja": "オーディオエンドポイント管理タスクが異常終了しました"
+    },
+    "error.cableBusy": {
+      "zh": "以下应用仍在占用虚拟麦克风：{names}。请先关闭它们后重试。",
+      "en": "These apps are still using the virtual microphone: {names}. Close them and try again.",
+      "ja": "次のアプリが仮想マイクをまだ使用中です：{names}。閉じてからもう一度お試しください。"
+    },
+    "error.cableRebootBeforeInstall": {
+      "zh": "驱动刚卸载，必须先重启 Windows 才能重新安装。",
+      "en": "The driver was just uninstalled. Restart Windows before installing it again.",
+      "ja": "ドライバーをアンインストールしたばかりです。再インストールの前に Windows を再起動してください。"
+    },
+    "error.cableRebootBeforeUninstall": {
+      "zh": "驱动刚安装，必须先重启 Windows 才能卸载。",
+      "en": "The driver was just installed. Restart Windows before uninstalling it.",
+      "ja": "ドライバーをインストールしたばかりです。アンインストールの前に Windows を再起動してください。"
+    },
+    "error.cableElevationDeclined": {
+      "zh": "已取消管理员授权，驱动没有发生变化。",
+      "en": "Administrator permission was declined. The driver was not changed.",
+      "ja": "管理者権限が拒否されたため、ドライバーは変更されていません。"
+    },
+    "error.cableEndpointElevationDeclined": {
+      "zh": "已取消管理员授权，16 声道端点没有发生变化。",
+      "en": "Administrator permission was declined. The 16-channel endpoint was not changed.",
+      "ja": "管理者権限が拒否されたため、16 チャンネルのエンドポイントは変更されていません。"
+    },
+    "error.cableInstallFailed": {
+      "zh": "虚拟麦克风安装失败",
+      "en": "Installing the virtual microphone failed",
+      "ja": "仮想マイクのインストールに失敗しました"
+    },
+    "error.cableUninstallFailed": {
+      "zh": "虚拟麦克风卸载失败。请先关闭 Discord、VRChat 和其它正在使用虚拟麦克风的软件后重试",
+      "en": "Uninstalling the virtual microphone failed. Close Discord, VRChat and any other app using the virtual microphone, then try again",
+      "ja": "仮想マイクのアンインストールに失敗しました。Discord や VRChat など仮想マイクを使っているアプリを閉じてから、もう一度お試しください"
+    },
+    "error.cableEndpointFailed": {
+      "zh": "16 声道端点设置失败",
+      "en": "Changing the 16-channel endpoint failed",
+      "ja": "16 チャンネルのエンドポイント設定に失敗しました"
+    },
+    "error.cableCloseApp": {
+      "zh": "无法关闭 {app}",
+      "en": "Could not close {app}",
+      "ja": "{app} を閉じられません"
+    },
+    "error.cableBlockersCheck": {
+      "zh": "检测占用虚拟麦克风的程序失败",
+      "en": "Could not check which apps are using the virtual microphone",
+      "ja": "仮想マイクを使用中のアプリを確認できませんでした"
+    },
+    "error.openCableSite": {
+      "zh": "打开 VB-CABLE 官网失败",
+      "en": "Could not open the VB-CABLE website",
+      "ja": "VB-CABLE の公式サイトを開けませんでした"
+    },
+    "error.openCableDonation": {
+      "zh": "打开 VB-CABLE 授权页面失败",
+      "en": "Could not open the VB-CABLE licensing page",
+      "ja": "VB-CABLE のライセンスページを開けませんでした"
+    }
+  }
+}

@@ -165,7 +165,9 @@ mod tests {
         let runtime = Runtime::new(Settings::default(), vox_host::clock::local_clock());
         wire(&runtime);
         wire(&runtime);
-        runtime.notify(Notice::info("装配好了"));
+        runtime.notify(Notice::info(vox_core::Msg::new(
+            vox_core::notice::key::API_KEY_MISSING,
+        )));
         // 用量事件也走同一条路（这里只要求"不 panic"）。
         runtime.record_usage(
             "qwen3.8-livetranslate-flash-realtime",

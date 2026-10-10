@@ -220,7 +220,7 @@ pub fn virtual_device_status() -> VirtualDeviceStatus {
 }
 
 /// 启动时要提醒用户的事。Windows 上没有额外前置检查（VB-CABLE 缺失由界面引导）。
-pub fn startup_notes() -> Vec<String> {
+pub fn startup_notes() -> Vec<vox_core::Msg> {
     Vec::new()
 }
 

@@ -178,7 +178,7 @@ pub struct PipelineSnapshotDto {
     /// 完整的五字段门状态。不跑的时候为 `null`（跟 mock 一致）。
     pub gate: Option<GateStatus>,
     /// 前端没用到，但内核给了、留着无害。
-    pub last_error: Option<String>,
+    pub last_error: Option<vox_core::Msg>,
     /// 逐轮延迟统计（内核 `LatencySnapshot` 的同形映射）。
     pub latency: LatencySnapshot,
 }

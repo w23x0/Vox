@@ -20,6 +20,7 @@ use parking_lot::Mutex;
 use tracing::{debug, warn};
 
 use vox_core::hotkey::{resolve_bindings, EdgeTracker};
+use vox_core::notice::{key, Msg};
 use vox_core::ports::{HotkeyBindings, HotkeyEvent, HotkeyHost, PortError, PortResult};
 
 use crate::codes::{looks_like_keyboard, looks_like_mouse, main_code, modifier_groups};
@@ -83,7 +84,7 @@ impl HotkeyListener {
             let handle = thread::Builder::new()
                 .name("vox-hotkey".into())
                 .spawn(move || read_loop(device, &name, state, stop))
-                .map_err(|e| PortError::new(format!("热键线程启动失败: {e}")))?;
+                .map_err(|e| PortError::new(format!("failed to start the hotkey thread: {e}")))?;
             threads.push(handle);
         }
 
@@ -127,10 +128,13 @@ impl HotkeyHost for HotkeyListener {
 /// 权限不足时给的是**能直接照做**的错误：用户十有八九不在 `input` 组里。
 fn open_devices() -> PortResult<Vec<Device>> {
     let entries = std::fs::read_dir("/dev/input").map_err(|e| {
-        PortError::new(format!(
-            "读不了 /dev/input：{e}（Linux 全局热键需要 input 组权限：\
-             sudo usermod -aG input $USER 之后重新登录）"
-        ))
+        PortError::user(
+            Msg::new(key::INPUT_PERMISSION),
+            format!(
+                "cannot read /dev/input: {e} (Linux global hotkeys need input-group access: \
+                 sudo usermod -aG input $USER, then log in again)"
+            ),
+        )
     })?;
 
     let mut devices = Vec::new();
@@ -165,13 +169,14 @@ fn open_devices() -> PortResult<Vec<Device>> {
 
     if devices.is_empty() {
         if denied > 0 {
-            return Err(PortError::new(
-                "没有权限读 /dev/input/event*：Linux 全局热键需要把用户加进 input 组\
-                 （sudo usermod -aG input $USER），然后重新登录",
+            return Err(PortError::user(
+                Msg::new(key::INPUT_PERMISSION),
+                "no permission to read /dev/input/event*: Linux global hotkeys need the user in \
+                 the input group (sudo usermod -aG input $USER), then log in again",
             ));
         }
         return Err(PortError::new(
-            "系统里没找到键盘或鼠标输入设备（/dev/input 下没有可用的 event 设备）",
+            "no keyboard or mouse input device found (no usable event device under /dev/input)",
         ));
     }
     Ok(devices)

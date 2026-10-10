@@ -20,7 +20,7 @@
 import { useState } from "react";
 import { hostBit } from "../capabilities";
 import { CapabilityNote } from "../components/Capability";
-import { useT } from "../i18n/context";
+import { useLang } from "../i18n/context";
 import { useStore } from "../store";
 import type { AudioApp, Snapshot } from "../types.snapshot";
 import { SettingsItem } from "../ui/controls";
@@ -64,7 +64,7 @@ const CABLE_STATUS_LABEL: Record<VirtualCableStatus, string> = {
 export function CableManager() {
   const { api, snapshot, applyCableChannelStatus } = useStore();
   const toast = useToast();
-  const t = useT();
+  const { t, msg } = useLang();
   const [cableBusy, setCableBusy] = useState<
     "install" | "uninstall" | "hide16" | "show16" | null
   >(null);
@@ -150,8 +150,8 @@ export function CableManager() {
       toast(
         "danger",
         action === "install"
-          ? t("settings.toast.installFailed", { error: String(error) })
-          : t("settings.toast.uninstallFailed", { error: String(error) }),
+          ? t("settings.toast.installFailed", { error: msg(error) })
+          : t("settings.toast.uninstallFailed", { error: msg(error) }),
       );
     } finally {
       setCableBusy(null);
@@ -165,7 +165,7 @@ export function CableManager() {
       setUninstallDialog({ blockers, loading: false });
     } catch (error: unknown) {
       setUninstallDialog(null);
-      toast("danger", t("settings.toast.checkBlockersFailed", { error: String(error) }));
+      toast("danger", t("settings.toast.checkBlockersFailed", { error: msg(error) }));
     }
   };
 
@@ -183,7 +183,7 @@ export function CableManager() {
         toast("success", visible ? t("settings.toast.showChannel") : t("settings.toast.hideChannel"));
       }
     } catch (error: unknown) {
-      toast("danger", t("settings.toast.setChannelFailed", { error: String(error) }));
+      toast("danger", t("settings.toast.setChannelFailed", { error: msg(error) }));
     } finally {
       setCableBusy(null);
     }

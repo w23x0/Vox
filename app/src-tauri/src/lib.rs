@@ -300,18 +300,18 @@ fn assemble(
         Err(e) => {
             // 位 + Notice：位是机器可读的那一面（界面/出口按它降级），Notice 是给人看的那句。
             platform::record_hotkeys(false);
-            runtime.notify(vox_core::event::Notice::error(format!(
-                "全局热键起不来，只能用界面上的开关：{e}"
-            )));
+            runtime.notify(vox_core::event::Notice::error(
+                vox_core::Msg::new(vox_core::notice::key::HOTKEY_HOST_FAILED).detail(e.message),
+            ));
         }
     }
 
     // 11. 托盘。起不来不致命——设置窗和悬浮窗都还在；但托盘不可用时关窗逻辑会退化成
     //     "最小化"而不是"收进托盘"，理由见 `tray.rs` 头注释。
     if let Err(e) = tray::install(app, &state) {
-        runtime.notify(vox_core::event::Notice::warning(format!(
-            "托盘图标没建起来：{e}"
-        )));
+        runtime.notify(vox_core::event::Notice::warning(
+            vox_core::Msg::new(vox_core::notice::key::TRAY_FAILED).detail(e.to_string()),
+        ));
     }
 
     // 12. 平台前置条件的提醒（Linux：PipeWire 在不在、托盘有没有宿主）。放进 Notice

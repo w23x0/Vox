@@ -14,6 +14,7 @@ mod shared;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
+use vox_core::notice::{key, Msg};
 use vox_core::ports::{
     AudioChunk, CaptureFormat, CaptureSource, CaptureTarget, PortError, PortResult,
 };
@@ -91,7 +92,7 @@ impl CaptureSource for WinCapture {
             // 网络采集目标（媒体面）不归 WASAPI 这条路：它由 `vox-net` 的监听侧实现。
             CaptureTarget::Net { .. } => {
                 return Err(PortError::new(
-                    "网络音频不归 WASAPI 采集实现（由 vox-net 的媒体面提供）",
+                    "network audio is not a WASAPI capture target (it is served by the vox-net media plane)",
                 ))
             }
         };
@@ -100,7 +101,7 @@ impl CaptureSource for WinCapture {
         let thread = std::thread::Builder::new()
             .name("vox-capture".into())
             .spawn(move || run_capture(plan, block_ms, thread_control, handshake, on_chunk))
-            .map_err(|e| PortError::new(format!("创建采集线程失败：{e}")))?;
+            .map_err(|e| PortError::new(format!("failed to spawn the capture thread: {e}")))?;
 
         self.running = Some(Running {
             control,
@@ -165,7 +166,7 @@ impl CaptureSource for EndpointLoopbackCapture {
             // 整机环回也是设备采集：网络源不归这条路。
             CaptureTarget::Net { .. } => {
                 return Err(PortError::new(
-                    "网络音频不归 WASAPI 采集实现（由 vox-net 的媒体面提供）",
+                    "network audio is not a WASAPI capture target (it is served by the vox-net media plane)",
                 ))
             }
         };
@@ -183,7 +184,9 @@ impl CaptureSource for EndpointLoopbackCapture {
                     on_chunk,
                 )
             })
-            .map_err(|e| PortError::new(format!("创建环回采集线程失败：{e}")))?;
+            .map_err(|e| {
+                PortError::new(format!("failed to spawn the loopback capture thread: {e}"))
+            })?;
         self.running = Some(Running {
             control,
             thread: Some(thread),
@@ -277,17 +280,21 @@ fn resolve_pid(executable: &str, include_tree: bool) -> PortResult<u32> {
     let all = proc::snapshot_processes()?;
     let candidates = proc::matching_processes(&all, executable);
     if candidates.is_empty() {
-        return Err(PortError::new(format!(
-            "没找到正在运行的 {executable}（软件没开，或者名字不对）"
-        )));
+        return Err(PortError::user(
+            Msg::new(key::PROGRAM_NOT_RUNNING).param("name", executable),
+            format!("no running process named {executable} (not started, or the name is wrong)"),
+        ));
     }
     let hints = sessions::session_hints(&candidates);
     if hints.is_empty() {
         // 软件开着但从没出过声：只能猜根进程。记一条日志，方便对着现象排查。
         tracing::info!("{executable} 当前没有音频会话，按主进程抓（它开始出声后就会有数据）");
     }
-    proc::choose_target_pid(&candidates, &hints, include_tree)
-        .ok_or_else(|| PortError::new(format!("{executable} 在跑，但没法确定该抓哪个进程")))
+    proc::choose_target_pid(&candidates, &hints, include_tree).ok_or_else(|| {
+        PortError::new(format!(
+            "{executable} is running, but no process could be chosen to capture"
+        ))
+    })
 }
 
 #[cfg(test)]

@@ -58,7 +58,7 @@ impl HotkeyListener {
             .spawn(move || {
                 poll_loop(shared_clone, stop_clone, &mut on_event);
             })
-            .map_err(|e| PortError::new(format!("热键线程启动失败: {e}")))?;
+            .map_err(|e| PortError::new(format!("failed to start the hotkey thread: {e}")))?;
 
         Ok(Arc::new(Self {
             shared,

@@ -13,6 +13,7 @@ pub mod event;
 pub mod gate;
 pub mod hotkey;
 pub mod latency;
+pub mod notice;
 pub mod pipeline;
 pub mod ports;
 pub mod runtime;
@@ -36,6 +37,7 @@ pub use event::{Event, Notice, Pipeline, PipelineState, Severity};
 pub use gate::{ActivationGate, GateConfig, GateKind, GateState, GateStatus};
 pub use hotkey::Hotkey;
 pub use latency::{LatencySnapshot, MetricSummary};
+pub use notice::Msg;
 pub use pipeline::{
     CaptureFactory, DenoiseFactory, Deps, PipelineEngine, PlaybackFactory, ResampleFactory,
     TransportFactory,

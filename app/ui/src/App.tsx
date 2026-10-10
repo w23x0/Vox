@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import * as catalog from "./catalog";
-import { useT } from "./i18n/context";
+import { useLang, useT } from "./i18n/context";
 import {
   cycleTrafficLights,
   enterContent,
@@ -303,10 +303,10 @@ export function App() {
 function useNoticeToasts() {
   const store = useStore();
   const toast = useToast();
-  const t = useT();
+  const { t, msg } = useLang();
   const notices = store.snapshot?.notices;
   const done = useRef<unknown>(null);
-  const lastError = useRef<string | null>(null);
+  const lastError = useRef<unknown>(null);
   const dismiss = useRef(store.dismissNotice);
   dismiss.current = store.dismissNotice;
 
@@ -317,7 +317,7 @@ function useNoticeToasts() {
     for (const n of notices) {
       if (n.severity !== "info" || n.pipeline) {
         const prefix = n.pipeline ? `${t(`pipeline.${n.pipeline}`)}：` : "";
-        toast(n.severity === "error" ? "danger" : "warning", `${prefix}${n.text}`);
+        toast(n.severity === "error" ? "danger" : "warning", `${prefix}${msg(n)}`);
       }
       dismiss.current(0);
     }
@@ -325,7 +325,7 @@ function useNoticeToasts() {
 
   useEffect(() => {
     const err = store.error;
-    if (err && err !== lastError.current) toast("danger", t("common.connectFailed", { error: err }));
+    if (err && err !== lastError.current) toast("danger", t("common.connectFailed", { error: msg(err) }));
     lastError.current = err;
   }, [store.error, toast]);
 }

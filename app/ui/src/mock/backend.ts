@@ -27,6 +27,7 @@ import type {
   VoxEvent,
 } from "../types.snapshot";
 import type { VoxApi } from "../api";
+import type { Msg } from "../i18n/notice";
 import { STATE_LABEL, isRunning } from "../pipeline";
 import {
   LISTEN_SCRIPT,
@@ -123,8 +124,14 @@ export function createMockApi(): VoxApi {
     for (const h of [...handlers]) h(event);
   }
 
-  function notify(severity: Notice["severity"], text: string, pipeline: PipelineName | null = null): void {
-    const notice: Notice = { severity, text, pipeline };
+  function notify(
+    severity: Notice["severity"],
+    key: string,
+    pipeline: PipelineName | null = null,
+    params: Record<string, string> = {},
+    detail?: string,
+  ): void {
+    const notice: Notice = { severity, key, params, pipeline, ...(detail ? { detail } : {}) };
     notices = [...notices, notice].slice(-50);
     emit({ kind: "notice", notice });
   }
@@ -290,17 +297,17 @@ export function createMockApi(): VoxApi {
   async function start(pipeline: PipelineName): Promise<void> {
     const provider = settings[pipeline].provider;
     if (!apiKeys[provider]) {
-      notify("warning", "请先配置 API 密钥", pipeline);
+      notify("warning", "notice.apiKeyMissing", pipeline);
       return;
     }
     // 位为假 ⇒ 这条腿在这台机器上根本装不起来（真后端是装配期的 `MissingInput`）：
     // 假后端也照实拒绝，不然界面会显示"运行中"，而位说这台设备做不到。
     if (pipeline === "listen" && !report().host.program_tap.enabled) {
-      notify("warning", "这台设备做不到抓程序声音", pipeline);
+      notify("warning", "notice.noCaptureInput", pipeline);
       return;
     }
     if (pipeline === "listen" && !settings.listen.target) {
-      notify("warning", "请先选择监听程序", pipeline);
+      notify("warning", "notice.listenTargetMissing", pipeline);
       return;
     }
     if (isRunning(lanes[pipeline].state)) return;
@@ -427,6 +434,19 @@ export function createMockApi(): VoxApi {
     const virtualMic = params.get("virtual_mic") as UnavailableReason | null;
     if (virtualMic && UNAVAILABLE_REASONS.includes(virtualMic)) off.virtual_mic = virtualMic;
     offOverride = off;
+    // `?mockNotice=<key>[&mockParams=a:1,b:2][&mockDetail=<原文>]`：开局稍后发一条该 key 的通知
+    // （等首次启动按系统语言切完界面语言——真后端的语言是持久化的，不存在这个先后），
+    // `check:i18n` 用它验证 toast 的渲染、detail 原样保留和缺 key 的回退。
+    const noticeKey = params.get("mockNotice");
+    if (noticeKey) {
+      const noticeParams: Record<string, string> = {};
+      for (const pair of params.get("mockParams")?.split(",") ?? []) {
+        const [name, ...rest] = pair.split(":");
+        if (name) noticeParams[name] = rest.join(":");
+      }
+      const mockDetail = params.get("mockDetail") ?? undefined;
+      setTimeout(() => notify("warning", noticeKey, "speak", noticeParams, mockDetail), 1500);
+    }
     onBits = (params.get("on")?.split(",") ?? []).filter((bit): bit is HostCapability =>
       HOST_CAPABILITIES.includes(bit as HostCapability),
     );
@@ -480,14 +500,14 @@ export function createMockApi(): VoxApi {
             before.speak.target_language !== next.speak.target_language)) &&
         isRunning(lanes.speak.state)
       ) {
-        notify("info", "模型设置已保存，重启「对外说话」后生效", "speak");
+        notify("info", "notice.restartSpeakProvider", "speak");
       }
       if (
         (before.listen.provider !== next.listen.provider ||
           before.listen.model_name !== next.listen.model_name) &&
         isRunning(lanes.listen.state)
       ) {
-        notify("info", "模型设置已保存，重启「听人说话」后生效", "listen");
+        notify("info", "notice.restartListenModel", "listen");
       }
       if (before.speak.activation_mode !== next.speak.activation_mode) {
         holdUntil = 0;
@@ -500,7 +520,6 @@ export function createMockApi(): VoxApi {
     async setApiKey(provider, key) {
       apiKeys[provider] = key.trim().length > 0;
       apiKeyTails[provider] = key.trim().length >= 8 ? key.trim().slice(-4) : null;
-      notify("info", apiKeys[provider] ? "密钥已保存" : "密钥已清空");
     },
     async togglePipeline(pipeline) {
       if (isRunning(lanes[pipeline].state)) await stop(pipeline);
@@ -552,7 +571,12 @@ export function createMockApi(): VoxApi {
     },
     async uninstallVirtualCable(closeBlockers: boolean) {
       if (cableBlockers.length > 0 && !closeBlockers) {
-        throw new Error(`以下应用仍在占用虚拟麦克风：${cableBlockers.map((app) => app.display_name).join("、")}`);
+        // 真后端的命令 `Err` 就是这个形状 `{key, params, detail?}`，不是 Error。
+        const failure: Msg = {
+          key: "error.cableBusy",
+          params: { names: cableBlockers.map((app) => app.display_name).join(", ") },
+        };
+        throw failure;
       }
       await wait(700);
       cableBlockers = [];

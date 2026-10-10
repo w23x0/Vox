@@ -88,15 +88,16 @@ fn log_event(event: &Event) {
 }
 
 fn log_notice(notice: &Notice) {
-    // 提示是给人看的中文句子（芯里不存文案，这些是外壳/芯自己拼的行动指引）。
+    // 无屏档没有前端：日志里用 English 渲染（与前端 en 文案同源，见 `vox_core::notice`）。
     let pipeline = notice
         .pipeline
         .map(|pipeline| pipeline.label())
         .unwrap_or("-");
+    let text = notice.msg.render_en();
     match notice.severity {
-        Severity::Error => tracing::error!(pipeline, "{}", notice.text),
-        Severity::Warning => tracing::warn!(pipeline, "{}", notice.text),
-        Severity::Info => tracing::info!(pipeline, "{}", notice.text),
+        Severity::Error => tracing::error!(pipeline, "{}", text),
+        Severity::Warning => tracing::warn!(pipeline, "{}", text),
+        Severity::Info => tracing::info!(pipeline, "{}", text),
     }
 }
 
@@ -119,7 +120,7 @@ mod tests {
         const SECRET: &str = "这句话不该出现在日志里";
         let log = std::sync::Arc::new(StdMutex::new(Vec::<u8>::new()));
 
-        // 抓一遍两条事件：一条带正文（字幕）、一条带提示（给用户看的中文句子）。
+        // 抓一遍两条事件：一条带正文（字幕）、一条带提示（给用户看的 English 句子）。
         let captured = {
             let sink = StdArc::clone(&log);
             let subscriber = tracing_subscriber::fmt()
@@ -138,7 +139,10 @@ mod tests {
                     confirmed: Some(SECRET.to_string()),
                 });
                 log_event(&Event::Notice {
-                    notice: Notice::error("请先配置 API 密钥").on(PipelineEvent::Speak),
+                    notice: Notice::error(vox_core::Msg::new(
+                        vox_core::notice::key::API_KEY_MISSING,
+                    ))
+                    .on(PipelineEvent::Speak),
                 });
             });
             String::from_utf8(log.lock().expect("日志锁").clone()).expect("UTF-8")
@@ -149,8 +153,8 @@ mod tests {
             "该记的事实要记：{captured}"
         );
         assert!(
-            captured.contains("请先配置 API 密钥"),
-            "提示要进日志：{captured}"
+            captured.contains("Set up an API key first"),
+            "提示要以 English 进日志：{captured}"
         );
         assert!(!captured.contains(SECRET), "说话内容进了日志：{captured}");
     }

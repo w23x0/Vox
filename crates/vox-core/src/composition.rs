@@ -1239,7 +1239,7 @@ mod tests {
             Ok(_) => panic!("不认识版本的清单不许被装起来"),
         };
         assert!(
-            err.message.contains("版本"),
+            err.message.contains("version"),
             "报错要说清是版本问题：{}",
             err.message
         );

@@ -133,10 +133,10 @@ impl Core {
         if has_plaintext_keys {
             if let crate::secrets::SecretBackend::File { path } = &ports.secret {
                 tracing::warn!(path = %path.display(), "API 密钥以明文（0600）存在这个文件里");
-                runtime.notify(Notice::warning(format!(
-                    "API 密钥以明文（0600）存在 {}：这一档没有 Secret Service，这一份就是兜底",
-                    path.display()
-                )));
+                runtime.notify(Notice::warning(
+                    vox_core::Msg::new(vox_core::notice::key::PLAINTEXT_KEYS)
+                        .param("path", path.display()),
+                ));
             }
         }
 

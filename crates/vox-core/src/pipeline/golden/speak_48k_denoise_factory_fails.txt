@@ -30,7 +30,7 @@ capture open microphone default
 capture stop 1
 # event
 event {"kind":"pipeline_state","pipeline":"speak","state":"starting"}
-event {"kind":"notice","notice":{"severity":"warning","text":"降噪启动失败，本次已关闭","pipeline":"speak"}}
+event {"kind":"notice","notice":{"severity":"warning","key":"notice.denoiseDisabled","params":{},"pipeline":"speak"}}
 event {"kind":"pipeline_state","pipeline":"speak","state":"ready"}
 event {"kind":"gate_status","pipeline":"speak","status":{"kind":"manual","state":"waiting","rms":0.0009354103,"active":false,"ended":false}}
 event {"kind":"gate_status","pipeline":"speak","status":{"kind":"manual","state":"waiting","rms":0.0009354103,"active":false,"ended":false}}

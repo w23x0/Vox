@@ -13,7 +13,9 @@ use serde_json::Value;
 use tauri::Manager;
 use vox_core::catalog;
 use vox_core::event::Pipeline;
+use vox_core::notice::key;
 use vox_core::settings::{ModelProvider, Settings};
+use vox_core::Msg;
 
 use crate::dto::{SettingsDto, SnapshotDto};
 use crate::state::AppState;
@@ -36,7 +38,7 @@ pub async fn list_models(
     state: State<'_>,
     provider: String,
     refresh: bool,
-) -> Result<vox_host::models::ModelList, String> {
+) -> Result<vox_host::models::ModelList, Msg> {
     let provider = parse_provider(&provider)?;
     let key = state.runtime.api_key_of(provider);
     let region = state.runtime.settings().aliyun_region;
@@ -45,7 +47,7 @@ pub async fn list_models(
         vox_host::models::list_models(provider, key.as_deref(), region, &network, refresh)
     })
     .await
-    .map_err(|e| format!("模型列表任务失败：{e}"))
+    .map_err(|e| Msg::new(key::ERR_MODEL_LIST_TASK).detail(e.to_string()))
 }
 
 // ─── 网络体检 ──────────────────────────────────────────────────────────────────
@@ -84,21 +86,21 @@ pub async fn detect_takeover(
 // ─── 设置 ──────────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn update_settings(state: State<'_>, patch: serde_json::Value) -> Result<SettingsDto, String> {
+pub fn update_settings(state: State<'_>, patch: serde_json::Value) -> Result<SettingsDto, Msg> {
     // 0. 兼容旧 UI 的顶层 model；新 UI 的两条流水线字段已经和内核同名。
     let patch = crate::dto::patch_to_kernel(patch);
 
     // 1. 当前设置序列化成 JSON Value
     let current = serde_json::to_value(state.runtime.settings())
-        .map_err(|e| format!("序列化当前设置失败：{e}"))?;
+        .map_err(|e| Msg::new(key::ERR_SETTINGS_SERIALIZE).detail(e.to_string()))?;
 
     // 2. 深合并
     let mut merged = current;
     deep_merge(&mut merged, patch);
 
     // 3. 反序列化回强类型——不合法的 patch 在这里就会被拦住
-    let new_settings: Settings =
-        serde_json::from_value(merged).map_err(|e| format!("设置格式不合法：{e}"))?;
+    let new_settings: Settings = serde_json::from_value(merged)
+        .map_err(|e| Msg::new(key::ERR_SETTINGS_INVALID).detail(e.to_string()))?;
 
     // 4. 交给内核，内核会 normalize + 发事件 + 热更新在跑的会话
     let result = state.runtime.update_settings(|s| *s = new_settings);
@@ -108,7 +110,7 @@ pub fn update_settings(state: State<'_>, patch: serde_json::Value) -> Result<Set
 // ─── 密钥 ──────────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn set_api_key(state: State<'_>, provider: String, key: String) -> Result<(), String> {
+pub fn set_api_key(state: State<'_>, provider: String, key: String) -> Result<(), Msg> {
     // 内核 `set_api_key` 自己处理 trim 和空字符串语义（空 = 清空），直接转发。
     // 内核内部不返回错误（失败走 Notice），签名保持 Result 是为了前端一致性。
     state
@@ -120,21 +122,21 @@ pub fn set_api_key(state: State<'_>, provider: String, key: String) -> Result<()
 // ─── 流水线开关 ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn start_pipeline(state: State<'_>, pipeline: String) -> Result<(), String> {
+pub fn start_pipeline(state: State<'_>, pipeline: String) -> Result<(), Msg> {
     let p = parse_pipeline(&pipeline)?;
     state.runtime.start(p);
     Ok(())
 }
 
 #[tauri::command]
-pub fn stop_pipeline(state: State<'_>, pipeline: String) -> Result<(), String> {
+pub fn stop_pipeline(state: State<'_>, pipeline: String) -> Result<(), Msg> {
     let p = parse_pipeline(&pipeline)?;
     state.runtime.stop(p);
     Ok(())
 }
 
 #[tauri::command]
-pub fn toggle_pipeline(state: State<'_>, pipeline: String) -> Result<(), String> {
+pub fn toggle_pipeline(state: State<'_>, pipeline: String) -> Result<(), Msg> {
     let p = parse_pipeline(&pipeline)?;
     state.runtime.toggle(p);
     Ok(())
@@ -149,7 +151,7 @@ pub fn osc_start(
     chatbox_enabled: bool,
     avatar_param: String,
     avatar_enabled: bool,
-) -> Result<(), String> {
+) -> Result<(), Msg> {
     let mut slot = state.osc.lock();
     if let Some(client) = slot.as_mut() {
         // 已起时只更新配置，不复建套接字（端口建时定死）。
@@ -158,7 +160,7 @@ pub fn osc_start(
         client.set_avatar_enabled(avatar_enabled);
         return Ok(());
     }
-    let mut client = vox_osc::OscClient::new(port)?;
+    let mut client = vox_osc::OscClient::new(port).map_err(osc_error)?;
     client.set_chat_enabled(chatbox_enabled);
     client.set_avatar_param(avatar_param);
     client.set_avatar_enabled(avatar_enabled);
@@ -172,7 +174,7 @@ pub fn osc_update(
     chatbox_enabled: bool,
     avatar_param: String,
     avatar_enabled: bool,
-) -> Result<(), String> {
+) -> Result<(), Msg> {
     let mut slot = state.osc.lock();
     match slot.as_mut() {
         Some(client) => {
@@ -181,40 +183,40 @@ pub fn osc_update(
             client.set_avatar_enabled(avatar_enabled);
             Ok(())
         }
-        None => Err("OSC 未启动".into()),
+        None => Err(Msg::new(key::ERR_OSC_NOT_STARTED)),
     }
 }
 
 #[tauri::command]
-pub fn osc_stop(state: State<'_>) -> Result<(), String> {
+pub fn osc_stop(state: State<'_>) -> Result<(), Msg> {
     let client = state.osc.lock().take();
     drop(client);
     Ok(())
 }
 
 #[tauri::command]
-pub fn osc_send_chatbox(state: State<'_>, text: String) -> Result<(), String> {
+pub fn osc_send_chatbox(state: State<'_>, text: String) -> Result<(), Msg> {
     let slot = state.osc.lock();
     match slot.as_ref() {
         // 测试发送 = 真发一条 VRChat 聊天消息（immediate=true，不弹输入框），
         // 让用户确认 OSC 链路通、VRChat 收到了。
-        Some(client) => client.chatbox(&text, true),
-        None => Err("OSC 未启动".into()),
+        Some(client) => client.chatbox(&text, true).map_err(osc_error),
+        None => Err(Msg::new(key::ERR_OSC_NOT_STARTED)),
     }
 }
 
 #[tauri::command]
-pub fn osc_set_avatar(state: State<'_>, on: bool) -> Result<(), String> {
+pub fn osc_set_avatar(state: State<'_>, on: bool) -> Result<(), Msg> {
     let slot = state.osc.lock();
     match slot.as_ref() {
         Some(client) => {
             let param = client.avatar_param();
             if param.is_empty() {
-                return Err("尚未配置 OSC 头像参数".into());
+                return Err(Msg::new(key::ERR_OSC_AVATAR_PARAM_MISSING));
             }
-            client.set_avatar_bool(param, on)
+            client.set_avatar_bool(param, on).map_err(osc_error)
         }
-        None => Err("OSC 未启动".into()),
+        None => Err(Msg::new(key::ERR_OSC_NOT_STARTED)),
     }
 }
 
@@ -243,7 +245,7 @@ pub fn reset_usage_model(state: State<'_>, model: String) {
 // ─── 设备刷新 ──────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn refresh_devices(state: State<'_>) -> Result<(), String> {
+pub async fn refresh_devices(state: State<'_>) -> Result<(), Msg> {
     // `tauri::State` 不是 Send，不能跨 await 持有。先把需要的东西 clone 出来。
     let registry = Arc::clone(&state.registry);
     let runtime = state.runtime.clone();
@@ -252,7 +254,7 @@ pub async fn refresh_devices(state: State<'_>) -> Result<(), String> {
     let snapshot =
         tauri::async_runtime::spawn_blocking(move || vox_host::scan_devices(registry.as_ref()))
             .await
-            .map_err(|e| format!("设备枚举线程异常：{e}"))?;
+            .map_err(|e| Msg::new(key::ERR_DEVICE_SCAN_TASK).detail(e.to_string()))?;
 
     runtime.set_devices(snapshot);
     Ok(())
@@ -283,31 +285,28 @@ mod cable_admin {
         Uninstall,
     }
 
-    pub async fn install(state: State<'_>) -> Result<CableActionDto, String> {
+    pub async fn install(state: State<'_>) -> Result<CableActionDto, Msg> {
         manage_virtual_cable(state, CableAction::Install, false).await
     }
 
-    pub async fn uninstall(
-        state: State<'_>,
-        close_blockers: bool,
-    ) -> Result<CableActionDto, String> {
+    pub async fn uninstall(state: State<'_>, close_blockers: bool) -> Result<CableActionDto, Msg> {
         // 播放线程可能正占着 CABLE Input。先停「对外说话」，让设备句柄尽快释放。
         state.runtime.stop(Pipeline::Speak);
         manage_virtual_cable(state, CableAction::Uninstall, close_blockers).await
     }
 
-    pub async fn blockers() -> Result<Vec<vox_core::ports::AudioApp>, String> {
+    pub async fn blockers() -> Result<Vec<vox_core::ports::AudioApp>, Msg> {
         tauri::async_runtime::spawn_blocking(vox_audio_win::virtual_cable_blocking_apps)
             .await
-            .map_err(|e| format!("占用检测线程异常：{e}"))?
-            .map_err(|e| e.message)
+            .map_err(|e| Msg::new(key::ERR_CABLE_BLOCKERS_TASK).detail(e.to_string()))?
+            .map_err(|e| Msg::new(key::ERR_CABLE_BLOCKERS_CHECK).detail(e.message))
     }
 
     async fn manage_virtual_cable(
         state: State<'_>,
         action: CableAction,
         close_blockers: bool,
-    ) -> Result<CableActionDto, String> {
+    ) -> Result<CableActionDto, Msg> {
         // State 不能跨 await：只留下可安全送进阻塞线程的克隆。
         let runtime = state.runtime.clone();
         let registry = Arc::clone(&state.registry);
@@ -327,7 +326,7 @@ mod cable_admin {
                             .collect::<Vec<_>>()
                             .join("、");
                         return (
-                            InstallOutcome::Failed(format!("以下应用仍在占用虚拟麦克风：{names}")),
+                            Err(Msg::new(key::ERR_CABLE_BUSY).param("names", names)),
                             None,
                             None,
                             vox_host::scan_devices(registry.as_ref()),
@@ -336,7 +335,7 @@ mod cable_admin {
                     if close_blockers {
                         if let Err(message) = close_cable_blockers(&blockers) {
                             return (
-                                InstallOutcome::Failed(message),
+                                Err(message),
                                 None,
                                 None,
                                 vox_host::scan_devices(registry.as_ref()),
@@ -350,19 +349,17 @@ mod cable_admin {
                 let settled = match (action, current) {
                     (CableAction::Install, CableStatus::Installed)
                     | (CableAction::Uninstall, CableStatus::NotInstalled) => {
-                        Some(InstallOutcome::Succeeded)
+                        Some(Ok(InstallOutcome::Succeeded))
                     }
                     (CableAction::Install, CableStatus::InstalledPendingReboot) => {
-                        Some(InstallOutcome::NeedsReboot)
+                        Some(Ok(InstallOutcome::NeedsReboot))
                     }
                     (CableAction::Install, CableStatus::UninstallIncomplete) => {
-                        Some(InstallOutcome::Failed(
-                            "驱动刚卸载，必须先重启 Windows 才能重新安装。".into(),
-                        ))
+                        Some(Err(Msg::new(key::ERR_CABLE_REBOOT_BEFORE_INSTALL)))
                     }
-                    (CableAction::Uninstall, CableStatus::InstalledPendingReboot) => Some(
-                        InstallOutcome::Failed("驱动刚安装，必须先重启 Windows 才能卸载。".into()),
-                    ),
+                    (CableAction::Uninstall, CableStatus::InstalledPendingReboot) => {
+                        Some(Err(Msg::new(key::ERR_CABLE_REBOOT_BEFORE_UNINSTALL)))
+                    }
                     _ => None,
                 };
 
@@ -416,7 +413,7 @@ mod cable_admin {
                     } else {
                         None
                     };
-                    (result, restore)
+                    (Ok(result), restore)
                 };
                 let (outcome, restore_result) = outcome;
                 // 安装后的默认动作：把不需要的 16 声道端点从系统设备列表中隐藏。
@@ -424,7 +421,7 @@ mod cable_admin {
                 let hide_outcome = if matches!(action, CableAction::Install)
                     && matches!(
                         &outcome,
-                        InstallOutcome::Succeeded | InstallOutcome::NeedsReboot
+                        Ok(InstallOutcome::Succeeded | InstallOutcome::NeedsReboot)
                     ) {
                     Some(vox_audio_win::set_multichannel_endpoint_enabled(false))
                 } else {
@@ -434,7 +431,7 @@ mod cable_admin {
                 (outcome, restore_result, hide_outcome, devices)
             })
             .await
-            .map_err(|e| format!("驱动管理线程异常：{e}"))?;
+            .map_err(|e| Msg::new(key::ERR_CABLE_TASK).detail(e.to_string()))?;
 
         // 不等四秒轮询，操作结束立刻把最新设备状态推给前端。
         select_regular_cable_output(&runtime, &devices);
@@ -442,41 +439,41 @@ mod cable_admin {
 
         let multichannel_hidden = is_multichannel_hidden();
         if let Some(vox_audio_win::EndpointToggleOutcome::Failed(message)) = hide_outcome {
-            runtime.notify(vox_core::event::Notice::warning(format!(
-                "虚拟麦克风已安装，但 16 声道端点未能自动隐藏：{message}"
-            )));
+            runtime.notify(vox_core::event::Notice::warning(
+                Msg::new(key::CABLE_HIDE_FAILED).detail(message),
+            ));
         }
         if let Some(Err(message)) = restore_result {
-            runtime.notify(vox_core::event::Notice::warning(format!(
-                "虚拟麦克风已安装，但系统默认声音设备没有恢复：{message}"
-            )));
+            runtime.notify(vox_core::event::Notice::warning(
+                Msg::new(key::CABLE_RESTORE_FAILED).detail(message),
+            ));
         }
 
         match outcome {
-            vox_audio_win::InstallOutcome::Succeeded => Ok(CableActionDto {
+            Ok(vox_audio_win::InstallOutcome::Succeeded) => Ok(CableActionDto {
                 needs_reboot: false,
                 multichannel_hidden,
             }),
-            vox_audio_win::InstallOutcome::NeedsReboot => Ok(CableActionDto {
+            Ok(vox_audio_win::InstallOutcome::NeedsReboot) => Ok(CableActionDto {
                 needs_reboot: true,
                 multichannel_hidden,
             }),
-            vox_audio_win::InstallOutcome::UserDeclinedElevation => {
-                Err("已取消管理员授权，驱动没有发生变化。".into())
+            Ok(vox_audio_win::InstallOutcome::UserDeclinedElevation) => {
+                Err(Msg::new(key::ERR_CABLE_ELEVATION_DECLINED))
             }
-            vox_audio_win::InstallOutcome::Failed(message) => {
-                Err(if matches!(action, CableAction::Uninstall) {
-                    format!(
-                        "{message} 请先关闭 Discord、VRChat 和其它正在使用虚拟麦克风的软件后重试。"
-                    )
+            Ok(vox_audio_win::InstallOutcome::Failed(message)) => {
+                Err(Msg::new(if matches!(action, CableAction::Uninstall) {
+                    key::ERR_CABLE_UNINSTALL_FAILED
                 } else {
-                    message
+                    key::ERR_CABLE_INSTALL_FAILED
                 })
+                .detail(message))
             }
+            Err(message) => Err(message),
         }
     }
 
-    fn close_cable_blockers(blockers: &[vox_core::ports::AudioApp]) -> Result<(), String> {
+    fn close_cable_blockers(blockers: &[vox_core::ports::AudioApp]) -> Result<(), Msg> {
         use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::System::Threading::{
             OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE,
@@ -491,7 +488,11 @@ mod cable_admin {
             // SAFETY: 只申请终止和等待权限，PID 来自当前音频会话枚举。
             let process =
                 unsafe { OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, false, app.pid) }
-                    .map_err(|e| format!("无法关闭 {}：{e}", app.display_name))?;
+                    .map_err(|e| {
+                        Msg::new(key::ERR_CABLE_CLOSE_APP)
+                            .param("app", &app.display_name)
+                            .detail(e.to_string())
+                    })?;
             // SAFETY: process 是刚打开的有效进程句柄。
             let terminated = unsafe { TerminateProcess(process, 0) };
             if let Err(error) = terminated {
@@ -499,7 +500,9 @@ mod cable_admin {
                 unsafe {
                     let _ = CloseHandle(process);
                 }
-                return Err(format!("无法关闭 {}：{error}", app.display_name));
+                return Err(Msg::new(key::ERR_CABLE_CLOSE_APP)
+                    .param("app", &app.display_name)
+                    .detail(error.to_string()));
             }
             // 最多等两秒让音频会话释放；超时也继续，安装器会给最终结果。
             unsafe {
@@ -510,10 +513,7 @@ mod cable_admin {
         Ok(())
     }
 
-    pub async fn set_multichannel(
-        state: State<'_>,
-        visible: bool,
-    ) -> Result<CableActionDto, String> {
+    pub async fn set_multichannel(state: State<'_>, visible: bool) -> Result<CableActionDto, Msg> {
         let runtime = state.runtime.clone();
         let registry = Arc::clone(&state.registry);
         let (outcome, devices) = tauri::async_runtime::spawn_blocking(move || {
@@ -522,7 +522,7 @@ mod cable_admin {
             (outcome, devices)
         })
         .await
-        .map_err(|e| format!("音频端点管理线程异常：{e}"))?;
+        .map_err(|e| Msg::new(key::ERR_CABLE_ENDPOINT_TASK).detail(e.to_string()))?;
 
         select_regular_cable_output(&runtime, &devices);
         runtime.set_devices(devices);
@@ -544,9 +544,11 @@ mod cable_admin {
                 multichannel_hidden: hidden,
             }),
             vox_audio_win::EndpointToggleOutcome::UserDeclinedElevation => {
-                Err("已取消管理员授权，16 声道端点没有发生变化。".into())
+                Err(Msg::new(key::ERR_CABLE_ENDPOINT_ELEVATION_DECLINED))
             }
-            vox_audio_win::EndpointToggleOutcome::Failed(message) => Err(message),
+            vox_audio_win::EndpointToggleOutcome::Failed(message) => {
+                Err(Msg::new(key::ERR_CABLE_ENDPOINT_FAILED).detail(message))
+            }
         }
     }
 
@@ -576,7 +578,7 @@ mod cable_admin {
 }
 
 #[tauri::command]
-pub async fn install_virtual_cable(state: State<'_>) -> Result<CableActionDto, String> {
+pub async fn install_virtual_cable(state: State<'_>) -> Result<CableActionDto, Msg> {
     #[cfg(windows)]
     {
         cable_admin::install(state).await
@@ -592,7 +594,7 @@ pub async fn install_virtual_cable(state: State<'_>) -> Result<CableActionDto, S
 pub async fn uninstall_virtual_cable(
     state: State<'_>,
     close_blockers: bool,
-) -> Result<CableActionDto, String> {
+) -> Result<CableActionDto, Msg> {
     #[cfg(windows)]
     {
         cable_admin::uninstall(state, close_blockers).await
@@ -605,7 +607,7 @@ pub async fn uninstall_virtual_cable(
 }
 
 #[tauri::command]
-pub async fn virtual_cable_blockers() -> Result<Vec<vox_core::ports::AudioApp>, String> {
+pub async fn virtual_cable_blockers() -> Result<Vec<vox_core::ports::AudioApp>, Msg> {
     #[cfg(windows)]
     {
         cable_admin::blockers().await
@@ -620,7 +622,7 @@ pub async fn virtual_cable_blockers() -> Result<Vec<vox_core::ports::AudioApp>, 
 pub async fn set_virtual_cable_multichannel_visible(
     state: State<'_>,
     visible: bool,
-) -> Result<CableActionDto, String> {
+) -> Result<CableActionDto, Msg> {
     #[cfg(windows)]
     {
         cable_admin::set_multichannel(state, visible).await
@@ -634,9 +636,8 @@ pub async fn set_virtual_cable_multichannel_visible(
 
 /// Linux：虚拟麦克风由 PipeWire 原生提供，没有"装"这一步。
 #[cfg(not(windows))]
-fn virtual_device_not_needed() -> String {
-    "Linux 不需要安装虚拟声卡：虚拟麦克风由 PipeWire 原生提供，在目标程序的录音设置里选「Vox 虚拟麦」即可。"
-        .to_string()
+fn virtual_device_not_needed() -> Msg {
+    Msg::new(key::ERR_VIRTUAL_CABLE_NOT_NEEDED)
 }
 
 // ─── 模型目录在线更新 ───────────────────────────────────────────────────────────
@@ -646,9 +647,9 @@ fn virtual_device_not_needed() -> String {
 pub fn read_catalog_override(
     app: tauri::AppHandle,
     provider: String,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, Msg> {
     if crate::catalog_updater::catalog_file(&provider).is_none() {
-        return Err(format!("未知模型服务商：{provider}"));
+        return Err(Msg::new(key::ERR_UNKNOWN_PROVIDER).param("name", provider));
     }
     let config_dir = app_config_dir(&app)?;
     Ok(crate::catalog_updater::read_override(
@@ -662,7 +663,7 @@ pub fn read_catalog_override(
 pub async fn check_catalog_update(
     app: tauri::AppHandle,
     provider: String,
-) -> Result<CatalogUpdateCheckDto, String> {
+) -> Result<CatalogUpdateCheckDto, Msg> {
     parse_provider(&provider)?;
     let config_dir = app_config_dir(&app)?;
     let latest = crate::catalog_updater::check_update(&provider).await?;
@@ -677,7 +678,7 @@ pub async fn check_catalog_update(
 pub async fn apply_catalog_update(
     app: tauri::AppHandle,
     provider: String,
-) -> Result<CatalogUpdateAppliedDto, String> {
+) -> Result<CatalogUpdateAppliedDto, Msg> {
     parse_provider(&provider)?;
     let config_dir = app_config_dir(&app)?;
     let (file, verified) = crate::catalog_updater::apply_update(&config_dir, &provider).await?;
@@ -705,39 +706,39 @@ pub struct CatalogUpdateAppliedDto {
 /// 打开阿里云百炼控制台的 API-Key 页面。
 /// 只准打开这一个写死的 URL——绝不接受前端传 URL 参数。
 #[tauri::command]
-pub fn open_dashscope_console(app: tauri::AppHandle) -> Result<(), String> {
+pub fn open_dashscope_console(app: tauri::AppHandle) -> Result<(), Msg> {
     const DASHSCOPE_CONSOLE_URL: &str = "https://bailian.console.aliyun.com/?apiKey=1";
     tauri_plugin_opener::open_url(DASHSCOPE_CONSOLE_URL, None::<&str>)
-        .map_err(|e| format!("打开浏览器失败：{e}"))?;
+        .map_err(open_browser_error)?;
     // `app` 参数是 Tauri 宏要求的签名一部分，opener 插件并不需要它。
     let _ = app;
     Ok(())
 }
 
 #[tauri::command]
-pub fn open_provider_console(provider: String) -> Result<(), String> {
+pub fn open_provider_console(provider: String) -> Result<(), Msg> {
     let provider = parse_provider(&provider)?;
     let url = catalog::provider_info(provider).console_url;
-    tauri_plugin_opener::open_url(url, None::<&str>).map_err(|e| format!("打开浏览器失败：{e}"))
+    tauri_plugin_opener::open_url(url, None::<&str>).map_err(open_browser_error)
 }
 
 #[tauri::command]
-pub fn open_virtual_cable_website() -> Result<(), String> {
+pub fn open_virtual_cable_website() -> Result<(), Msg> {
     #[cfg(windows)]
     {
         tauri_plugin_opener::open_url(vox_audio_win::PRODUCT_URL, None::<&str>)
-            .map_err(|e| format!("打开 VB-CABLE 官网失败：{e}"))
+            .map_err(|e| Msg::new(key::ERR_OPEN_CABLE_SITE).detail(e.to_string()))
     }
     #[cfg(not(windows))]
     Err(virtual_device_not_needed())
 }
 
 #[tauri::command]
-pub fn open_virtual_cable_donation() -> Result<(), String> {
+pub fn open_virtual_cable_donation() -> Result<(), Msg> {
     #[cfg(windows)]
     {
         tauri_plugin_opener::open_url(vox_audio_win::DONATION_URL, None::<&str>)
-            .map_err(|e| format!("打开 VB-CABLE 授权页面失败：{e}"))
+            .map_err(|e| Msg::new(key::ERR_OPEN_CABLE_DONATION).detail(e.to_string()))
     }
     #[cfg(not(windows))]
     Err(virtual_device_not_needed())
@@ -754,25 +755,34 @@ pub fn quit_app(app: tauri::AppHandle) {
 // ─── 内部工具函数 ──────────────────────────────────────────────────────────────
 
 /// 把前端传来的字符串解析成 `Pipeline` 枚举。三条命令共用。
-fn parse_pipeline(name: &str) -> Result<Pipeline, String> {
+fn parse_pipeline(name: &str) -> Result<Pipeline, Msg> {
     match name {
         "speak" => Ok(Pipeline::Speak),
         "listen" => Ok(Pipeline::Listen),
-        other => Err(format!("未知的流水线：{other}")),
+        other => Err(Msg::new(key::ERR_UNKNOWN_PIPELINE).param("name", other)),
     }
 }
 
-fn parse_provider(name: &str) -> Result<ModelProvider, String> {
-    ModelProvider::from_id(name).ok_or_else(|| format!("未知模型服务商：{name}"))
+fn parse_provider(name: &str) -> Result<ModelProvider, Msg> {
+    ModelProvider::from_id(name)
+        .ok_or_else(|| Msg::new(key::ERR_UNKNOWN_PROVIDER).param("name", name))
 }
 
 /// 取 `app_config_dir`。设置、用量、密钥和覆盖版模型目录都落在这个根下；
 /// `read_catalog_override` / `check_catalog_update` / `apply_catalog_update`
 /// 三条命令共用这一段取值 + 报错包装（错误串跟前端显示的一致）。
-fn app_config_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+fn app_config_dir(app: &tauri::AppHandle) -> Result<PathBuf, Msg> {
     app.path()
         .app_config_dir()
-        .map_err(|e| format!("取配置目录失败：{e}"))
+        .map_err(|e| Msg::new(key::ERR_CONFIG_DIR).detail(e.to_string()))
+}
+
+fn osc_error(error: String) -> Msg {
+    Msg::new(key::ERR_OSC_FAILED).detail(error)
+}
+
+fn open_browser_error(error: impl std::fmt::Display) -> Msg {
+    Msg::new(key::ERR_OPEN_BROWSER).detail(error.to_string())
 }
 
 /// 深合并 `patch` 到 `base` 上。
@@ -921,8 +931,8 @@ mod tests {
     #[test]
     fn parse_pipeline_illegal_value() {
         let err = parse_pipeline("invalid").unwrap_err();
-        assert!(err.contains("未知的流水线"), "错误信息：{err}");
-        assert!(err.contains("invalid"));
+        assert_eq!(err.key, key::ERR_UNKNOWN_PIPELINE);
+        assert_eq!(err.params.get("name").map(String::as_str), Some("invalid"));
     }
 
     #[test]

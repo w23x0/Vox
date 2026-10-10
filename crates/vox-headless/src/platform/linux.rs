@@ -72,14 +72,12 @@ pub fn host_facts() -> HostFacts {
 ///
 /// 只报**事实**，不改任何位：PipeWire 连不上时"采不到声"是起流那一刻的事
 /// （见 [`host_facts`] 那张表第一行）。
-pub fn startup_notes() -> Vec<String> {
+pub fn startup_notes() -> Vec<vox_core::Msg> {
     let mut notes = Vec::new();
     if !pipewire_available() {
-        notes.push(
-            "没连上 PipeWire：Linux 音频后端以 PipeWire 为前提（主流发行版默认就有；\
-             无屏盒子上要装 daemon + 会话管理器）。"
-                .to_string(),
-        );
+        notes.push(vox_core::Msg::new(
+            vox_core::notice::key::PIPEWIRE_MISSING_HEADLESS,
+        ));
     }
     notes
 }

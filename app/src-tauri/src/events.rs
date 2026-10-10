@@ -561,12 +561,17 @@ mod tests {
     #[test]
     fn notice_event_shape() {
         let json = to_json(&Event::Notice {
-            notice: Notice::error("出错了").on(Pipeline::Speak),
+            notice: Notice::error(
+                vox_core::Msg::new(vox_core::notice::key::CONNECT_FAILED).detail("boom"),
+            )
+            .on(Pipeline::Speak),
         });
         assert_eq!(json["kind"], "notice");
         let notice = &json["notice"];
         assert_eq!(notice["severity"], "error");
-        assert_eq!(notice["text"], "出错了");
+        assert_eq!(notice["key"], "notice.connectFailed");
+        assert_eq!(notice["detail"], "boom");
+        assert!(notice["params"].is_object());
         assert_eq!(notice["pipeline"], "speak");
     }
 

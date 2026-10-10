@@ -35,6 +35,7 @@ use std::time::Duration;
 use pipewire as pw;
 use pw::properties::properties;
 use pw::spa;
+use vox_core::notice::{key, Msg};
 use vox_core::ports::{
     AudioChunk, CaptureFormat, CaptureSource, CaptureTarget, PortError, PortResult,
 };
@@ -112,7 +113,7 @@ impl CaptureSource for LinuxCapture {
         let thread = std::thread::Builder::new()
             .name("vox-capture".into())
             .spawn(move || capture_thread(plan, block_ms, thread_shared, cmd_rx, on_chunk))
-            .map_err(|e| PortError::new(format!("创建采集线程失败：{e}")))?;
+            .map_err(|e| PortError::new(format!("failed to spawn the capture thread: {e}")))?;
 
         self.running = Some(Running {
             shared,
@@ -129,13 +130,13 @@ impl CaptureSource for LinuxCapture {
             Err(RecvTimeoutError::Timeout) => {
                 self.stop();
                 return Err(PortError::new(format!(
-                    "采集启动超时（等了 {} 秒还没就绪）",
+                    "capture start timed out (not ready after {} s)",
                     START_TIMEOUT.as_secs()
                 )));
             }
             Err(RecvTimeoutError::Disconnected) => {
                 self.stop();
-                return Err(PortError::new("采集线程意外退出"));
+                return Err(PortError::new("the capture thread exited unexpectedly"));
             }
         };
 
@@ -185,7 +186,10 @@ fn resolve_plan(target: &CaptureTarget) -> PortResult<Plan> {
                     .chain(snapshot.nodes_of_class(probe::CLASS_SOURCE_VIRTUAL).iter())
                     .any(|node| node.name == name || node.description == name);
                 if !known {
-                    return Err(PortError::new(format!("找不到输入设备「{name}」")));
+                    return Err(PortError::user(
+                        Msg::new(key::INPUT_DEVICE_NOT_FOUND).param("name", name),
+                        format!("input device '{name}' not found"),
+                    ));
                 }
             }
             Ok(Plan::Microphone(name.clone()))
@@ -197,9 +201,12 @@ fn resolve_plan(target: &CaptureTarget) -> PortResult<Plan> {
             let snapshot = probe::snapshot()?;
             let streams = snapshot.output_streams_of(executable);
             if streams.is_empty() {
-                return Err(PortError::new(format!(
-                    "「{executable}」现在没有在放声音（按程序抓音只抓它正在播的流）"
-                )));
+                return Err(PortError::user(
+                    Msg::new(key::PROGRAM_SILENT).param("name", executable),
+                    format!(
+                        "'{executable}' is not playing sound right now (per-program capture only takes streams that are playing)"
+                    ),
+                ));
             }
             let mut pids: HashSet<u32> = HashSet::new();
             for stream in &streams {
@@ -222,7 +229,7 @@ fn resolve_plan(target: &CaptureTarget) -> PortResult<Plan> {
                 .collect();
             if targets.is_empty() {
                 return Err(PortError::new(format!(
-                    "找到了「{executable}」的音频流，但定位不到它的进程（拿不到 pid）"
+                    "found an audio stream of '{executable}' but cannot locate its process (no pid)"
                 )));
             }
             Ok(Plan::Process {
@@ -232,7 +239,7 @@ fn resolve_plan(target: &CaptureTarget) -> PortResult<Plan> {
         }
         // 网络采集目标（媒体面）不归 PipeWire 这条路：它由 `vox-net` 的监听侧实现。
         CaptureTarget::Net { .. } => Err(PortError::new(
-            "网络音频不归 PipeWire 采集实现（由 vox-net 的媒体面提供）",
+            "network audio is not a PipeWire capture target (it is served by the vox-net media plane)",
         )),
     }
 }
@@ -484,7 +491,10 @@ mod tests {
         .expect_err("不存在的设备该报错");
         // 没有 PipeWire 的环境（CI runner）会在更早一步失败，那条错误信息同样说清了原因。
         assert!(
-            err.message.contains("找不到输入设备") || err.message.contains("PipeWire"),
+            err.user
+                .as_ref()
+                .is_some_and(|u| u.key == key::INPUT_DEVICE_NOT_FOUND)
+                || err.message.contains("PipeWire"),
             "错误要说清原因：{}",
             err.message
         );

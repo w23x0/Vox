@@ -55,7 +55,7 @@ impl VirtualSink {
         };
         let node = core
             .create_object::<pw::node::Node>("adapter", &props)
-            .map_err(|e| PortError::new(format!("创建虚拟麦克风失败：{e}")))?;
+            .map_err(|e| PortError::new(format!("failed to create the virtual microphone: {e}")))?;
 
         // 建的请求要跑到服务端、再把节点信息收回来，才算真的存在。
         probe::roundtrip(&main_loop, &core)?;
@@ -90,7 +90,7 @@ impl VirtualSink {
             }
             if started.elapsed() >= TIMEOUT {
                 return Err(PortError::new(format!(
-                    "虚拟麦克风建出来了，但 {} ms 内图里都查不到它",
+                    "the virtual microphone was created but is not in the graph after {} ms",
                     TIMEOUT.as_millis()
                 )));
             }

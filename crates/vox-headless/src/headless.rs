@@ -564,7 +564,7 @@ mod tests {
         assert!(
             notices
                 .iter()
-                .any(|notice| notice.text.contains("API 密钥")),
+                .any(|notice| notice.msg.key == vox_core::notice::key::API_KEY_MISSING),
             "拒绝的理由要说清楚：{notices:?}"
         );
 

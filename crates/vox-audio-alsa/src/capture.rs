@@ -32,6 +32,7 @@ use std::time::{Duration, Instant};
 use alsa::pcm::{Access, Format, HwParams, IO, PCM};
 use alsa::poll::{poll, pollfd, Descriptors};
 use alsa::{Direction, ValueOr};
+use vox_core::notice::{key, Msg};
 use vox_core::ports::{
     AudioChunk, CaptureFormat, CaptureSource, CaptureTarget, PortError, PortResult,
 };
@@ -136,14 +137,15 @@ fn resolve_plan(target: &CaptureTarget) -> PortResult<Plan> {
         // ALSA 不记录"谁在出声"，没有按程序抓音这个概念。这句错误是能力位降级在
         // 端口层的落点：无屏档 `program_tap` 在上限之外，用户真去选了那一格时，
         // 拿到的是一句能看懂的话，而不是 `unsupported` 或者一个空列表。
-        CaptureTarget::ProcessLoopback { .. } => Err(PortError::new(
-            "ALSA 没有「抓某个程序的声音」这个能力（它不记录谁在出声）。\
-             这一格要按程序抓音请用 PipeWire 后端。",
+        CaptureTarget::ProcessLoopback { .. } => Err(PortError::user(
+            Msg::new(key::CAPTURE_BY_PROGRAM_UNSUPPORTED),
+            "ALSA cannot capture a single program's sound (it does not track who is playing); \
+             use the PipeWire backend for per-program capture",
         )),
         // 网络采集目标（媒体面）不归设备采集实现：它是 `vox-net` 的监听侧。
         // 遇到它必须报错，**不许当成默认设备**——那是静默换源。
         CaptureTarget::Net { .. } => Err(PortError::new(
-            "网络音频不归 ALSA 采集实现（由 vox-net 的媒体面提供）。",
+            "network audio is not an ALSA capture target (it is served by the vox-net media plane)",
         )),
     }
 }
@@ -199,7 +201,7 @@ impl CaptureSource for AlsaCapture {
         let thread = std::thread::Builder::new()
             .name("vox-capture".into())
             .spawn(move || capture_thread(plan, block_ms, thread_shared, on_chunk))
-            .map_err(|e| PortError::new(format!("创建采集线程失败：{e}")))?;
+            .map_err(|e| PortError::new(format!("failed to spawn the capture thread: {e}")))?;
 
         self.running = Some(Running { shared, thread });
 
@@ -214,13 +216,13 @@ impl CaptureSource for AlsaCapture {
             Err(RecvTimeoutError::Timeout) => {
                 self.stop();
                 Err(PortError::new(format!(
-                    "采集启动超时（等了 {} 秒还没就绪）",
+                    "capture start timed out (not ready after {} s)",
                     START_TIMEOUT.as_secs()
                 )))
             }
             Err(RecvTimeoutError::Disconnected) => {
                 self.stop();
-                Err(PortError::new("采集线程意外退出"))
+                Err(PortError::new("the capture thread exited unexpectedly"))
             }
         }
     }
@@ -308,7 +310,9 @@ fn run_capture(
     let channels = negotiated.channels as usize;
     let period_samples = period_frames * channels;
     let mut scratch_f = vec![0.0f32; period_samples];
-    let mut pfd = pcm.get().map_err(|e| map_err("取 poll 描述符", e))?;
+    let mut pfd = pcm
+        .get()
+        .map_err(|e| map_err("get the poll descriptor", e))?;
 
     // 回报放在下面两档各自的 `pcm.start()` **之后**：回报的是"真协商到的"格式
     // （不是请求值，芯按这个率重采样到 16 kHz，报请求值会让译音变调），而回报
@@ -318,11 +322,13 @@ fn run_capture(
         // 32 位：阶梯第 1 档。廉价 USB 麦在 16 位下很容易削顶，削顶发生在驱动里，
         // 我们拿回来就只剩 0 了（`probe::format_ladder` 的理由）。
         f if f == Format::s32() => {
-            let io = pcm.io_i32().map_err(|e| map_err("开 32 位读写口", e))?;
+            let io = pcm
+                .io_i32()
+                .map_err(|e| map_err("open the 32-bit I/O", e))?;
             // 硬件参数谈成、读写口开好之后必须显式 `start`：停在 PREPARED 状态时
             // `avail_update` 一直报 0，循环里只能一路 poll 到停机。
             pcm.start()
-                .map_err(|e| map_err("启动采集流（snd_pcm_start）", e))?;
+                .map_err(|e| map_err("start the capture stream (snd_pcm_start)", e))?;
             report_started(shared, negotiated);
             let mut scratch_i = vec![0i32; period_samples];
             pump(
@@ -340,10 +346,12 @@ fn run_capture(
         }
         // 16 位：阶梯第 2 档，只有 32 位打不开时才用。
         f if f == Format::s16() => {
-            let io = pcm.io_i16().map_err(|e| map_err("开 16 位读写口", e))?;
+            let io = pcm
+                .io_i16()
+                .map_err(|e| map_err("open the 16-bit I/O", e))?;
             // 同 32 位那条：先 start 再进循环。
             pcm.start()
-                .map_err(|e| map_err("启动采集流（snd_pcm_start）", e))?;
+                .map_err(|e| map_err("start the capture stream (snd_pcm_start)", e))?;
             report_started(shared, negotiated);
             let mut scratch_i = vec![0i16; period_samples];
             pump(
@@ -362,7 +370,7 @@ fn run_capture(
         // 走不到：格式只从 `probe::format_ladder()` 那两档里出。
         // 仍然给一条读得懂的错误，而不是 `unreachable!()`——库里不许 panic。
         other => Err(PortError::new(format!(
-            "ALSA 协商出了这一稿不处理的采样格式：{other:?}"
+            "ALSA negotiated a sample format this build does not handle: {other:?}"
         ))),
     }
 }
@@ -416,16 +424,16 @@ fn negotiate(plan: &Plan) -> PortResult<Opened> {
     }
     let asked = plan.requested.as_deref().unwrap_or(DEFAULT_PCM);
     Err(PortError::new(format!(
-        "打不开采集设备「{asked}」（试了 {} 档）：{}",
+        "cannot open capture device '{asked}' (tried {} rungs): {}",
         plan.candidates.len(),
-        reasons.join("；")
+        reasons.join("; ")
     )))
 }
 
 /// 试一个候选设备：非阻塞打开 → 走格式阶梯 → 设硬件参数 → 回报协商结果。
 fn open_candidate(candidate: &Candidate) -> PortResult<Opened> {
     let pcm = PCM::new(&candidate.pcm, Direction::Capture, NONBLOCK)
-        .map_err(|e| map_err("打开 PCM", e))?;
+        .map_err(|e| map_err("open the PCM", e))?;
 
     // 格式阶梯在内层：同一张卡上先试 32 位，再退 16 位。
     let mut last: Option<PortError> = None;
@@ -436,7 +444,7 @@ fn open_candidate(candidate: &Candidate) -> PortResult<Opened> {
                 // 拿一个"大概是 48000"的率去开工（第 3 档才接受任何率）。
                 if candidate.exact && negotiated.sample_rate != probe::CAPTURE_WANT_RATE {
                     last = Some(PortError::new(format!(
-                        "这一档没给到 {} 整（给的是 {}）",
+                        "this rung did not get {} (got {})",
                         probe::CAPTURE_WANT_RATE,
                         negotiated.sample_rate
                     )));
@@ -452,37 +460,45 @@ fn open_candidate(candidate: &Candidate) -> PortResult<Opened> {
             Err(e) => last = Some(e),
         }
     }
-    Err(last.unwrap_or_else(|| PortError::new("采样格式阶梯是空的：没谈成任何格式（不该发生）")))
+    Err(last.unwrap_or_else(|| {
+        PortError::new(
+            "the sample-format ladder is empty: no format was negotiated (should not happen)",
+        )
+    }))
 }
 
 /// 在已打开的 PCM 上谈一次硬件参数。**报告的率与声道是 `hw_params` 谈完之后读回来的**，
 /// 不是我们请求的值。
 fn try_hw_params(pcm: &PCM, format: Format) -> PortResult<(CaptureFormat, usize)> {
-    let hwp = HwParams::any(pcm).map_err(|e| map_err("取硬件参数", e))?;
+    let hwp = HwParams::any(pcm).map_err(|e| map_err("get hardware parameters", e))?;
     // `RWInterleaved` 是所有驱动都实现的一种（§2.1 为什么不用 mmap）。
     hwp.set_access(Access::RWInterleaved)
-        .map_err(|e| map_err("设访问方式（交织读写）", e))?;
+        .map_err(|e| map_err("set the access mode (interleaved)", e))?;
     // 声道用 `_near`：麦克风有单声道也有双声道的（`CAPTURE_WANT_CHANNELS` 想要 1），
     // 拿不到 1 就退到设备给的数并**如实回报**——交织多声道由芯 `AudioChunk::to_mono` 混，
     // 比"整张卡都开不了"强。`set_channels` 在这种卡上会直接失败。
     hwp.set_channels_near(probe::CAPTURE_WANT_CHANNELS)
-        .map_err(|e| map_err("设声道数", e))?;
+        .map_err(|e| map_err("set the channel count", e))?;
     // `ValueOr::Nearest`：拿不到 48000 就给设备支持的最近值，我们读回来看是哪个。
     hwp.set_rate(probe::CAPTURE_WANT_RATE, ValueOr::Nearest)
-        .map_err(|e| map_err("设采样率", e))?;
+        .map_err(|e| map_err("set the sample rate", e))?;
     hwp.set_format(format)
-        .map_err(|e| map_err("设采样格式", e))?;
+        .map_err(|e| map_err("set the sample format", e))?;
     pcm.hw_params(&hwp)
-        .map_err(|e| map_err("应用硬件参数", e))?;
+        .map_err(|e| map_err("apply hardware parameters", e))?;
 
-    let sample_rate = hwp.get_rate().map_err(|e| map_err("读回采样率", e))?;
-    let channels = hwp.get_channels().map_err(|e| map_err("读回声道数", e))?;
+    let sample_rate = hwp
+        .get_rate()
+        .map_err(|e| map_err("read back the sample rate", e))?;
+    let channels = hwp
+        .get_channels()
+        .map_err(|e| map_err("read back the channel count", e))?;
     let period_frames = hwp
         .get_period_size()
-        .map_err(|e| map_err("读回周期长度", e))?;
+        .map_err(|e| map_err("read back the period size", e))?;
     if sample_rate == 0 || channels == 0 || period_frames <= 0 {
         return Err(PortError::new(format!(
-            "硬件参数谈成了个没用的组合：率 {sample_rate}、声道 {channels}、周期 {period_frames} 帧"
+            "hardware parameters negotiated to an unusable combination: rate {sample_rate}, channels {channels}, period {period_frames} frames"
         )));
     }
     Ok((
@@ -555,7 +571,7 @@ fn pump<S: Sample>(
             if let Err(e) = poll(pfd, POLL_TIMEOUT_MS) {
                 // 信号打断（EINTR）不是设备故障，接着等一轮；别的错这条流没法继续。
                 if e.errno() != libc::EINTR {
-                    return Err(map_err("等待采集数据（poll）", e));
+                    return Err(map_err("wait for capture data (poll)", e));
                 }
             }
             continue;
@@ -580,9 +596,11 @@ fn pump<S: Sample>(
             Step::Recover | Step::Fatal { .. } => {
                 // 判读只在 `res` 是 `Err` 时给这两支，所以这里拿得到的必然是 `Err`。
                 let Err(e) = res else {
-                    return Err(PortError::new("ALSA 采集：io 结果与判读对不上"));
+                    return Err(PortError::new(
+                        "ALSA capture: io result does not match its interpretation",
+                    ));
                 };
-                after_io_error(pcm, e, pfd, "读取采集数据（snd_pcm_readi）")?;
+                after_io_error(pcm, e, pfd, "read capture data (snd_pcm_readi)")?;
             }
         }
     }
@@ -602,20 +620,20 @@ fn after_io_error(pcm: &PCM, e: alsa::Error, pfd: &mut [pollfd], what: &str) -> 
     match probe::step_after(&Err(e)) {
         Step::Recover => {
             pcm.recover(errno, true)
-                .map_err(|e| map_err("恢复采集流（snd_pcm_recover）", e))?;
+                .map_err(|e| map_err("recover the capture stream (snd_pcm_recover)", e))?;
             pcm.start()
-                .map_err(|e| map_err("重启采集流（snd_pcm_start）", e))?;
+                .map_err(|e| map_err("restart the capture stream (snd_pcm_start)", e))?;
             // 恢复之后 poll 描述符有可能被换掉，原地重填一次（不重新分配）。
             let _ = pcm.fill(pfd);
             Ok(())
         }
         Step::Fatal { func, errno } => Err(PortError::new(format!(
-            "ALSA {what} 失败：{text}（{func}，errno {errno}）"
+            "ALSA {what} failed: {text} ({func}, errno {errno})"
         ))),
         // `step_after` 对 `Err` 只可能给上面两支。落到这里说明判读与调用点脱节了，
         // 报出来而不是当作"成功"继续跑。
         Step::Underrun | Step::Continue { .. } => Err(PortError::new(format!(
-            "ALSA {what} 的错误判读结果对不上：{text}（errno {errno}）"
+            "ALSA {what}: error interpretation mismatch: {text} (errno {errno})"
         ))),
     }
 }
@@ -686,7 +704,7 @@ mod tests {
         })
         .expect_err("ALSA 没有按程序抓音这个能力");
         assert!(
-            loopback.message.contains("PipeWire") && loopback.message.contains("程序"),
+            loopback.message.contains("PipeWire") && loopback.message.contains("per-program"),
             "要说清缺的是什么、该换谁：{}",
             loopback.message
         );

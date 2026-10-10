@@ -28,7 +28,7 @@ impl SecretServiceStore {
 
     fn entry(provider: ModelProvider) -> PortResult<Entry> {
         Entry::new(SERVICE, &user_for(provider))
-            .map_err(|e| PortError::new(format!("连接密钥服务失败：{e}")))
+            .map_err(|e| PortError::new(format!("failed to connect to the secret service: {e}")))
     }
 }
 
@@ -49,7 +49,7 @@ fn load(provider: ModelProvider) -> PortResult<Option<String>> {
         Ok(secret) => Ok(Some(secret)),
         // 没有这条条目 → 还没配过，不是错误。
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(PortError::new(format!("读取密钥失败：{e}"))),
+        Err(e) => Err(PortError::new(format!("failed to read the key: {e}"))),
     }
 }
 
@@ -57,7 +57,7 @@ fn store(provider: ModelProvider, key: &str) -> PortResult<()> {
     let entry = SecretServiceStore::entry(provider)?;
     entry
         .set_password(key)
-        .map_err(|e| PortError::new(format!("写入密钥失败：{e}")))
+        .map_err(|e| PortError::new(format!("failed to write the key: {e}")))
 }
 
 fn clear(provider: ModelProvider) -> PortResult<()> {
@@ -66,7 +66,7 @@ fn clear(provider: ModelProvider) -> PortResult<()> {
         Ok(()) => Ok(()),
         // 本来就空 → 幂等成功。
         Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(PortError::new(format!("删除密钥失败：{e}"))),
+        Err(e) => Err(PortError::new(format!("failed to delete the key: {e}"))),
     }
 }
 

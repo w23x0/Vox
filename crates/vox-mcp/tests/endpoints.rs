@@ -1008,7 +1008,7 @@ fn list_endpoints_reports_both_legs_and_the_control_channels() {
     assert!(listed["endpoints"][1]["unavailable_reason"]
         .as_str()
         .expect("reason")
-        .contains("监听程序"));
+        .contains("program"));
     match backend
         .describe_endpoint(EndpointId::Listen)
         .expect_err("没选程序就派不出清单")

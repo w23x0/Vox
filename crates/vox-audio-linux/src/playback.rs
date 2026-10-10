@@ -74,7 +74,9 @@ impl PlaybackSink for LinuxPlayback {
     fn open(&mut self, device: Option<&str>, source_rate: u32) -> PortResult<u32> {
         self.close();
         if source_rate == 0 {
-            return Err(PortError::new("播放源采样率不能是 0"));
+            return Err(PortError::new(
+                "the playback source sample rate cannot be 0",
+            ));
         }
 
         let shared = Arc::new(Shared {
@@ -92,7 +94,7 @@ impl PlaybackSink for LinuxPlayback {
         let thread = std::thread::Builder::new()
             .name("vox-playback".into())
             .spawn(move || stream_thread(device, thread_shared, report_tx, cmd_rx))
-            .map_err(|e| PortError::new(format!("创建播放线程失败：{e}")))?;
+            .map_err(|e| PortError::new(format!("failed to spawn the playback thread: {e}")))?;
 
         let (rate, channels) = match report_rx.recv_timeout(OPEN_TIMEOUT) {
             Ok(Ok(report)) => report,
@@ -107,13 +109,13 @@ impl PlaybackSink for LinuxPlayback {
                 let _ = cmd_tx.send(Cmd::Quit);
                 let _ = thread.join();
                 return Err(PortError::new(format!(
-                    "打开播放设备超时（等了 {} 秒还没就绪）",
+                    "opening the playback device timed out (not ready after {} s)",
                     OPEN_TIMEOUT.as_secs()
                 )));
             }
             Err(RecvTimeoutError::Disconnected) => {
                 let _ = thread.join();
-                return Err(PortError::new("播放线程意外退出"));
+                return Err(PortError::new("the playback thread exited unexpectedly"));
             }
         };
 
@@ -277,7 +279,9 @@ fn stream_thread(
                 }
                 if let pw::stream::StreamState::Error(message) = new {
                     if let Some(report) = data.report.take() {
-                        let _ = report.send(Err(PortError::new(format!("播放流出错：{message}"))));
+                        let _ = report.send(Err(PortError::new(format!(
+                            "playback stream error: {message}"
+                        ))));
                     }
                 }
             })

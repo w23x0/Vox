@@ -61,10 +61,9 @@ pub fn start(state: &Arc<AppState>) {
                 }
             }));
             if result.is_err() {
-                notify_rt.notify(vox_core::event::Notice::warning(
-                    "设备枚举线程异常退出，设备列表不再自动刷新。可以手动点「重新扫描设备」。"
-                        .to_string(),
-                ));
+                notify_rt.notify(vox_core::event::Notice::warning(vox_core::Msg::new(
+                    vox_core::notice::key::DEVICE_SCAN_CRASHED,
+                )));
             }
         })
         .ok(); // 起不来不致命：设备列表就一直是空的，UI 少几个选项，但应用能用。

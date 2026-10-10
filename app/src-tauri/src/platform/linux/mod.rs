@@ -213,18 +213,13 @@ pub fn virtual_device_status() -> VirtualDeviceStatus {
     }
 }
 
-pub fn startup_notes() -> Vec<String> {
+pub fn startup_notes() -> Vec<vox_core::Msg> {
     let mut notes = Vec::new();
     if !vox_audio_linux::pipewire_available() {
-        notes.push(
-            "没连上 PipeWire：Linux 音频后端以 PipeWire 为前提（主流发行版默认就有）。".to_string(),
-        );
+        notes.push(vox_core::Msg::new(vox_core::notice::key::PIPEWIRE_MISSING));
     }
     if !tray_host_available() {
-        notes.push(format!(
-            "系统托盘不会显示图标：关窗会最小化，不会收进托盘。{}",
-            tray_missing_hint()
-        ));
+        notes.push(vox_core::Msg::new(vox_core::notice::key::TRAY_MISSING));
     }
     notes
 }
@@ -261,11 +256,6 @@ pub fn tray_host_available() -> bool {
         .unwrap_or(false)
 }
 
-/// 托盘看不见时给用户的解释。
-pub fn tray_missing_hint() -> &'static str {
-    "GNOME 默认不带系统托盘，装上 AppIndicator/KStatusNotifier 扩展后图标才会出现。"
-}
-
 fn has_owner(bus: &zbus::blocking::fdo::DBusProxy, name: &str) -> bool {
     let Ok(name) = zbus::names::BusName::try_from(name) else {
         return false;
@@ -285,8 +275,10 @@ mod tests {
     }
 
     #[test]
-    fn hint_is_not_empty() {
-        assert!(!tray_missing_hint().is_empty());
+    fn startup_notes_use_declared_keys() {
+        for note in startup_notes() {
+            assert!(vox_core::notice::ALL_KEYS.contains(&note.key), "{note:?}");
+        }
     }
 
     /// 真机快照（★1 收口）：四位在这台机器上到底报什么、凭的是什么。

@@ -210,9 +210,9 @@ impl ControlPlane {
         if let Some(error) = failure {
             // 起不来不致命：界面、密钥、流水线都不依赖它——记一条 Notice 说清原因；
             // 同一句也在 `Status::error` 里，设置页那一格照实显示。
-            self.runtime.notify(Notice::warning(format!(
-                "控制面没起来（Agent 连不上）：{error}"
-            )));
+            self.runtime.notify(Notice::warning(
+                vox_core::Msg::new(vox_core::notice::key::CONTROL_PLANE_DOWN).detail(error),
+            ));
         }
     }
 

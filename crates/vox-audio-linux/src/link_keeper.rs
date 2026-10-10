@@ -50,7 +50,7 @@ impl LinkKeeper {
         let thread = thread::Builder::new()
             .name("vox-link".into())
             .spawn(move || keeper_thread(our_node_name, targets, cmd_rx))
-            .map_err(|e| PortError::new(format!("创建链路守护线程失败：{e}")))?;
+            .map_err(|e| PortError::new(format!("failed to spawn the link keeper thread: {e}")))?;
         Ok(Self {
             cmd,
             thread: Some(thread),
@@ -131,12 +131,12 @@ fn link_all(
     }
     let Some(our_node) = our_node else {
         return Err(PortError::new(format!(
-            "等采集流「{our_node_name}」出现在图里超时"
+            "timed out waiting for capture stream '{our_node_name}' to appear in the graph"
         )));
     };
     if our_inputs.is_empty() {
         return Err(PortError::new(format!(
-            "等采集流「{our_node_name}」（节点 {our_node}）的输入端口超时"
+            "timed out waiting for the input port of capture stream '{our_node_name}' (node {our_node})"
         )));
     }
 

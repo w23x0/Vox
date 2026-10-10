@@ -27,7 +27,7 @@ type AppState =
 
 export function AboutPage() {
   const t = useT();
-  const { uiLang } = useLang();
+  const { uiLang, msg } = useLang();
   const { api } = useStore();
   const toast = useToast();
   const { version } = useAppInfo();
@@ -65,7 +65,7 @@ export function AboutPage() {
       }));
     } catch (error: unknown) {
       if (!silent) {
-        toast("danger", t("about.catalogUpdateFailed", { error: String(error) }));
+        toast("danger", t("about.catalogUpdateFailed", { error: msg(error) }));
       }
       setRows((r) => ({ ...r, [provider]: { kind: "failed" } }));
     }
@@ -80,7 +80,7 @@ export function AboutPage() {
       toast("success", t("about.catalogApplied", { at: res.verified }));
       setRows((r) => ({ ...r, [provider]: { kind: "applied", last: res.verified } }));
     } catch (error: unknown) {
-      toast("danger", t("about.catalogUpdateFailed", { error: String(error) }));
+      toast("danger", t("about.catalogUpdateFailed", { error: msg(error) }));
       setRows((r) => ({ ...r, [provider]: { kind: "idle" } }));
     }
   };
@@ -94,7 +94,7 @@ export function AboutPage() {
       setAppState(latest ? { kind: "available", version: latest } : { kind: "upToDate" });
     } catch (error: unknown) {
       if (!silent) {
-        toast("danger", t("about.appInstallFailed", { error: String(error) }));
+        toast("danger", t("about.appInstallFailed", { error: msg(error) }));
       }
       setAppState({ kind: "failed" });
     }
@@ -117,7 +117,7 @@ export function AboutPage() {
       toast("success", t("about.appInstallDone"));
       setAppState({ kind: "upToDate" });
     } catch (error: unknown) {
-      toast("danger", t("about.appInstallFailed", { error: String(error) }));
+      toast("danger", t("about.appInstallFailed", { error: msg(error) }));
       setAppState({ kind: "failed" });
     }
   };

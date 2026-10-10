@@ -75,12 +75,10 @@ pub fn start(state: &Arc<AppState>) -> CapabilityStatus {
     let overlay = match crate::platform::spawn_overlay(&settings.subtitle, geometry_callback) {
         Ok(o) => o,
         Err(failure) => {
-            state
-                .runtime
-                .notify(vox_core::event::Notice::warning(format!(
-                    "悬浮字幕窗未能启动：{}",
-                    failure.error
-                )));
+            state.runtime.notify(vox_core::event::Notice::warning(
+                vox_core::Msg::new(vox_core::notice::key::OVERLAY_FAILED)
+                    .detail(failure.error.message),
+            ));
             // 没窗就没有帧线程可言：位只能跟着建窗失败的原因走。
             return captions_outcome(Err(failure.reason), false);
         }
@@ -97,17 +95,19 @@ pub fn start(state: &Arc<AppState>) -> CapabilityStatus {
                 subtitle_loop(frame_rt, overlay)
             }));
             if result.is_err() {
-                notify_rt.notify(vox_core::event::Notice::error(
-                    "字幕刷新线程异常退出，悬浮窗内容不再更新。重启应用可恢复。".to_string(),
-                ));
+                notify_rt.notify(vox_core::event::Notice::error(vox_core::Msg::new(
+                    vox_core::notice::key::OVERLAY_THREAD_CRASHED,
+                )));
             }
         })
         .ok();
     let frame_thread_up = frame_thread.is_some();
     if !frame_thread_up {
-        state.runtime.notify(vox_core::event::Notice::warning(
-            "字幕刷新线程未能启动，悬浮窗不会更新内容".to_string(),
-        ));
+        state
+            .runtime
+            .notify(vox_core::event::Notice::warning(vox_core::Msg::new(
+                vox_core::notice::key::OVERLAY_THREAD_MISSING,
+            )));
     }
     *FRAME_THREAD.lock() = frame_thread;
 

@@ -48,7 +48,9 @@ pub(crate) struct WaveInfo {
 /// `WAVE_FORMAT_EXTENSIBLE`，其后必须真的跟着扩展字段（`cbSize >= 22`）。
 pub(crate) unsafe fn parse_format(fmt: *const WAVEFORMATEX) -> PortResult<WaveInfo> {
     if fmt.is_null() {
-        return Err(PortError::new("设备没有返回音频格式（空指针）"));
+        return Err(PortError::new(
+            "the device returned no audio format (null pointer)",
+        ));
     }
     // SAFETY: 调用方保证指针合法，这里只读基础字段。
     // WAVEFORMATEX 是 packed(1)，字段必须先拷成局部变量才能取引用（比如塞进 format!）。
@@ -63,7 +65,7 @@ pub(crate) unsafe fn parse_format(fmt: *const WAVEFORMATEX) -> PortResult<WaveIn
     let kind = if tag == WAVE_FORMAT_EXTENSIBLE {
         if (cb_size as usize) < 22 {
             return Err(PortError::new(format!(
-                "设备返回的扩展格式头不完整（cbSize={cb_size}）"
+                "the device returned an incomplete extended format header (cbSize={cb_size})"
             )));
         }
         // SAFETY: wFormatTag 为 EXTENSIBLE 且 cbSize >= 22，按约定后面就是
@@ -76,7 +78,7 @@ pub(crate) unsafe fn parse_format(fmt: *const WAVEFORMATEX) -> PortResult<WaveIn
             kind_from_bits(bits)?
         } else {
             return Err(PortError::new(format!(
-                "设备用的是不认识的音频子格式（{sub:?}），只支持 PCM 和浮点"
+                "the device uses an unknown audio sub-format ({sub:?}); only PCM and float are supported"
             )));
         }
     } else if tag == WAVE_FORMAT_IEEE_FLOAT {
@@ -85,13 +87,13 @@ pub(crate) unsafe fn parse_format(fmt: *const WAVEFORMATEX) -> PortResult<WaveIn
         kind_from_bits(bits)?
     } else {
         return Err(PortError::new(format!(
-            "设备用的是不认识的音频格式标签（{tag}），只支持 PCM 和浮点"
+            "the device uses an unknown audio format tag ({tag}); only PCM and float are supported"
         )));
     };
 
     if channels == 0 || sample_rate == 0 {
         return Err(PortError::new(format!(
-            "设备返回的格式不合理：{channels} 声道 / {sample_rate} Hz"
+            "the device returned an implausible format: {channels} channels / {sample_rate} Hz"
         )));
     }
 
@@ -115,7 +117,7 @@ fn kind_from_bits(bits: u16) -> PortResult<SampleKind> {
         24 => Ok(SampleKind::I24),
         32 => Ok(SampleKind::I32),
         other => Err(PortError::new(format!(
-            "设备用的是 {other} 位整数样本，暂不支持（只支持 16/24/32 位和浮点）"
+            "the device uses {other}-bit integer samples, which are not supported (only 16/24/32-bit and float)"
         ))),
     }
 }

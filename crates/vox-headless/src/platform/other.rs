@@ -26,7 +26,7 @@ pub fn host_kind() -> HostKind {
 /// 而不是留一个"起来了但什么都干不了"的进程。
 pub fn platform() -> PortResult<Platform> {
     Err(PortError::new(
-        "无屏档只在 Linux 上构建：这个二进制需要 PipeWire（vox-audio-linux）",
+        "the headless build only works on Linux: this binary needs PipeWire (vox-audio-linux)",
     ))
 }
 
@@ -52,8 +52,10 @@ pub fn host_facts() -> HostFacts {
     }
 }
 
-pub fn startup_notes() -> Vec<String> {
-    vec!["这个构建要在 Linux（ARM64 小主板那类）上跑：非 Linux 宿主没有音频后端。".to_string()]
+pub fn startup_notes() -> Vec<vox_core::Msg> {
+    vec![vox_core::Msg::new(
+        vox_core::notice::key::HEADLESS_NEEDS_LINUX,
+    )]
 }
 
 #[cfg(test)]

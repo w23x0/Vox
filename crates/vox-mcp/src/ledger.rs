@@ -139,10 +139,12 @@ impl Ledger for Runtime {
 
     fn pipeline_error(&self, endpoint: EndpointId) -> Option<String> {
         let snapshot = self.snapshot();
+        // Agent 读的是英文（同 `catalog/notices.json` 的 en 文案，原文接在后面）。
         match endpoints::pipeline(endpoint) {
             vox_core::event::Pipeline::Speak => snapshot.speak.last_error,
             vox_core::event::Pipeline::Listen => snapshot.listen.last_error,
         }
+        .map(|msg| msg.render_en())
     }
 
     fn start(&self, endpoint: EndpointId) {

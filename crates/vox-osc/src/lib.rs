@@ -42,9 +42,9 @@ impl OscClient {
     /// （VRChat 官方默认 9000）。
     pub fn new(port: u16) -> Result<Self, String> {
         let udp = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
-            .map_err(|e| format!("绑定本地 UDP 失败：{e}"))?;
+            .map_err(|e| format!("failed to bind the local UDP socket: {e}"))?;
         udp.set_nonblocking(true)
-            .map_err(|e| format!("设置 UDP 非阻塞失败：{e}"))?;
+            .map_err(|e| format!("failed to set the UDP socket non-blocking: {e}"))?;
         Ok(Self {
             udp,
             port,
@@ -90,7 +90,7 @@ impl OscClient {
         self.udp
             .send_to(&frame, (Ipv4Addr::LOCALHOST, self.port))
             .map(|_| ())
-            .map_err(|e| format!("发送 OSC 到 127.0.0.1:{} 失败：{e}", self.port))
+            .map_err(|e| format!("failed to send OSC to 127.0.0.1:{}: {e}", self.port))
     }
 
     /// 发 `/chatbox/input` 把一段文字写进 VRChat 聊天框。

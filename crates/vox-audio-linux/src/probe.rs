@@ -342,7 +342,7 @@ pub(crate) fn roundtrip(
 
 /// PipeWire 的错误翻成中文，带上原始描述（用户看到的是这个字符串）。
 pub(crate) fn map_err(err: pw::Error) -> PortError {
-    PortError::new(format!("PipeWire 出错：{err}"))
+    PortError::new(format!("PipeWire error: {err}"))
 }
 
 /// 我们向图请求的格式：48 kHz 立体声 f32。
@@ -375,10 +375,11 @@ pub(crate) fn connect_request_format(
             properties: audio_info.into(),
         }),
     )
-    .map_err(|e| PortError::new(format!("构造音频格式失败：{e}")))?
+    .map_err(|e| PortError::new(format!("failed to build the audio format: {e}")))?
     .0
     .into_inner();
-    let pod = Pod::from_bytes(&values).ok_or_else(|| PortError::new("音频格式序列化结果不合法"))?;
+    let pod = Pod::from_bytes(&values)
+        .ok_or_else(|| PortError::new("the serialized audio format is invalid"))?;
     let mut params = [pod];
 
     stream

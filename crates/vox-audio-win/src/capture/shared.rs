@@ -169,10 +169,12 @@ pub(crate) fn await_start(
     match rx.recv_timeout(START_TIMEOUT) {
         Ok(report) => report,
         Err(RecvTimeoutError::Timeout) => Err(PortError::new(format!(
-            "{what}启动超时（等了 {} 秒还没就绪）",
+            "{what} start timed out (not ready after {} s)",
             START_TIMEOUT.as_secs()
         ))),
-        Err(RecvTimeoutError::Disconnected) => Err(PortError::new(format!("{what}线程意外退出"))),
+        Err(RecvTimeoutError::Disconnected) => Err(PortError::new(format!(
+            "the {what} thread exited unexpectedly"
+        ))),
     }
 }
 

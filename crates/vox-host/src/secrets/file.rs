@@ -133,20 +133,20 @@ fn read_file(path: &Path) -> PortResult<BTreeMap<String, String>> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
         Err(error) => {
             return Err(PortError::new(format!(
-                "读密钥文件失败（{}）：{error}",
+                "failed to read the key file ({}): {error}",
                 path.display()
             )));
         }
     };
     let document: Value = serde_json::from_str(&text).map_err(|error| {
         PortError::new(format!(
-            "密钥文件不是合法的 JSON（{}）：{error}",
+            "the key file is not valid JSON ({}): {error}",
             path.display()
         ))
     })?;
     let Some(object) = document.as_object() else {
         return Err(PortError::new(format!(
-            "密钥文件应该是一个对象（服务商 → 密钥）：{}",
+            "the key file should be an object (provider -> key): {}",
             path.display()
         )));
     };
@@ -159,13 +159,17 @@ fn read_file(path: &Path) -> PortResult<BTreeMap<String, String>> {
 /// 原子写 + 0600。**先写 `.tmp` 再 rename**：断电不会留半截 JSON（无屏盒子直接断电是常态）。
 fn write_file(path: &Path, keys: &BTreeMap<String, String>) -> PortResult<()> {
     let json = serde_json::to_string_pretty(keys)
-        .map_err(|error| PortError::new(format!("密钥序列化失败：{error}")))?;
+        .map_err(|error| PortError::new(format!("failed to serialize the keys: {error}")))?;
     let tmp = path.with_extension("json.tmp");
-    write_private(&tmp, &json)
-        .map_err(|error| PortError::new(format!("写密钥文件失败（{}）：{error}", tmp.display())))?;
+    write_private(&tmp, &json).map_err(|error| {
+        PortError::new(format!(
+            "failed to write the key file ({}): {error}",
+            tmp.display()
+        ))
+    })?;
     fs::rename(&tmp, path).map_err(|error| {
         PortError::new(format!(
-            "密钥文件改名失败（{} → {}）：{error}",
+            "failed to rename the key file ({} -> {}): {error}",
             tmp.display(),
             path.display()
         ))

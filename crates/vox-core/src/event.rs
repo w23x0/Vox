@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use crate::gate::GateStatus;
 use crate::latency::LatencySnapshot;
+use crate::notice::Msg;
 use crate::settings::Settings;
 use crate::subtitle::Track;
 use crate::usage::UsageLedger;
@@ -82,36 +83,38 @@ pub enum Severity {
     Error,
 }
 
-/// 一条要给用户看的提示。
+/// 一条要给用户看的提示。文案不在这里：`msg` 是稳定 key + 参数 + 原文，由界面按语言渲染
+/// （见 [`crate::notice`]）。线上形状 `{ severity, key, params, detail?, pipeline }`。
 #[derive(Debug, Clone, Serialize)]
 pub struct Notice {
     pub severity: Severity,
-    pub text: String,
+    #[serde(flatten)]
+    pub msg: Msg,
     /// 哪条流水线引起的；`None` 表示全局。
     pub pipeline: Option<Pipeline>,
 }
 
 impl Notice {
-    pub fn info(text: impl Into<String>) -> Self {
+    pub fn info(msg: Msg) -> Self {
         Self {
             severity: Severity::Info,
-            text: text.into(),
+            msg,
             pipeline: None,
         }
     }
 
-    pub fn warning(text: impl Into<String>) -> Self {
+    pub fn warning(msg: Msg) -> Self {
         Self {
             severity: Severity::Warning,
-            text: text.into(),
+            msg,
             pipeline: None,
         }
     }
 
-    pub fn error(text: impl Into<String>) -> Self {
+    pub fn error(msg: Msg) -> Self {
         Self {
             severity: Severity::Error,
-            text: text.into(),
+            msg,
             pipeline: None,
         }
     }
@@ -204,9 +207,29 @@ mod tests {
 
     #[test]
     fn notice_can_be_attributed_to_a_pipeline() {
-        let n = Notice::error("连不上").on(Pipeline::Listen);
+        let n = Notice::error(Msg::new(crate::notice::key::CONNECT_FAILED)).on(Pipeline::Listen);
         assert_eq!(n.pipeline, Some(Pipeline::Listen));
         assert_eq!(n.severity, Severity::Error);
-        assert!(Notice::info("x").pipeline.is_none());
+        assert!(Notice::info(Msg::new(crate::notice::key::API_KEY_MISSING))
+            .pipeline
+            .is_none());
+    }
+
+    /// 线上形状：`key / params / detail` 平铺在通知上，没有 `text`。
+    #[test]
+    fn notice_is_serialized_flat_with_key_params_detail() {
+        let json = serde_json::to_value(Event::Notice {
+            notice: Notice::warning(
+                Msg::new(crate::notice::key::PLAYBACK_OPEN_FAILED).detail("os error 16"),
+            )
+            .on(Pipeline::Speak),
+        })
+        .unwrap();
+        let notice = &json["notice"];
+        assert_eq!(notice["severity"], "warning");
+        assert_eq!(notice["key"], "notice.playbackOpenFailed");
+        assert_eq!(notice["detail"], "os error 16");
+        assert_eq!(notice["pipeline"], "speak");
+        assert!(notice.get("text").is_none(), "{notice}");
     }
 }

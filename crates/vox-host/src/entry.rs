@@ -43,7 +43,7 @@ pub struct HostPorts {
     pub playback: PlaybackFactory,
     pub registry: Arc<dyn DeviceRegistry>,
     /// 启动期要告诉用户的话（进 `Notice` / journal，不弹窗）。
-    pub startup_notes: fn() -> Vec<String>,
+    pub startup_notes: fn() -> Vec<vox_core::Msg>,
 }
 
 impl HostPorts {

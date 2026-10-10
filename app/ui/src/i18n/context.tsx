@@ -11,6 +11,7 @@ import { createContext, useContext, useEffect, useMemo, type ReactNode } from "r
 import en from "./en";
 import ja from "./ja";
 import zh from "./zh";
+import { renderError } from "./notice";
 import { UI_LANG_HTML, type Dict, type TParams, type UiLang } from "./types";
 
 /** 把嵌套字典展平成点分 key → 文案，运行时简单查找。 */
@@ -60,6 +61,8 @@ export function translate(
 export interface I18nState {
   uiLang: UiLang;
   t: (key: string, params?: TParams) => string;
+  /** 渲染后端消息 / 捕获到的错误：`{key, params, detail}` 按当前语言出文案，其余转字符串。 */
+  msg: (value: unknown) => string;
 }
 
 const I18nContext = createContext<I18nState | null>(null);
@@ -89,7 +92,11 @@ export function LanguageProvider({
   }, [lang]);
 
   const value = useMemo<I18nState>(
-    () => ({ uiLang: lang, t: (key, params) => translate(lang, key, params) }),
+    () => ({
+      uiLang: lang,
+      t: (key, params) => translate(lang, key, params),
+      msg: (value) => renderError(lang, value),
+    }),
     [lang],
   );
 
@@ -106,4 +113,9 @@ export function useLang(): I18nState {
 /** 便捷短名：`const { t } = useT();`。 */
 export function useT(): I18nState["t"] {
   return useLang().t;
+}
+
+/** 渲染后端消息（通知、命令的 `Err`）的函数：`const msg = useMsg();`。 */
+export function useMsg(): I18nState["msg"] {
+  return useLang().msg;
 }

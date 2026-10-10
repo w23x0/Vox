@@ -169,13 +169,15 @@ pub(crate) fn open_process_loopback(pid: u32, include_tree: bool) -> PortResult<
     // 等回调。带超时，不能无限等——目标进程在激活途中退出时回调可能不来。
     {
         let (lock, cv) = &*done;
-        let mut guard = lock
-            .lock()
-            .map_err(|_| PortError::new("进程环回激活状态锁损坏"))?;
+        let mut guard = lock.lock().map_err(|_| {
+            PortError::new("the process-loopback activation state lock is poisoned")
+        })?;
         while !*guard {
-            let (next, timeout) = cv
-                .wait_timeout(guard, ACTIVATE_TIMEOUT)
-                .map_err(|_| PortError::new("等待进程环回激活时锁损坏"))?;
+            let (next, timeout) = cv.wait_timeout(guard, ACTIVATE_TIMEOUT).map_err(|_| {
+                PortError::new(
+                    "the lock was poisoned while waiting for process-loopback activation",
+                )
+            })?;
             guard = next;
             if timeout.timed_out() && !*guard {
                 // 超时说明激活还挂着。这时候把 params 释放掉，系统那边可能还
@@ -183,7 +185,7 @@ pub(crate) fn open_process_loopback(pid: u32, include_tree: bool) -> PortResult<
                 // 只有本来就出错的这条路会漏，正常路径照常释放。
                 std::mem::forget(params);
                 return Err(PortError::new(format!(
-                    "进程环回激活超时（等了 {} 秒，目标 PID {pid} 可能已退出）",
+                    "process-loopback activation timed out (after {} s; target PID {pid} may have exited)",
                     ACTIVATE_TIMEOUT.as_secs()
                 )));
             }
@@ -201,7 +203,9 @@ pub(crate) fn open_process_loopback(pid: u32, include_tree: bool) -> PortResult<
         return Err(loopback_activation_error(activate_hr, pid));
     }
     let client: IAudioClient = interface
-        .ok_or_else(|| PortError::new("进程环回激活成功但没给回音频接口"))?
+        .ok_or_else(|| {
+            PortError::new("process-loopback activation succeeded but returned no audio interface")
+        })?
         .cast()
         .ctx("进程环回激活结果不是音频接口")?;
 

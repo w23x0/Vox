@@ -62,12 +62,12 @@ impl SecretStore for DpapiSecretStore {
         let tmp_path = self.path.with_extension("tmp");
         if let Some(parent) = tmp_path.parent() {
             fs::create_dir_all(parent)
-                .map_err(|e| PortError::new(format!("创建密钥目录失败: {e}")))?;
+                .map_err(|e| PortError::new(format!("failed to create the key directory: {e}")))?;
         }
         fs::write(&tmp_path, &ciphertext)
-            .map_err(|e| PortError::new(format!("写入临时密钥文件失败: {e}")))?;
+            .map_err(|e| PortError::new(format!("failed to write the temporary key file: {e}")))?;
         fs::rename(&tmp_path, &self.path)
-            .map_err(|e| PortError::new(format!("重命名密钥文件失败: {e}")))?;
+            .map_err(|e| PortError::new(format!("failed to rename the key file: {e}")))?;
 
         tracing::debug!("API 密钥已加密存储（{} 字节密文）", ciphertext.len());
         Ok(())
@@ -79,7 +79,7 @@ impl SecretStore for DpapiSecretStore {
             Ok(data) => data,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => {
-                return Err(PortError::new(format!("读取密钥文件失败: {e}")));
+                return Err(PortError::new(format!("failed to read the key file: {e}")));
             }
         };
 
@@ -116,7 +116,9 @@ impl SecretStore for DpapiSecretStore {
                 Ok(())
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(PortError::new(format!("删除密钥文件失败: {e}"))),
+            Err(e) => Err(PortError::new(format!(
+                "failed to delete the key file: {e}"
+            ))),
         }
     }
 
@@ -137,11 +139,13 @@ fn store_secret(path: &PathBuf, key: &str) -> PortResult<()> {
     let ciphertext = dpapi_protect(key.as_bytes())?;
     let tmp_path = path.with_extension("tmp");
     if let Some(parent) = tmp_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| PortError::new(format!("创建密钥目录失败: {e}")))?;
+        fs::create_dir_all(parent)
+            .map_err(|e| PortError::new(format!("failed to create the key directory: {e}")))?;
     }
     fs::write(&tmp_path, &ciphertext)
-        .map_err(|e| PortError::new(format!("写入临时密钥文件失败: {e}")))?;
-    fs::rename(&tmp_path, path).map_err(|e| PortError::new(format!("重命名密钥文件失败: {e}")))?;
+        .map_err(|e| PortError::new(format!("failed to write the temporary key file: {e}")))?;
+    fs::rename(&tmp_path, path)
+        .map_err(|e| PortError::new(format!("failed to rename the key file: {e}")))?;
     Ok(())
 }
 
@@ -149,7 +153,7 @@ fn load_secret(path: &PathBuf) -> PortResult<Option<String>> {
     let ciphertext = match fs::read(path) {
         Ok(data) => data,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(e) => return Err(PortError::new(format!("读取密钥文件失败: {e}"))),
+        Err(e) => return Err(PortError::new(format!("failed to read the key file: {e}"))),
     };
     let plaintext = match dpapi_unprotect(&ciphertext) {
         Ok(bytes) => bytes,
@@ -172,7 +176,9 @@ fn clear_secret(path: &PathBuf) -> PortResult<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(PortError::new(format!("删除密钥文件失败: {e}"))),
+        Err(e) => Err(PortError::new(format!(
+            "failed to delete the key file: {e}"
+        ))),
     }
 }
 
@@ -209,7 +215,7 @@ fn dpapi_protect(plaintext: &[u8]) -> PortResult<Vec<u8>> {
             CRYPTPROTECT_UI_FORBIDDEN, // 后台进程，不弹 UI
             &mut data_out,
         )
-        .map_err(|e| PortError::new(format!("CryptProtectData 失败: {e}")))?;
+        .map_err(|e| PortError::new(format!("CryptProtectData failed: {e}")))?;
     }
 
     // 把 LocalAlloc 出来的密文复制到 Vec，然后 LocalFree。
@@ -252,7 +258,7 @@ fn dpapi_unprotect(ciphertext: &[u8]) -> PortResult<Vec<u8>> {
             CRYPTPROTECT_UI_FORBIDDEN,
             &mut data_out,
         )
-        .map_err(|e| PortError::new(format!("CryptUnprotectData 失败: {e}")))?;
+        .map_err(|e| PortError::new(format!("CryptUnprotectData failed: {e}")))?;
     }
 
     let len = data_out.cbData as usize;

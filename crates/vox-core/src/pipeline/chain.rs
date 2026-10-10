@@ -160,7 +160,7 @@ pub(crate) enum DenoiseSkip {
     /// 不发 `Notice`。
     Rate(u32),
     /// 降噪器工厂起不来。今天：`tracing::warn!` **加**
-    /// `Notice::warning("降噪启动失败，本次已关闭").on(pipeline)`。
+    /// `Notice::warning(DENOISE_DISABLED).on(pipeline)`。
     ///
     /// 带原始错误消息：那句 `tracing::warn!` 里 `error = %err` 的内容要逐字保留
     /// （S4-B 稿 §9.2），丢了消息就保不住。
@@ -345,7 +345,7 @@ impl Chain {
             let kind = op.kind();
             if !Composition::OP_ORDER.contains(&kind) {
                 return Err(PortError::new(format!(
-                    "清单第 {} 条算子 `{kind}` 不在规定顺序 {:?} 里。",
+                    "op #{} `{kind}` is not in the allowed order {:?}",
                     at + 1,
                     Composition::OP_ORDER
                 )));
@@ -354,7 +354,7 @@ impl Chain {
             // "运行期扩容"——那条路必然在热路径上分配。
             if at >= MAX_OPS {
                 return Err(PortError::new(format!(
-                    "清单有 {} 条算子，链上限是 {MAX_OPS} 条。",
+                    "the plan has {} ops; the chain holds at most {MAX_OPS}",
                     ops.len()
                 )));
             }
@@ -392,8 +392,8 @@ impl Chain {
                     // 链上做另一套"，重采样会换错率。
                     if from_rate != rate {
                         return Err(PortError::new(format!(
-                            "清单里的 resample 入口是 {from_rate}，但链上这一步的音频是 {rate}\
-                             （它要换到 {to_rate}）。清单与实际采集/会话格式对不上。"
+                            "plan says resample input is {from_rate}, but the audio at this step is {rate} \
+                             (target {to_rate}): the plan does not match the real capture/session format"
                         )));
                     }
                     stages.push(ChainStage::Resample {
@@ -416,7 +416,7 @@ impl Chain {
         // ——下游的降噪 / 门会拿到交织样本。建链期就挡下来。
         if capture.channels > 1 && !has_mono {
             return Err(PortError::new(format!(
-                "采集是 {} 声道，清单里必须装 mono。",
+                "capture has {} channels; the plan must include a mono op",
                 capture.channels
             )));
         }

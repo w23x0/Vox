@@ -275,7 +275,8 @@ pub(crate) fn resolve_default_addr(side: Direction) -> Option<HwAddr> {
 /// 枚举一个方向上的设备条目。**还没对号、还没排序**（那两步是纯函数）。
 fn entries_of(side: Direction) -> PortResult<Vec<DeviceEntry>> {
     let (addrs, longnames) = card_tables();
-    let hints = HintIter::new_str(None, PCM_IFACE).map_err(|e| map_err("枚举 PCM hint", e))?;
+    let hints =
+        HintIter::new_str(None, PCM_IFACE).map_err(|e| map_err("enumerate PCM hints", e))?;
     let mut out = Vec::new();
     for hint in hints {
         let Some(id) = hint.name.as_deref() else {

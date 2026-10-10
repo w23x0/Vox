@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { hostBit } from "../capabilities";
 import { CapabilityNote } from "../components/Capability";
-import { useT } from "../i18n/context";
+import { useLang } from "../i18n/context";
 import { useStore } from "../store";
 import { SettingsItem, Toggle } from "../ui/controls";
 import { IconPlay, IconSend, IconStop } from "../ui/icons";
@@ -14,7 +14,7 @@ const DEFAULT_PORT = 9000;
 export function VrchatPage() {
   const { api, settings, patch, snapshot } = useStore();
   const toast = useToast();
-  const t = useT();
+  const { t, msg } = useLang();
   /** 头显字幕这一位：位为假时不渲染 SteamVR 开关（R5）。 */
   const vrCaptions = hostBit(snapshot, "vr_captions");
 
@@ -43,7 +43,7 @@ export function VrchatPage() {
         toast("success", t("vrchat.started"));
       }
     } catch (e: unknown) {
-      toast("danger", running ? t("vrchat.stopFailed", { error: String(e) }) : t("vrchat.startFailed", { error: String(e) }));
+      toast("danger", running ? t("vrchat.stopFailed", { error: msg(e) }) : t("vrchat.startFailed", { error: msg(e) }));
     } finally {
       setBusy(false);
     }
@@ -60,7 +60,7 @@ export function VrchatPage() {
       await api.oscUpdate(nextChatbox, nextAvatar, nextParam);
       toast("success", t("vrchat.updated"));
     } catch (e: unknown) {
-      toast("danger", t("vrchat.updateFailed", { error: String(e) }));
+      toast("danger", t("vrchat.updateFailed", { error: msg(e) }));
     }
   }
 
@@ -90,7 +90,7 @@ export function VrchatPage() {
       await api.oscSendChatbox("Vox test message");
       toast("success", t("vrchat.sent"));
     } catch (e: unknown) {
-      toast("danger", t("vrchat.sendFailed", { error: String(e) }));
+      toast("danger", t("vrchat.sendFailed", { error: msg(e) }));
     } finally {
       setTesting(false);
     }

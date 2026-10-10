@@ -13,6 +13,7 @@ use crate::composition::{
     Composition, EdgeSource, Input, Op, Output, PlaybackRole, RateRef, SessionSpec,
     COMPOSITION_SCHEMA_VERSION,
 };
+use crate::notice::{key, Msg};
 use crate::pipeline::INPUT_BLOCK_MS;
 use crate::ports::PortError;
 use crate::runtime::SessionConfig;
@@ -32,10 +33,12 @@ pub(crate) fn composition(
     facts: &HostFacts,
 ) -> Result<Composition, PortError> {
     // 没选程序就没法抓环回。账本在 `start()` 里已经挡了一道，这里是兜底。
-    let target = config
-        .loopback_target
-        .as_ref()
-        .ok_or_else(|| PortError::new("还没选择监听程序。"))?;
+    let target = config.loopback_target.as_ref().ok_or_else(|| {
+        PortError::user(
+            Msg::new(key::LISTEN_TARGET_MISSING),
+            "no program picked to listen to",
+        )
+    })?;
 
     let bits = effective(facts);
     let mut inputs = Vec::new();
@@ -155,9 +158,8 @@ mod tests {
             Ok(_) => panic!("没选程序就该报错"),
         };
         assert!(
-            err.message.contains("程序"),
-            "报错要说人话：{}",
-            err.message
+            err.user.as_ref().map(|u| u.key) == Some(key::LISTEN_TARGET_MISSING),
+            "报错要带用户能读的 key：{err:?}"
         );
     }
 

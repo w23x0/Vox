@@ -95,7 +95,9 @@ impl PlaybackSink for AlsaPlayback {
         // 重复 open 视为换目标：先把上一条流收干净，否则两条流同时往环里灌。
         self.close();
         if source_rate == 0 {
-            return Err(PortError::new("播放源采样率不能是 0"));
+            return Err(PortError::new(
+                "the playback source sample rate cannot be 0",
+            ));
         }
 
         let (report_tx, report_rx) = mpsc::channel::<PortResult<Opened>>();
@@ -103,7 +105,7 @@ impl PlaybackSink for AlsaPlayback {
         let thread = std::thread::Builder::new()
             .name("vox-playback".into())
             .spawn(move || playback_thread(device, source_rate, report_tx))
-            .map_err(|e| PortError::new(format!("创建播放线程失败：{e}")))?;
+            .map_err(|e| PortError::new(format!("failed to spawn the playback thread: {e}")))?;
 
         let opened = match report_rx.recv_timeout(OPEN_TIMEOUT) {
             // 谈成了：线程接着跑写循环，句柄留给 `close()` 去收。
@@ -115,7 +117,9 @@ impl PlaybackSink for AlsaPlayback {
             }
             Err(RecvTimeoutError::Disconnected) => {
                 let _ = thread.join();
-                return Err(PortError::new("播放线程意外退出（协商还没谈完就没了）"));
+                return Err(PortError::new(
+                    "the playback thread exited unexpectedly (before negotiation finished)",
+                ));
             }
             Err(RecvTimeoutError::Timeout) => {
                 // **不 join**：此时线程可能正卡在驱动的一次 open / hw_params 里，那不是
@@ -123,7 +127,7 @@ impl PlaybackSink for AlsaPlayback {
                 // 它的报告通道已经没有接收方，协商一有结论它就自己退出并把 PCM 关掉；
                 // 这里直接 return，`thread` 随之析构（脱离等待）。
                 return Err(PortError::new(format!(
-                    "打开播放设备超时（等了 {} 秒还没就绪）",
+                    "opening the playback device timed out (not ready after {} s)",
                     OPEN_TIMEOUT.as_secs()
                 )));
             }
@@ -343,7 +347,7 @@ fn playback_thread(device: Option<String>, wanted: u32, report: mpsc::Sender<Por
 /// 写死的 24 kHz：调用方要是哪天推 48 kHz 上来，设备给得起就直通，给不起就装重采样器，
 /// 白插一次 24 kHz 中转是纯粹的浪费。
 fn negotiate(device: Option<&str>, wanted_rate: u32) -> PortResult<Negotiated> {
-    let mut last = String::from("没有试过任何一档");
+    let mut last = String::from("no rung was tried");
     for attempt in rate_ladder(wanted_rate) {
         let name = device_for(device, &attempt);
         match open_attempt(&name, &attempt, wanted_rate) {
@@ -356,7 +360,7 @@ fn negotiate(device: Option<&str>, wanted_rate: u32) -> PortResult<Negotiated> {
         }
     }
     Err(PortError::new(format!(
-        "打不开播放设备「{}」：{} Hz / {} 声道的协商三档全灭（最后一条：{last}）",
+        "cannot open playback device '{}': all three negotiation rungs failed at {} Hz / {} channels (last: {last})",
         device.unwrap_or("default"),
         wanted_rate,
         PLAYBACK_WANT_CHANNELS
@@ -385,13 +389,13 @@ fn tier_accepts(attempt: &Attempt, rate: u32, wanted_rate: u32) -> bool {
 fn open_attempt(name: &str, attempt: &Attempt, wanted_rate: u32) -> PortResult<Negotiated> {
     // 非阻塞打开（§5.3）：阻塞模式下 `writei` 会一直睡，Rust 侧的 stop 标志叫不醒它。
     let pcm = PCM::new(name, Direction::Playback, true)
-        .map_err(|e| map_err(&format!("打开 PCM「{name}」"), e))?;
-    let hwp = HwParams::any(&pcm).map_err(|e| map_err("取硬件参数", e))?;
+        .map_err(|e| map_err(&format!("open PCM '{name}'"), e))?;
+    let hwp = HwParams::any(&pcm).map_err(|e| map_err("get hardware parameters", e))?;
     hwp.set_access(Access::RWInterleaved)
-        .map_err(|e| map_err("设定访问模式（只支持 RWInterleaved）", e))?;
+        .map_err(|e| map_err("set the access mode (only RWInterleaved is supported)", e))?;
     if hwp.set_channels(PLAYBACK_WANT_CHANNELS).is_err() {
         hwp.set_channels_near(PLAYBACK_WANT_CHANNELS)
-            .map_err(|e| map_err("设定声道数", e))?;
+            .map_err(|e| map_err("set the channel count", e))?;
     }
     let probe_rate = match attempt {
         Attempt::VoxResample { probe_rate } => *probe_rate,
@@ -399,7 +403,7 @@ fn open_attempt(name: &str, attempt: &Attempt, wanted_rate: u32) -> PortResult<N
     };
     // Nearest：拿回什么率就报什么率，第 3 档靠它落到设备支持的率上。
     hwp.set_rate_near(probe_rate, ValueOr::Nearest)
-        .map_err(|e| map_err("设定采样率", e))?;
+        .map_err(|e| map_err("set the sample rate", e))?;
 
     // 格式阶梯（S32_LE 优先，退 S16_LE；S16 那一路的换算见 `f32_to_i16`）。
     let mut format = None;
@@ -411,29 +415,31 @@ fn open_attempt(name: &str, attempt: &Attempt, wanted_rate: u32) -> PortResult<N
     }
     let Some(format) = format else {
         return Err(PortError::new(
-            "设备既不收 S32_LE 也不收 S16_LE（播放侧只做这两种整数格式）",
+            "the device accepts neither S32_LE nor S16_LE (playback only supports these two integer formats)",
         ));
     };
 
     pcm.hw_params(&hwp)
-        .map_err(|e| map_err("套用硬件参数", e))?;
+        .map_err(|e| map_err("apply hardware parameters", e))?;
 
     // 回报**套用之后**真拿到的值，不是我们请求的值（C8 / C10）。
     let current = pcm
         .hw_params_current()
-        .map_err(|e| map_err("回读硬件参数", e))?;
-    let rate = current.get_rate().map_err(|e| map_err("回读采样率", e))?;
+        .map_err(|e| map_err("read back hardware parameters", e))?;
+    let rate = current
+        .get_rate()
+        .map_err(|e| map_err("read back the sample rate", e))?;
     if !tier_accepts(attempt, rate, wanted_rate) {
         return Err(PortError::new(format!(
-            "这一档只给得到 {rate} Hz，不是想要的 {wanted_rate} Hz"
+            "this rung only got {rate} Hz, not the wanted {wanted_rate} Hz"
         )));
     }
     let channels = current
         .get_channels()
-        .map_err(|e| map_err("回读声道数", e))?;
+        .map_err(|e| map_err("read back the channel count", e))?;
     let period_frames = current
         .get_period_size()
-        .map_err(|e| map_err("回读 period", e))?;
+        .map_err(|e| map_err("read back the period", e))?;
     // `HwParams` 的 `Drop` 会碰 PCM，句柄要先放掉才能把 PCM 挪进返回值。
     drop(current);
     drop(hwp);
@@ -769,19 +775,23 @@ mod tests {
     fn zero_source_rate_is_rejected() {
         let mut p = AlsaPlayback::new(test_resample_factory());
         let err = p.open(None, 0).unwrap_err();
-        assert!(err.message.contains("不能是 0"), "{}", err.message);
+        assert!(err.message.contains("cannot be 0"), "{}", err.message);
     }
 
     #[test]
-    fn a_device_that_cannot_be_opened_says_so_in_chinese() {
+    fn a_device_that_cannot_be_opened_explains_itself() {
         // 无屏档没有界面，报错必须自解释（§1.1 C15）。这一条不需要声卡：
         // 这个名字在任何 alsa.conf 下都打不开。
         let mut p = AlsaPlayback::new(test_resample_factory());
         let err = p
             .open(Some("hw:VOX_NO_SUCH_CARD,DEV=9"), 24_000)
             .unwrap_err();
-        assert!(err.message.contains("播放设备"), "{}", err.message);
-        assert!(err.message.contains("三档全灭"), "{}", err.message);
+        assert!(err.message.contains("playback device"), "{}", err.message);
+        assert!(
+            err.message.contains("all three negotiation rungs failed"),
+            "{}",
+            err.message
+        );
     }
 
     #[test]

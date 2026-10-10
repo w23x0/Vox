@@ -139,7 +139,7 @@ pub(crate) fn block_frames(rate: u32, block_ms: u32, channels: u16) -> usize {
 /// 运维只看得到 journal，报错必须自解释。
 pub(crate) fn map_err(what: &str, e: alsa::Error) -> PortError {
     PortError::new(format!(
-        "ALSA {what} 失败：{}（{}，errno {}）",
+        "ALSA {what} failed: {} ({}, errno {})",
         e,
         e.func(),
         e.errno()

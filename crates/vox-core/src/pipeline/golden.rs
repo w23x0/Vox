@@ -656,8 +656,7 @@ fn speak_44k_denoise_skipped() -> String {
 }
 
 /// 场景 7：降噪器工厂起不来。
-/// 钉的是：降级成不降噪但**会话照跑**，并且发一条 `Notice::warning("降噪启动失败，
-/// 本次已关闭")`——降噪降级里唯一能被事件流看见的那一条。
+/// 钉的是：降级成不降噪但**会话照跑**，并且发一条 `Notice::warning(DENOISE_DISABLED)`——降噪降级里唯一能被事件流看见的那一条。
 fn speak_48k_denoise_factory_fails() -> String {
     let rig = Rig::build(RATE_48);
     rig.dsp.fail.store(true, Ordering::SeqCst);

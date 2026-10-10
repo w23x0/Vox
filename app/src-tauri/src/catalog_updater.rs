@@ -10,6 +10,8 @@
 
 use serde::Deserialize;
 use std::path::PathBuf;
+use vox_core::notice::key;
+use vox_core::Msg;
 
 /// 线上仓库。owner/repo 固定（后端写死，不接受前端传），只有分支会变。
 const RAW_BASE: &str = "https://raw.githubusercontent.com/w23x0/Vox/main/catalog";
@@ -43,40 +45,41 @@ fn remote_url(provider: &str) -> Option<String> {
 }
 
 /// 用 reqwest 拉一个字节串。网络是唯一可能慢/失败的地方，超时兜底。
-async fn fetch(url: &str) -> Result<String, String> {
+async fn fetch(url: &str) -> Result<String, Msg> {
     let client = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .timeout(std::time::Duration::from_secs(20))
         .build()
-        .map_err(|e| format!("构造 HTTP 客户端失败：{e}"))?;
+        .map_err(|e| Msg::new(key::ERR_CATALOG_CLIENT).detail(e.to_string()))?;
     let resp = client
         .get(url)
         .send()
         .await
-        .map_err(|e| format!("连接更新源失败：{e}"))?;
+        .map_err(|e| Msg::new(key::ERR_CATALOG_CONNECT).detail(e.to_string()))?;
     let status = resp.status();
     if !status.is_success() {
-        return Err(format!("远程目录返回 {status}"));
+        return Err(Msg::new(key::ERR_CATALOG_STATUS).param("status", status));
     }
     resp.text()
         .await
-        .map_err(|e| format!("读取远程目录失败：{e}"))
+        .map_err(|e| Msg::new(key::ERR_CATALOG_READ).detail(e.to_string()))
 }
 
 /// 校验远程文本的底线字段（schema_version 与 verified_at）。
-fn validate(text: &str) -> Result<RemoteCatalogHeader, String> {
-    let parsed: RemoteCatalogHeader =
-        serde_json::from_str(text).map_err(|e| format!("远程目录不是合法 JSON：{e}"))?;
+fn validate(text: &str) -> Result<RemoteCatalogHeader, Msg> {
+    let parsed: RemoteCatalogHeader = serde_json::from_str(text)
+        .map_err(|e| Msg::new(key::ERR_CATALOG_INVALID_JSON).detail(e.to_string()))?;
     if parsed.schema_version < 2 {
-        return Err(format!(
-            "远程目录 schema_version 过旧（{}，至少应为 2）",
-            parsed.schema_version
-        ));
+        return Err(Msg::new(key::ERR_CATALOG_TOO_OLD).param("version", parsed.schema_version));
     }
     if parsed.verified_at.is_empty() {
-        return Err("远程目录缺少 verified_at".into());
+        return Err(Msg::new(key::ERR_CATALOG_NO_VERIFIED_AT));
     }
     Ok(parsed)
+}
+
+fn unknown_provider(provider: &str) -> Msg {
+    Msg::new(key::ERR_UNKNOWN_PROVIDER).param("name", provider)
 }
 
 /// 取本地覆盖版文本（没有就 None）。
@@ -101,8 +104,8 @@ pub fn local_verified_at(config_dir: &std::path::Path, provider: &str) -> String
 }
 
 /// 下载最新目录，但不落盘，只返回其 `verified_at`。是否算「有更新」由调用方对比。
-pub async fn check_update(provider: &str) -> Result<String, String> {
-    let url = remote_url(provider).ok_or_else(|| format!("未知模型服务商：{provider}"))?;
+pub async fn check_update(provider: &str) -> Result<String, Msg> {
+    let url = remote_url(provider).ok_or_else(|| unknown_provider(provider))?;
     let text = fetch(&url).await?;
     let header = validate(&text)?;
     Ok(header.verified_at)
@@ -112,21 +115,25 @@ pub async fn check_update(provider: &str) -> Result<String, String> {
 pub async fn apply_update(
     config_dir: &std::path::Path,
     provider: &str,
-) -> Result<(String, String), String> {
-    let file = catalog_file(provider).ok_or_else(|| format!("未知模型服务商：{provider}"))?;
-    let url = remote_url(provider).ok_or_else(|| format!("未知模型服务商：{provider}"))?;
+) -> Result<(String, String), Msg> {
+    let file = catalog_file(provider).ok_or_else(|| unknown_provider(provider))?;
+    let url = remote_url(provider).ok_or_else(|| unknown_provider(provider))?;
     let text = fetch(&url).await?;
     validate(&text)?;
 
     let dir = override_dir(config_dir);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败：{e}"))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| Msg::new(key::ERR_CATALOG_WRITE).detail(e.to_string()))?;
     let tmp = dir.join(format!("{file}.tmp"));
     let dst = dir.join(file);
-    std::fs::write(&tmp, &text).map_err(|e| format!("写入临时文件失败：{e}"))?;
-    std::fs::rename(&tmp, &dst).map_err(|e| format!("替换目录失败：{e}"))?;
+    std::fs::write(&tmp, &text)
+        .map_err(|e| Msg::new(key::ERR_CATALOG_WRITE).detail(e.to_string()))?;
+    std::fs::rename(&tmp, &dst)
+        .map_err(|e| Msg::new(key::ERR_CATALOG_WRITE).detail(e.to_string()))?;
 
-    let applied = read_override(config_dir, provider).ok_or("目录写好后却读不回来")?;
-    let applied_header: RemoteCatalogHeader =
-        serde_json::from_str(&applied).map_err(|e| format!("已落盘目录解析失败：{e}"))?;
+    let applied =
+        read_override(config_dir, provider).ok_or_else(|| Msg::new(key::ERR_CATALOG_READBACK))?;
+    let applied_header: RemoteCatalogHeader = serde_json::from_str(&applied)
+        .map_err(|e| Msg::new(key::ERR_CATALOG_PARSE_APPLIED).detail(e.to_string()))?;
     Ok((file.to_string(), applied_header.verified_at))
 }

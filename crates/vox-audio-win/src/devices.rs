@@ -3,6 +3,7 @@
 //! 只列 `DEVICE_STATE_ACTIVE` 的端点。禁用和拔掉的设备也能枚举出来，
 //! 但列给用户选只会让人困惑（选了打不开）。
 
+use vox_core::notice::{key, Msg};
 use vox_core::ports::{DeviceInfo, PortError, PortResult};
 use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
 use windows::Win32::Media::Audio::{
@@ -126,10 +127,15 @@ pub(crate) fn find_device(flow: EDataFlow, name: Option<&str>) -> PortResult<IMM
             }
         }
         fallback.ok_or_else(|| {
-            PortError::new(format!(
-                "找不到名为“{wanted}”的{}设备（可能被禁用或拔掉了）",
-                if flow == eRender { "输出" } else { "输入" }
-            ))
+            let (user_key, kind) = if flow == eRender {
+                (key::OUTPUT_DEVICE_NOT_FOUND, "output")
+            } else {
+                (key::INPUT_DEVICE_NOT_FOUND, "input")
+            };
+            PortError::user(
+                Msg::new(user_key).param("name", &wanted),
+                format!("no {kind} device named '{wanted}' (it may be disabled or unplugged)"),
+            )
         })
     }
 }

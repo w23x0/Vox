@@ -43,6 +43,7 @@ use crate::composition::{
 use crate::event::{Notice, Pipeline, PipelineState};
 use crate::gate::{GateConfig, GateState};
 use crate::latency::LatencyTracker;
+use crate::notice::{key, Msg};
 use crate::ports::{
     AudioChunk, CaptureSource, CaptureTarget, Denoise, PlaybackSink, PortError, PortResult,
     Resample,
@@ -137,12 +138,12 @@ impl Plan {
     pub(crate) fn from(composition: &Composition) -> PortResult<Self> {
         if composition.schema_version != COMPOSITION_SCHEMA_VERSION {
             return Err(PortError::new(format!(
-                "清单版本不认识：这份是 {}，本芯只认 {COMPOSITION_SCHEMA_VERSION}。",
+                "unknown plan version: got {}, this core only accepts {COMPOSITION_SCHEMA_VERSION}",
                 composition.schema_version
             )));
         }
         if let Err(errors) = composition.validate() {
-            return Err(PortError::new(format!("清单不合法：{errors:?}")));
+            return Err(PortError::new(format!("invalid plan: {errors:?}")));
         }
         let target = match composition.r#in.first() {
             Some(Input::Mic { device, .. }) => CaptureTarget::Microphone(device.clone()),
@@ -157,10 +158,15 @@ impl Plan {
             // 网络进 / 宿主喂进来的声音：清单先占名，实现归 S3。
             Some(Input::NetIn { .. } | Input::HostFeed { .. }) => {
                 return Err(PortError::new(
-                    "清单里的输入还没实现（net_in / host_feed 归 S3）。",
+                    "plan input is not implemented yet (net_in / host_feed belong to S3)",
                 ));
             }
-            None => return Err(PortError::new("清单里没有输入：这台设备的采集能力位关着。")),
+            None => {
+                return Err(PortError::user(
+                    Msg::new(key::NO_CAPTURE_INPUT),
+                    "plan has no input: the capture capability bit is off on this device",
+                ))
+            }
         };
         let session = composition.session.as_ref();
         Ok(Self {
@@ -248,8 +254,11 @@ impl PipelineEngine {
         let plan = match Plan::build(&config, &self.runtime.host_facts()) {
             Ok(plan) => plan,
             Err(err) => {
-                self.runtime
-                    .on_pipeline_failed(pipeline, session_id, err.message);
+                self.runtime.on_pipeline_failed(
+                    pipeline,
+                    session_id,
+                    err.into_msg(key::SESSION_PLAN_INVALID),
+                );
                 return;
             }
         };
@@ -627,6 +636,16 @@ struct PlaybackProbe {
 }
 
 /// 关掉一个播放汇：先把积压的样本放掉再关，然后把槽位清空。
+/// 连不上云端的失败变成给用户看的消息：密钥错 / 欠费 / 模型没权限这类**重连也没用的**，
+/// 说清楚该去哪改（服务端原话在 `detail`）；其余只说"连不上"，诊断串当 `detail`。
+fn connect_error(err: PortError) -> PortError {
+    if err.user.is_none() && cloud::is_fatal_error(None, &err.message) {
+        let explained = cloud::explain_error(None, &err.message);
+        return PortError::user(explained, err.message);
+    }
+    err.at(key::CONNECT_FAILED)
+}
+
 fn close_sink(slot: &mut Option<Box<dyn PlaybackSink>>) {
     if let Some(mut sink) = slot.take() {
         sink.flush();
@@ -756,7 +775,7 @@ impl Worker {
                     self.runtime.on_pipeline_failed(
                         self.pipeline(),
                         self.session_id(),
-                        err.message,
+                        err.into_msg(key::PIPELINE_FAILED),
                     );
                 }
             }
@@ -779,7 +798,7 @@ impl Worker {
             let mut transport = (self.deps.transport)();
             let connect_started = Instant::now();
             let now = self.now();
-            cloud::open(transport.as_mut(), &mut self.session, now)?;
+            cloud::open(transport.as_mut(), &mut self.session, now).map_err(connect_error)?;
             self.latency
                 .set_connect(connect_started.elapsed().as_millis() as u64);
             self.session_opened_at = self.now();
@@ -793,7 +812,8 @@ impl Worker {
             // 出声的会话才开播放汇。内核推 24 kHz，设备率由外壳自己换。
             if let Some(device) = self.plan.playback_device.clone() {
                 let mut sink = (self.deps.playback)();
-                sink.open(device.as_deref(), OUTPUT_SAMPLE_RATE)?;
+                sink.open(device.as_deref(), OUTPUT_SAMPLE_RATE)
+                    .map_err(|err| err.at(key::PLAYBACK_OPEN_FAILED))?;
                 self.sink = Some(sink);
             }
             if self.plan.monitor_translation {
@@ -807,11 +827,13 @@ impl Worker {
         // 采集回调跑在音频驱动线程上，只往信箱里塞，绝不做重活。
         let inbox = Arc::clone(&self.inbox);
         let mut capture = (self.deps.capture)();
-        let format = capture.start(
-            &self.plan.target,
-            INPUT_BLOCK_MS,
-            Box::new(move |chunk| inbox.push_audio(chunk)),
-        )?;
+        let format = capture
+            .start(
+                &self.plan.target,
+                INPUT_BLOCK_MS,
+                Box::new(move |chunk| inbox.push_audio(chunk)),
+            )
+            .map_err(|err| err.at(key::CAPTURE_START_FAILED))?;
         self.capture = Some(capture);
 
         // 算子链按**清单**建：装哪几节、什么顺序、阀门建在哪个率上、降噪降级到
@@ -821,7 +843,8 @@ impl Worker {
             &self.deps,
             format,
             self.session.input_sample_rate(),
-        )?;
+        )
+        .map_err(|err| err.at(key::CHAIN_BUILD_FAILED))?;
         // 初始开闸状态在线程里同步生效，不靠后续命令补（旧版的坑）。
         self.chain.set_gate_active(self.config.gate_active);
         // 降噪降级的那两句日志与那条通知由变体决定（两支路的可观察行为不一样）。
@@ -842,7 +865,7 @@ impl Worker {
                     Err(err) => {
                         tracing::warn!(error = %err, "原声输出设备打不开");
                         self.runtime.notify(
-                            Notice::warning(format!("原声输出失败：{}", err.message))
+                            Notice::warning(err.into_msg(key::PASSTHROUGH_OUTPUT_FAILED))
                                 .on(self.pipeline()),
                         );
                     }
@@ -888,7 +911,7 @@ impl Worker {
             Some(DenoiseSkip::Factory(err)) => {
                 tracing::warn!(error = %err, "降噪器起不来，这次先不降噪");
                 self.runtime
-                    .notify(Notice::warning("降噪启动失败，本次已关闭").on(pipeline));
+                    .notify(Notice::warning(Msg::new(key::DENOISE_DISABLED)).on(pipeline));
             }
         }
     }
@@ -1115,7 +1138,7 @@ impl Worker {
                     tracing::warn!(error = %err, attempt = self.backoff.attempt(), "重连失败");
                     // 密钥错、欠费、模型没权限：重连一万次也是这个结果。
                     if cloud::is_fatal_error(None, &err.message) {
-                        self.fail(err.message);
+                        self.fail(connect_error(err).into_msg(key::CONNECT_FAILED));
                         return false;
                     }
                 }
@@ -1127,7 +1150,7 @@ impl Worker {
     }
 
     /// 报失败并封口——之后不许再报状态，免得盖掉账本里的错误。
-    fn fail(&mut self, message: String) {
+    fn fail(&mut self, message: Msg) {
         self.reported = Some(PipelineState::Failed);
         self.runtime
             .on_pipeline_failed(self.pipeline(), self.session_id(), message);
@@ -1501,9 +1524,8 @@ impl Worker {
             Ok(_) => self.monitor_sink = Some(sink),
             Err(err) => {
                 tracing::warn!(error = %err, "系统默认播放设备打不开，无法回听译音");
-                self.runtime.notify(
-                    Notice::warning(format!("回听译音失败：{}", err.message)).on(self.pipeline()),
-                );
+                self.runtime
+                    .notify(Notice::warning(err.into_msg(key::MONITOR_FAILED)).on(self.pipeline()));
             }
         }
     }
@@ -1554,7 +1576,7 @@ impl Worker {
                     Err(err) => {
                         tracing::warn!(error = %err, "译文播放设备打不开");
                         self.runtime.notify(
-                            Notice::warning(format!("译音输出失败：{}", err.message))
+                            Notice::warning(err.into_msg(key::TRANSLATION_OUTPUT_FAILED))
                                 .on(self.pipeline()),
                         );
                     }
@@ -1752,7 +1774,7 @@ pub(crate) mod tests {
                 self.0.connect_waiting.store(false, Ordering::SeqCst);
             }
             if self.0.fatal_connect.load(Ordering::SeqCst) {
-                return Err(PortError::new("invalid api-key: 密钥不对"));
+                return Err(PortError::new("invalid api-key"));
             }
             if self.0.fail_connects.load(Ordering::SeqCst) > 0 {
                 self.0.fail_connects.fetch_sub(1, Ordering::SeqCst);
@@ -1815,7 +1837,9 @@ pub(crate) mod tests {
             on_chunk: Box<dyn FnMut(AudioChunk) + Send>,
         ) -> PortResult<CaptureFormat> {
             if self.0.fail.load(Ordering::SeqCst) {
-                return Err(PortError::new("麦克风打不开：设备被别的程序占着"));
+                return Err(PortError::new(
+                    "microphone could not be opened: the device is held by another program",
+                ));
             }
             *self.0.started.lock() = Some(target.clone());
             *self.0.feed.lock() = Some(on_chunk);
@@ -2559,11 +2583,10 @@ pub(crate) mod tests {
     /// [`Worker::report_denoise_degrade`] 里的落点证明：两支都走到、且不串味。
     #[test]
     fn the_two_denoise_degrades_report_differently() {
-        const DENOISE_DOWN: &str = "降噪启动失败，本次已关闭";
         let noticed = |rig: &Rig| {
-            rig.events().iter().any(
-                |event| matches!(event, Event::Notice { notice } if notice.text == DENOISE_DOWN),
-            )
+            rig.events().iter().any(|event| {
+                matches!(event, Event::Notice { notice } if notice.msg.key == key::DENOISE_DISABLED)
+            })
         };
 
         // 支路一：采集率 44.1 kHz ≠ `DENOISE_RATE`（`DenoiseSkip::Rate`）。
@@ -3457,7 +3480,16 @@ pub(crate) mod tests {
             "死错误不许重试"
         );
         let error = rig.runtime.snapshot().speak.last_error.expect("该记下错误");
-        assert!(error.contains("密钥"), "得是给人看的话：{error}");
+        assert_eq!(
+            error.key,
+            key::SERVER_INVALID_KEY,
+            "得是给人看的话：{error:?}"
+        );
+        assert_eq!(
+            error.detail.as_deref(),
+            Some("invalid api-key"),
+            "原文原样保留"
+        );
         rig.engine.shutdown();
     }
 
@@ -3517,7 +3549,14 @@ pub(crate) mod tests {
         rig.wait_until(|| rig.runtime.pipeline_state(Pipeline::Speak) == PipelineState::Failed);
 
         let error = rig.runtime.snapshot().speak.last_error.expect("该记下错误");
-        assert!(error.contains("麦克风"), "得说清是麦克风的事：{error}");
+        assert_eq!(error.key, key::CAPTURE_START_FAILED, "{error:?}");
+        assert!(
+            error
+                .detail
+                .as_deref()
+                .is_some_and(|d| d.contains("microphone")),
+            "诊断原文要原样带上：{error:?}"
+        );
         rig.engine.shutdown();
     }
 
