@@ -69,6 +69,9 @@ pub struct EndpointResult {
     pub http_status: Option<u16>,
     /// 各段之和（成功时才有）。
     pub total_ms: Option<u32>,
+    /// 直连时绑定的物理网卡名（Linux；绕开 TUN 全局接管）。没绑为空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound_iface: Option<String>,
     pub error: Option<Failure>,
 }
 
@@ -246,6 +249,7 @@ fn failed(endpoint: &Endpoint, kind: FailureKind, message: String) -> EndpointRe
         http_ms: None,
         http_status: None,
         total_ms: None,
+        bound_iface: None,
         error: Some(Failure { kind, message }),
     }
 }
@@ -293,6 +297,7 @@ fn measure(
     result.dns_ms = dialed.dns.map(ms);
     result.connect_ms = Some(ms(dialed.connect));
     result.tunnel_ms = dialed.tunnel.map(ms);
+    result.bound_iface = dialed.bound_iface.clone();
 
     match tls_get(
         dialed.stream,

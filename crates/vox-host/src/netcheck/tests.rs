@@ -267,6 +267,7 @@ fn timed(id: &str, current: bool, total: Option<u32>) -> EndpointResult {
         http_ms: None,
         http_status: total.map(|_| 401),
         total_ms: total,
+        bound_iface: None,
         error: total.is_none().then(|| Failure {
             kind: FailureKind::Timeout,
             message: "超时".into(),

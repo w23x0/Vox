@@ -10,6 +10,7 @@
 //! `TcpStream` 后转成 tokio 的流；TLS 永远在隧道**之后**由调用方自己套。
 
 mod dial;
+mod physical;
 mod spec;
 pub mod system;
 #[cfg(any(test, feature = "testing"))]

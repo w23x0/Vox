@@ -3,10 +3,12 @@
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
 
+use crate::physical;
 use crate::spec::{ProxyScheme, ProxySpec};
 
 /// 失败在哪一段。
@@ -64,6 +66,8 @@ pub struct Dialed {
     pub stream: TcpStream,
     pub dns: Option<Duration>,
     pub connect: Duration,
+    /// 直连时实际绑定的物理网卡名（Linux）；没绑（经代理 / 非 Linux / 探测或绑定失败）为 `None`。
+    pub bound_iface: Option<String>,
     pub tunnel: Option<Duration>,
 }
 
@@ -88,11 +92,25 @@ pub fn dial(
             .map_err(|e| DialError::new(Stage::Dns, &e, "DNS resolution failed"))?;
         let dns = t.elapsed();
         let t = Instant::now();
-        let stream = connect_any(&addrs, left(Stage::Connect, "connect")?, "connect")?;
+        if addrs.iter().any(|a| physical::is_fake_ip(a.ip())) {
+            static WARNED: AtomicBool = AtomicBool::new(false);
+            physical::warn_once(
+                &WARNED,
+                "直连目标解析到 fake-ip 段（198.18.0.0/15），代理软件已劫持 DNS，绑定物理网卡也无法绕过",
+            );
+        }
+        // 只在直连时绑物理网卡；经代理的分支永远不碰它。
+        let (stream, bound_iface) = connect_any(
+            &addrs,
+            left(Stage::Connect, "connect")?,
+            "connect",
+            physical::physical_iface().as_deref(),
+        )?;
         return Ok(Dialed {
             stream,
             dns: Some(dns),
             connect: t.elapsed(),
+            bound_iface,
             tunnel: None,
         });
     };
@@ -118,10 +136,11 @@ pub fn dial(
     let t = Instant::now();
     let proxy_addrs = resolve(&proxy.host, proxy.port)
         .map_err(|e| DialError::new(Stage::Connect, &e, "could not resolve the proxy address"))?;
-    let mut stream = connect_any(
+    let (mut stream, _) = connect_any(
         &proxy_addrs,
         left(Stage::Connect, "connect to proxy")?,
         "connect to proxy",
+        None,
     )?;
     let connect = t.elapsed();
 
@@ -141,6 +160,7 @@ pub fn dial(
         stream,
         dns,
         connect,
+        bound_iface: None,
         tunnel: Some(t.elapsed()),
     })
 }
@@ -157,7 +177,17 @@ fn resolve(host: &str, port: u16) -> io::Result<Vec<SocketAddr>> {
 }
 
 /// 逐个地址试，总预算 `budget` 平分（至少 200ms）。
-fn connect_any(addrs: &[SocketAddr], budget: Duration, what: &str) -> Result<TcpStream, DialError> {
+///
+/// `bind` 给了网卡名（且目标不是回环）就先绑到那块网卡再连；绑定失败（EPERM 等）warn 一次后
+/// 退回普通连接。返回连好的流与实际绑上的网卡名。
+fn connect_any(
+    addrs: &[SocketAddr],
+    budget: Duration,
+    what: &str,
+    bind: Option<&str>,
+) -> Result<(TcpStream, Option<String>), DialError> {
+    // 绑不上就整个函数后续都不再试绑。
+    let mut bind = bind;
     let started = Instant::now();
     let mut last: Option<io::Error> = None;
     for (i, addr) in addrs.iter().enumerate() {
@@ -166,11 +196,33 @@ fn connect_any(addrs: &[SocketAddr], budget: Duration, what: &str) -> Result<Tcp
             break;
         }
         let share = (remaining / (addrs.len() - i) as u32).max(Duration::from_millis(200));
-        match TcpStream::connect_timeout(addr, share.min(remaining)) {
+        let timeout = share.min(remaining);
+        let mut bound = None;
+        let attempt = match bind.filter(|_| !addr.ip().is_loopback()) {
+            #[cfg(target_os = "linux")]
+            Some(iface) => match physical::connect_bound(addr, iface, timeout) {
+                Ok(stream) => {
+                    bound = Some(iface.to_string());
+                    Ok(stream)
+                }
+                Err(physical::BoundError::Connect(e)) => Err(e),
+                Err(physical::BoundError::BindFailed(e)) => {
+                    static WARNED: AtomicBool = AtomicBool::new(false);
+                    physical::warn_once(
+                        &WARNED,
+                        &format!("绑定物理网卡 {iface} 失败（{e}），退回不绑定的直连"),
+                    );
+                    bind = None;
+                    TcpStream::connect_timeout(addr, timeout)
+                }
+            },
+            _ => TcpStream::connect_timeout(addr, timeout),
+        };
+        match attempt {
             Ok(stream) => {
                 // 实时音频是小帧；与原 tokio 路径一样关 Nagle。
                 let _ = stream.set_nodelay(true);
-                return Ok(stream);
+                return Ok((stream, bound));
             }
             Err(e) => last = Some(e),
         }

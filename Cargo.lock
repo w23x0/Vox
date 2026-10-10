@@ -6158,6 +6158,8 @@ name = "vox-proxy"
 version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
+ "socket2",
+ "tracing",
  "vox-core",
 ]
 

@@ -216,6 +216,8 @@ export interface EndpointResult {
   connect_ms: number | null;
   /** 代理握手（经代理时才有）。 */
   tunnel_ms: number | null;
+  /** 直连时绑定的物理网卡名（Linux，绕开 TUN 全局接管）；没绑时缺省。 */
+  bound_iface?: string | null;
   tls_ms: number | null;
   http_ms: number | null;
   /** 一次不带密钥的 HTTPS GET 拿到的状态码（401/403 就算通）。 */

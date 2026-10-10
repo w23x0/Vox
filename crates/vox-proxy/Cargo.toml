@@ -10,6 +10,11 @@ license.workspace = true
 [dependencies]
 vox-core.workspace = true
 base64.workspace = true
+tracing.workspace = true
+
+# 直连时绑物理网卡（SO_BINDTODEVICE）。仅 Linux；Cargo.lock 里已有（tokio 的依赖）。
+[target.'cfg(target_os = "linux")'.dependencies]
+socket2 = { version = "0.6", features = ["all"] }
 
 [features]
 # 本机假代理（HTTP CONNECT / SOCKS5），给依赖方的测试用。
