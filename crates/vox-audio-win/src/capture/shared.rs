@@ -59,14 +59,14 @@ pub(crate) fn open_capture_client(
     let device = devices::find_device(flow, device_name)?;
     // SAFETY: device 有效；Activate 只创建 IAudioClient，不带激活参数。
     let candidate: IAudioClient =
-        unsafe { device.Activate(CLSCTX_ALL, None) }.ctx(&format!("打开{what}失败"))?;
+        unsafe { device.Activate(CLSCTX_ALL, None) }.ctx(&format!("failed to open the {what}"))?;
 
     // SAFETY: GetMixFormat 返回 COM 分配的格式块，解析完立刻释放；
     // Initialize 期间指针必须有效，所以释放放在 Initialize 之后。
     let (client, info) = unsafe {
         let mix = candidate
             .GetMixFormat()
-            .ctx(&format!("读{what}混音格式失败"))?;
+            .ctx(&format!("failed to read the {what} mix format"))?;
         let initialized = (|| -> PortResult<(IAudioClient, WaveInfo)> {
             let parsed = parse_format(mix)?;
             let client = match crate::client::initialize_min_period(&candidate, stream_flags, mix) {
@@ -78,9 +78,9 @@ pub(crate) fn open_capture_client(
                     tracing::debug!(error = %error, "{what}最短共享周期不可用，退回系统默认周期");
                     let fallback: IAudioClient = device
                         .Activate(CLSCTX_ALL, None)
-                        .ctx(&format!("重新打开{what}失败"))?;
+                        .ctx(&format!("failed to reopen the {what}"))?;
                     crate::client::initialize_default_period(&fallback, stream_flags, mix)
-                        .ctx(&format!("初始化{what}流失败"))?;
+                        .ctx(&format!("failed to initialize the {what} stream"))?;
                     fallback
                 }
             };
@@ -93,12 +93,13 @@ pub(crate) fn open_capture_client(
     let event = create_stream_event()?;
     // SAFETY: client 已初始化；事件句柄在 OpenCapture 存活期间一直有效，
     // 而 client 会先于它被丢弃（结构体字段声明顺序：client 在 event 之前）。
-    unsafe { client.SetEventHandle(event.raw()) }.ctx(&format!("绑定{what}事件失败"))?;
+    unsafe { client.SetEventHandle(event.raw()) }
+        .ctx(&format!("failed to bind the {what} event"))?;
     // SAFETY: client 已初始化，取采集服务接口。
-    let capture: IAudioCaptureClient =
-        unsafe { client.GetService() }.ctx(&format!("获取{what}采集接口失败"))?;
+    let capture: IAudioCaptureClient = unsafe { client.GetService() }
+        .ctx(&format!("failed to get the {what} capture interface"))?;
     // SAFETY: 一切就绪，开始走流。
-    unsafe { client.Start() }.ctx(&format!("启动{what}流失败"))?;
+    unsafe { client.Start() }.ctx(&format!("failed to start the {what} stream"))?;
 
     Ok(OpenCapture {
         client,
@@ -121,7 +122,8 @@ pub(crate) struct CaptureControl {
 impl CaptureControl {
     pub(crate) fn new() -> PortResult<Arc<Self>> {
         // SAFETY: 建一个无名的手动复位事件；句柄交给 OwnedHandle 独占，Drop 时关闭。
-        let handle = unsafe { CreateEventW(None, true, false, None) }.ctx("创建停止事件失败")?;
+        let handle = unsafe { CreateEventW(None, true, false, None) }
+            .ctx("failed to create the stop event")?;
         Ok(Arc::new(Self {
             stop: AtomicBool::new(false),
             wake: OwnedHandle::new(handle),
@@ -261,7 +263,8 @@ pub(crate) fn capture_loop(
 /// 建一个给 `SetEventHandle` 用的自动复位事件。
 pub(crate) fn create_stream_event() -> PortResult<OwnedHandle> {
     // SAFETY: 自动复位、初始未触发的无名事件；句柄交给 OwnedHandle 独占。
-    let handle = unsafe { CreateEventW(None, false, false, None) }.ctx("创建音频事件失败")?;
+    let handle = unsafe { CreateEventW(None, false, false, None) }
+        .ctx("failed to create the audio event")?;
     Ok(OwnedHandle::new(handle))
 }
 
@@ -284,7 +287,11 @@ mod tests {
         let (hs, rx) = Handshake::pair();
         drop(hs);
         let err = await_start(rx, "测试").unwrap_err();
-        assert!(err.message.contains("意外退出"), "{}", err.message);
+        assert!(
+            err.message.contains("exited unexpectedly"),
+            "{}",
+            err.message
+        );
     }
 
     #[test]

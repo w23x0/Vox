@@ -103,24 +103,32 @@ impl MediaListener {
     pub fn bind(options: MediaOptions) -> PortResult<Self> {
         if options.token.is_empty() {
             return Err(PortError::new(
-                "媒体面必须有凭据：token 是空的，拒绝监听（fail-closed）",
+                "media plane requires a credential: token is empty, refusing to listen (fail-closed)",
             ));
         }
         if options.rate_hz == 0 {
             // 率是会话身份（每一帧都要相符）。0 会让"一块多少样本"退化成 1 个样本，
             // 是配置没填对，不是"随便挑一个"。
             return Err(PortError::new(
-                "媒体面的声明采样率不能是 0 Hz（配置没填对，拒绝监听）",
+                "the media plane sample rate cannot be 0 Hz (misconfigured, refusing to listen)",
             ));
         }
-        let std_listener = StdTcpListener::bind(options.listen)
-            .map_err(|e| PortError::new(format!("媒体面监听 {} 失败：{e}", options.listen)))?;
-        std_listener
-            .set_nonblocking(true)
-            .map_err(|e| PortError::new(format!("媒体面监听套接字设非阻塞失败：{e}")))?;
-        let local_addr = std_listener
-            .local_addr()
-            .map_err(|e| PortError::new(format!("读不到媒体面实际监听地址：{e}")))?;
+        let std_listener = StdTcpListener::bind(options.listen).map_err(|e| {
+            PortError::new(format!(
+                "media plane could not listen on {}: {e}",
+                options.listen
+            ))
+        })?;
+        std_listener.set_nonblocking(true).map_err(|e| {
+            PortError::new(format!(
+                "could not set the media plane listener non-blocking: {e}"
+            ))
+        })?;
+        let local_addr = std_listener.local_addr().map_err(|e| {
+            PortError::new(format!(
+                "could not read the media plane listen address: {e}"
+            ))
+        })?;
 
         let rate_hz = options.rate_hz;
         let shared = Arc::new(Shared {
@@ -141,7 +149,11 @@ impl MediaListener {
                 let shared = Arc::clone(&shared);
                 move || accept_thread(std_listener, shared)
             })
-            .map_err(|e| PortError::new(format!("创建媒体面监听线程失败：{e}")))?;
+            .map_err(|e| {
+                PortError::new(format!(
+                    "could not create the media plane listener thread: {e}"
+                ))
+            })?;
 
         info!(listen = %local_addr, rate = rate_hz, "媒体面开始监听");
         Ok(Self {
@@ -468,17 +480,17 @@ impl CaptureSource for MediaCapture {
     ) -> PortResult<CaptureFormat> {
         let CaptureTarget::Net { pipe } = target else {
             return Err(PortError::new(
-                "媒体面采集源只服务 CaptureTarget::Net（不静默换源）",
+                "the media plane capture source only serves CaptureTarget::Net (no silent source switch)",
             ));
         };
         if pipe != DEFAULT_PIPE {
             return Err(PortError::new(format!(
-                "未知的媒体面管道名「{pipe}」（v1 只有「{DEFAULT_PIPE}」）"
+                "unknown media plane pipe '{pipe}' (v1 only has '{DEFAULT_PIPE}')"
             )));
         }
         if self.shared.leg_taken.swap(true, Ordering::AcqRel) {
             return Err(PortError::new(
-                "这个媒体面监听已经在服务另一条腿（一条监听只服务一条腿）",
+                "this media plane listener already serves another leg (one listener serves one leg)",
             ));
         }
         self.claimed = true;
@@ -500,7 +512,9 @@ impl CaptureSource for MediaCapture {
             .map_err(|e| {
                 self.claimed = false;
                 self.shared.leg_taken.store(false, Ordering::Release);
-                PortError::new(format!("创建媒体面排空线程失败：{e}"))
+                PortError::new(format!(
+                    "could not create the media plane drain thread: {e}"
+                ))
             })?;
         *self.drain.lock() = Some(thread);
 

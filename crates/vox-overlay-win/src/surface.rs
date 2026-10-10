@@ -31,7 +31,9 @@ impl LayeredSurface {
         // SAFETY: 传 None 表示以屏幕 DC 为模板，失败返回空句柄，紧接着就查。
         let dc = unsafe { CreateCompatibleDC(None) };
         if dc.is_invalid() {
-            return Err(PortError::new("创建分层窗内存 DC 失败"));
+            return Err(PortError::new(
+                "failed to create the layered window memory DC",
+            ));
         }
         Ok(Self {
             dc,
@@ -46,7 +48,7 @@ impl LayeredSurface {
     /// 保证位图至少是 `width × height`。尺寸变了就重建。
     fn ensure(&mut self, width: i32, height: i32) -> PortResult<()> {
         if width <= 0 || height <= 0 {
-            return Err(PortError::new("分层窗尺寸必须为正"));
+            return Err(PortError::new("layered window size must be positive"));
         }
         if self.width == width && self.height == height && !self.bits.is_null() {
             return Ok(());
@@ -71,13 +73,17 @@ impl LayeredSurface {
         // 释放位图之前一直有效。
         let bitmap =
             unsafe { CreateDIBSection(Some(self.dc), &info, DIB_RGB_COLORS, &mut bits, None, 0) }
-                .map_err(|e| PortError::new(format!("创建分层窗位图失败: {e}")))?;
+                .map_err(|e| {
+                PortError::new(format!("failed to create the layered window bitmap: {e}"))
+            })?;
         if bits.is_null() {
             // SAFETY: bitmap 刚建成功但没法用，这条路径上要还回去。
             unsafe {
                 let _ = DeleteObject(bitmap.into());
             }
-            return Err(PortError::new("分层窗位图没有返回像素指针"));
+            return Err(PortError::new(
+                "the layered window bitmap returned no pixel pointer",
+            ));
         }
         // SAFETY: dc 有效，bitmap 刚建好且还没被选进任何 DC。
         let old_bitmap = unsafe { SelectObject(self.dc, bitmap.into()) };
@@ -97,7 +103,7 @@ impl LayeredSurface {
         let need = (rect.w as usize) * (rect.h as usize) * 4;
         if pixels.len() < need {
             return Err(PortError::new(format!(
-                "像素缓冲太小: 需要 {need} 字节, 只有 {}",
+                "pixel buffer too small: need {need} bytes, have {}",
                 pixels.len()
             )));
         }
@@ -139,7 +145,7 @@ impl LayeredSurface {
                 ULW_ALPHA,
             )
         }
-        .map_err(|e| PortError::new(format!("UpdateLayeredWindow 失败: {e}")))
+        .map_err(|e| PortError::new(format!("UpdateLayeredWindow failed: {e}")))
     }
 
     fn release_bitmap(&mut self) {

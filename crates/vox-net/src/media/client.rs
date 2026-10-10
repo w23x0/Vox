@@ -83,14 +83,14 @@ impl MediaOut {
     pub fn spawn(peer: String, token: String, pipe: PipeConfig) -> PortResult<Self> {
         if token.is_empty() {
             return Err(PortError::new(
-                "媒体面必须有凭据：token 是空的，拒绝出站（fail-closed）",
+                "media plane requires a credential: token is empty, refusing to dial out (fail-closed)",
             ));
         }
         // scheme 白名单：配置面也拦一道，但打错成 `http://` 在这里就该拦住——
         // 否则池子会拿着一个永远连不上的地址退避重连，日志里只剩噪声。
         if !peer.starts_with("ws://") && !peer.starts_with("wss://") {
             return Err(PortError::new(format!(
-                "媒体面对端只认 ws:// 或 wss://，收到「{peer}」"
+                "media plane peer must be ws:// or wss://, got '{peer}'"
             )));
         }
         let shared = Arc::new(OutShared {
@@ -118,7 +118,11 @@ impl MediaOut {
                 let shared = Arc::clone(&shared);
                 move || out_thread(shared)
             })
-            .map_err(|e| PortError::new(format!("创建媒体面出站线程失败：{e}")))?;
+            .map_err(|e| {
+                PortError::new(format!(
+                    "could not create the media plane dial-out thread: {e}"
+                ))
+            })?;
 
         info!(peer = %shared.peer, "媒体面出站池已起来");
         Ok(Self {
@@ -228,18 +232,18 @@ async fn connect(shared: &OutShared) -> PortResult<WsStream> {
         .peer
         .as_str()
         .into_client_request()
-        .map_err(|e| PortError::new(format!("媒体面对端地址不合法：{e}")))?;
+        .map_err(|e| PortError::new(format!("invalid media plane peer address: {e}")))?;
     let mut bearer = String::with_capacity(shared.token.len() + 7);
     bearer.push_str("Bearer ");
     bearer.push_str(&shared.token);
     request.headers_mut().insert(
         header::AUTHORIZATION,
         HeaderValue::from_str(&bearer)
-            .map_err(|e| PortError::new(format!("媒体面鉴权头不合法：{e}")))?,
+            .map_err(|e| PortError::new(format!("invalid media plane auth header: {e}")))?,
     );
 
     tokio::select! {
-        _ = shared.shutdown.cancelled() => Err(PortError::new("媒体面出站已关机")),
+        _ = shared.shutdown.cancelled() => Err(PortError::new("media plane dial-out has shut down")),
         result = tokio::time::timeout(
             CONNECT_TIMEOUT,
             connect_async_with_config(request, Some(super::ws_config()), false),
@@ -252,13 +256,13 @@ async fn connect(shared: &OutShared) -> PortResult<WsStream> {
                 Ok(ws)
             }
             Ok(Err(e)) => Err(map_connect_error(e)),
-            Err(_) => Err(PortError::new("媒体面出站连接超时")),
+            Err(_) => Err(PortError::new("media plane dial-out timed out")),
         },
     }
 }
 
 fn map_connect_error(error: tungstenite::Error) -> PortError {
-    PortError::new(format!("媒体面出站握手失败：{error}"))
+    PortError::new(format!("media plane dial-out handshake failed: {error}"))
 }
 
 /// 一条已建立连接的服务循环：攒块发帧、按空闲发保活、读对端的帧判活。
@@ -417,11 +421,13 @@ struct MediaOutSink {
 impl PlaybackSink for MediaOutSink {
     fn open(&mut self, device: Option<&str>, source_rate: u32) -> PortResult<u32> {
         if device.is_some() {
-            return Err(PortError::new("网络出口不是设备：媒体面只认 device = None"));
+            return Err(PortError::new(
+                "the network output is not a device: the media plane only accepts device = None",
+            ));
         }
         if source_rate == 0 {
             return Err(PortError::new(
-                "网络出口拿不到线率（source_rate = 0）：没有率的线不该被打开",
+                "the network output has no wire rate (source_rate = 0): a line without a rate must not be opened",
             ));
         }
         let mut state = self.shared.state.lock();

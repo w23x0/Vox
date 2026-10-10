@@ -17,7 +17,7 @@ pub(crate) fn open_endpoint_loopback(device_name: Option<&str>) -> PortResult<Op
         eRender,
         device_name,
         AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-        "输出设备",
+        "output device",
     )
 }
 

@@ -217,7 +217,7 @@ fn run_test(
             None => failed(
                 endpoint,
                 FailureKind::Timeout,
-                "超时：系统域名解析长时间没有返回".into(),
+                "timed out: the system resolver did not return".into(),
             ),
         })
         .collect();
@@ -266,7 +266,11 @@ fn measure(
         Ok(p) => p,
         Err(e) => {
             return (
-                failed(endpoint, FailureKind::Connect, format!("代理设置无效：{e}")),
+                failed(
+                    endpoint,
+                    FailureKind::Connect,
+                    format!("invalid proxy settings: {e}"),
+                ),
                 None,
             )
         }
@@ -334,7 +338,7 @@ fn tls_get(
         budget
             .checked_sub(started.elapsed())
             .filter(|d| !d.is_zero())
-            .ok_or((FailureKind::Timeout, "超时".to_string()))
+            .ok_or((FailureKind::Timeout, "timed out".to_string()))
     };
     let set = |sock: &std::net::TcpStream, d: Duration| {
         sock.set_read_timeout(Some(d))
@@ -343,16 +347,16 @@ fn tls_get(
     };
 
     let name = rustls::pki_types::ServerName::try_from(endpoint.host.clone())
-        .map_err(|e| (FailureKind::Tls, format!("主机名无效：{e}")))?;
+        .map_err(|e| (FailureKind::Tls, format!("invalid host name: {e}")))?;
     let mut conn = rustls::ClientConnection::new(tls.clone(), name)
-        .map_err(|e| (FailureKind::Tls, format!("TLS 握手失败：{e}")))?;
+        .map_err(|e| (FailureKind::Tls, format!("TLS handshake failed: {e}")))?;
     set(&sock, left()?)?;
     while conn.is_handshaking() {
         conn.complete_io(&mut sock).map_err(|e| {
             if io_kind(&e) {
-                (FailureKind::Timeout, "TLS 握手超时".to_string())
+                (FailureKind::Timeout, "TLS handshake timed out".to_string())
             } else {
-                (FailureKind::Tls, format!("TLS 握手失败：{e}"))
+                (FailureKind::Tls, format!("TLS handshake failed: {e}"))
             }
         })?;
         set(&sock, left()?)?;
@@ -367,9 +371,12 @@ fn tls_get(
     let mut stream = rustls::Stream::new(&mut conn, &mut sock);
     let http_err = |e: std::io::Error| {
         if io_kind(&e) {
-            (FailureKind::Timeout, "等待服务端应答超时".to_string())
+            (
+                FailureKind::Timeout,
+                "timed out waiting for the server reply".to_string(),
+            )
         } else {
-            (FailureKind::Http, format!("HTTP 请求失败：{e}"))
+            (FailureKind::Http, format!("HTTP request failed: {e}"))
         }
     };
     stream.write_all(request.as_bytes()).map_err(http_err)?;
@@ -390,7 +397,12 @@ fn tls_get(
         .split_whitespace()
         .nth(1)
         .and_then(|s| s.parse::<u16>().ok())
-        .ok_or_else(|| (FailureKind::Http, "服务端的应答不是 HTTP".to_string()))?;
+        .ok_or_else(|| {
+            (
+                FailureKind::Http,
+                "the server reply is not HTTP".to_string(),
+            )
+        })?;
     Ok((tls_time, http_time, status))
 }
 

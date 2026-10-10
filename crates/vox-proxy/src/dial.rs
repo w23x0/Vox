@@ -53,7 +53,7 @@ impl DialError {
         Self {
             stage,
             timed_out: true,
-            message: format!("{what}：超时"),
+            message: format!("{what}: timed out"),
         }
     }
 }
@@ -84,11 +84,11 @@ pub fn dial(
 
     let Some(proxy) = proxy else {
         let t = Instant::now();
-        let addrs =
-            resolve(host, port).map_err(|e| DialError::new(Stage::Dns, &e, "域名解析失败"))?;
+        let addrs = resolve(host, port)
+            .map_err(|e| DialError::new(Stage::Dns, &e, "DNS resolution failed"))?;
         let dns = t.elapsed();
         let t = Instant::now();
-        let stream = connect_any(&addrs, left(Stage::Connect, "连接")?, "连接")?;
+        let stream = connect_any(&addrs, left(Stage::Connect, "connect")?, "connect")?;
         return Ok(Dialed {
             stream,
             dns: Some(dns),
@@ -102,13 +102,13 @@ pub fn dial(
     let (target_ip, dns) = if local_dns {
         let t = Instant::now();
         let ip = resolve(host, port)
-            .map_err(|e| DialError::new(Stage::Dns, &e, "域名解析失败"))?
+            .map_err(|e| DialError::new(Stage::Dns, &e, "DNS resolution failed"))?
             .first()
             .map(SocketAddr::ip)
             .ok_or_else(|| DialError {
                 stage: Stage::Dns,
                 timed_out: false,
-                message: "域名解析失败：没有返回任何地址".into(),
+                message: "DNS resolution failed: no address returned".into(),
             })?;
         (Some(ip), Some(t.elapsed()))
     } else {
@@ -117,22 +117,26 @@ pub fn dial(
 
     let t = Instant::now();
     let proxy_addrs = resolve(&proxy.host, proxy.port)
-        .map_err(|e| DialError::new(Stage::Connect, &e, "解析代理地址失败"))?;
-    let mut stream = connect_any(&proxy_addrs, left(Stage::Connect, "连接代理")?, "连接代理")?;
+        .map_err(|e| DialError::new(Stage::Connect, &e, "could not resolve the proxy address"))?;
+    let mut stream = connect_any(
+        &proxy_addrs,
+        left(Stage::Connect, "connect to proxy")?,
+        "connect to proxy",
+    )?;
     let connect = t.elapsed();
 
     let t = Instant::now();
-    let budget = left(Stage::Tunnel, "代理握手")?;
+    let budget = left(Stage::Tunnel, "proxy handshake")?;
     stream
         .set_read_timeout(Some(budget))
         .and_then(|()| stream.set_write_timeout(Some(budget)))
-        .map_err(|e| DialError::new(Stage::Tunnel, &e, "代理握手"))?;
+        .map_err(|e| DialError::new(Stage::Tunnel, &e, "proxy handshake"))?;
     handshake(&mut stream, proxy, host, port, target_ip)
-        .map_err(|e| DialError::new(Stage::Tunnel, &e, "代理握手失败"))?;
+        .map_err(|e| DialError::new(Stage::Tunnel, &e, "proxy handshake failed"))?;
     stream
         .set_read_timeout(None)
         .and_then(|()| stream.set_write_timeout(None))
-        .map_err(|e| DialError::new(Stage::Tunnel, &e, "代理握手"))?;
+        .map_err(|e| DialError::new(Stage::Tunnel, &e, "proxy handshake"))?;
     Ok(Dialed {
         stream,
         dns,
@@ -144,7 +148,10 @@ pub fn dial(
 fn resolve(host: &str, port: u16) -> io::Result<Vec<SocketAddr>> {
     let addrs: Vec<SocketAddr> = (host, port).to_socket_addrs()?.collect();
     if addrs.is_empty() {
-        return Err(io::Error::new(io::ErrorKind::NotFound, "没有返回任何地址"));
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "no address returned",
+        ));
     }
     Ok(addrs)
 }
@@ -194,7 +201,7 @@ fn handshake<S: Read + Write>(
                 (false, None, _) => {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
-                        "socks5（非 socks5h）需要先在本地解析目标地址",
+                        "socks5 (not socks5h) must resolve the target address locally first",
                     ))
                 }
                 (true, _, _) => Target::Domain(host),
@@ -231,12 +238,15 @@ fn http_connect<S: Read + Write>(
     let mut byte = [0u8; 1];
     while !head.ends_with(b"\r\n\r\n") {
         if head.len() > 16 * 1024 {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "代理响应头过长"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "proxy response header is too long",
+            ));
         }
         if stream.read(&mut byte)? == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
-                "代理在握手中途关闭了连接",
+                "proxy closed the connection during the handshake",
             ));
         }
         head.push(byte[0]);
@@ -247,14 +257,16 @@ fn http_connect<S: Read + Write>(
         .split_whitespace()
         .nth(1)
         .and_then(|s| s.parse().ok())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "代理响应不是 HTTP"))?;
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "proxy response is not HTTP"))?;
     match status {
         200..=299 => Ok(()),
         407 => Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
-            "代理要求账号密码（HTTP 407），账号或密码不对",
+            "proxy requires credentials (HTTP 407); username or password is wrong",
         )),
-        other => Err(io::Error::other(format!("代理拒绝了隧道（HTTP {other}）"))),
+        other => Err(io::Error::other(format!(
+            "proxy refused the tunnel (HTTP {other})"
+        ))),
     }
 }
 
@@ -282,7 +294,7 @@ fn socks5<S: Read + Write>(
     let mut reply = [0u8; 2];
     stream.read_exact(&mut reply)?;
     if reply[0] != 5 {
-        return Err(bad("对端不是 SOCKS5 代理"));
+        return Err(bad("peer is not a SOCKS5 proxy"));
     }
     match reply[1] {
         0x00 => {}
@@ -290,7 +302,7 @@ fn socks5<S: Read + Write>(
             let (user, pass) = proxy
                 .auth
                 .as_ref()
-                .ok_or_else(|| bad("代理要求账号密码，但没有设置"))?;
+                .ok_or_else(|| bad("proxy requires credentials but none are set"))?;
             let mut msg = vec![1, user.len() as u8];
             msg.extend_from_slice(user.as_bytes());
             msg.push(pass.len() as u8);
@@ -301,12 +313,20 @@ fn socks5<S: Read + Write>(
             if status[1] != 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
-                    "SOCKS5 代理拒绝了账号或密码",
+                    "SOCKS5 proxy rejected the username or password",
                 ));
             }
         }
-        0xFF => return Err(bad("代理不接受我们提议的认证方式")),
-        other => return Err(bad(&format!("代理选了未知认证方式 0x{other:02x}"))),
+        0xFF => {
+            return Err(bad(
+                "proxy accepts none of the offered authentication methods",
+            ))
+        }
+        other => {
+            return Err(bad(&format!(
+                "proxy chose an unknown authentication method 0x{other:02x}"
+            )))
+        }
     }
 
     // CONNECT 请求。
@@ -322,7 +342,7 @@ fn socks5<S: Read + Write>(
         }
         Target::Domain(name) => {
             if name.len() > 255 {
-                return Err(bad("域名过长"));
+                return Err(bad("host name is too long"));
             }
             req.push(3);
             req.push(name.len() as u8);
@@ -335,7 +355,7 @@ fn socks5<S: Read + Write>(
     let mut head = [0u8; 4];
     stream.read_exact(&mut head)?;
     if head[0] != 5 {
-        return Err(bad("代理回复格式不对"));
+        return Err(bad("malformed proxy reply"));
     }
     if head[1] != 0 {
         return Err(io::Error::other(socks5_reply_text(head[1])));
@@ -349,7 +369,7 @@ fn socks5<S: Read + Write>(
             stream.read_exact(&mut len)?;
             len[0] as usize + 2
         }
-        _ => return Err(bad("代理回复的地址类型未知")),
+        _ => return Err(bad("proxy reply has an unknown address type")),
     };
     let mut skip = vec![0u8; tail];
     stream.read_exact(&mut skip)?;
@@ -358,17 +378,17 @@ fn socks5<S: Read + Write>(
 
 fn socks5_reply_text(code: u8) -> String {
     let text = match code {
-        1 => "代理故障",
-        2 => "代理规则不允许这条连接",
-        3 => "代理到不了目标网络",
-        4 => "代理到不了目标主机",
-        5 => "目标拒绝连接",
-        6 => "TTL 过期",
-        7 => "代理不支持该命令",
-        8 => "代理不支持该地址类型",
-        _ => "未知错误",
+        1 => "proxy failure",
+        2 => "connection not allowed by proxy rules",
+        3 => "network unreachable from proxy",
+        4 => "host unreachable from proxy",
+        5 => "connection refused by target",
+        6 => "TTL expired",
+        7 => "command not supported by proxy",
+        8 => "address type not supported by proxy",
+        _ => "unknown error",
     };
-    format!("SOCKS5 代理拒绝了连接（{code}）：{text}")
+    format!("SOCKS5 proxy refused the connection ({code}): {text}")
 }
 
 #[cfg(test)]

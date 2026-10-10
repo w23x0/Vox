@@ -212,7 +212,7 @@ fn atomic_write(path: &Path, content: &str) {
         let _ = fs::create_dir_all(dir);
     }
     let tmp = path.with_extension("json.tmp");
-    if let Err(error) = fs::write(&tmp, content) {
+    if let Err(error) = write_private(&tmp, content) {
         tracing::warn!(path = %tmp.display(), error = %error, "写临时文件失败（这次改动没落盘）");
         return;
     }
@@ -220,6 +220,27 @@ fn atomic_write(path: &Path, content: &str) {
         tracing::warn!(path = %path.display(), error = %error, "rename 失败（这次改动没落盘）");
         // tmp 留着也没事，下次会覆盖。
     }
+}
+
+/// Unix 上以 0o600 写（设置里可能含代理密码）。临时文件若是上次遗留的旧文件，
+/// 先删再建，保证权限从一开始就是 0o600；rename 后的目标文件因此也被修正。
+#[cfg(unix)]
+fn write_private(path: &Path, content: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let _ = fs::remove_file(path);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(content.as_bytes())
+}
+
+/// Windows 等：沿用文件系统默认 ACL。
+#[cfg(not(unix))]
+fn write_private(path: &Path, content: &str) -> std::io::Result<()> {
+    fs::write(path, content)
 }
 
 // --- 测试 ---------------------------------------------------------------------
@@ -248,6 +269,21 @@ mod tests {
 
     fn cleanup(dir: &PathBuf) {
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn written_files_are_private_and_existing_ones_are_fixed() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir();
+        let path = dir.join("settings.json");
+        fs::write(&path, "{}").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        atomic_write(&path, "{\"a\":1}");
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"a\":1}");
+        cleanup(&dir);
     }
 
     #[test]

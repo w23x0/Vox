@@ -49,6 +49,29 @@ mod winminmax;
 
 use state::AppState;
 
+/// 启动早期读到的界面语言，只给"启动失败"对话框用。
+static STARTUP_LANG: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// 没有落盘设置时（首次启动）按系统语言环境猜：`LANG` 之类以 zh / ja 开头就用对应语言，否则 English。
+fn system_ui_language() -> String {
+    ["LC_ALL", "LC_MESSAGES", "LANG"]
+        .iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .find(|v| !v.is_empty())
+        .map_or_else(
+            || "en".to_string(),
+            |v| {
+                if v.starts_with("zh") {
+                    "zh-CN".to_string()
+                } else if v.starts_with("ja") {
+                    "ja-JP".to_string()
+                } else {
+                    "en".to_string()
+                }
+            },
+        )
+}
+
 /// 桌面档的密钥文件名，落在配置目录下。**不进 `vox_host::Paths`**：Windows 侧是 DPAPI
 /// 密文、无屏档是 0600 明文 `secret.json`，两者内容格式不一样，同名会互相读不懂。
 /// 所以共享层只给 `SecretBackend` 一个"完整路径"，文件名由各档自己写死
@@ -148,9 +171,17 @@ pub fn run() {
         Ok(app) => app,
         Err(e) => {
             tracing::error!("Tauri 应用构建失败：{e}");
+            // 此时前端和 Runtime 都没有：语言取 `assemble` 早早记下的界面语言，
+            // 没记下就看系统语言环境变量。
+            let lang = STARTUP_LANG
+                .get()
+                .cloned()
+                .unwrap_or_else(system_ui_language);
+            let title = vox_core::Msg::new(vox_core::notice::key::STARTUP_FAILED_TITLE);
+            let body = vox_core::Msg::new(vox_core::notice::key::STARTUP_FAILED_BODY);
             platform::alert(
-                "Vox 启动失败",
-                &format!("初始化时出错，应用无法启动。\n\n{e}"),
+                &title.render_lang(&lang),
+                &format!("{}\n\n{e}", body.render_lang(&lang)),
             );
             return;
         }
@@ -194,6 +225,10 @@ fn assemble(
     // 配置目录只有这一处真源（Tauri 给的 `app_config_dir`）；目录里的文件名由
     // `vox_host::paths` 定。密钥文件名是这一档自己的口味（下面 `secret_backend`），不进 `Paths`。
     let paths = vox_host::Paths::from_dir(app.path().app_config_dir()?);
+    // 启动失败对话框要按界面语言说话，而那时设置还没载入：先偷看一眼落盘的语言。
+    if paths.settings().exists() {
+        let _ = STARTUP_LANG.set(vox_host::paths::load_settings(paths.settings()).ui_language);
+    }
     // 目录自己留一份：控制面的握手文件（`control.json`）也落在同一个目录里（第 14 步）。
     let config_dir = paths.dir.clone();
 

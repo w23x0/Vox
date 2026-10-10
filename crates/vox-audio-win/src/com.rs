@@ -54,7 +54,7 @@ impl ComGuard {
                 _not_send: PhantomData,
             })
         } else {
-            Err(hr_err("初始化 COM 失败", hr))
+            Err(hr_err("failed to initialize COM", hr))
         }
     }
 }
@@ -68,14 +68,14 @@ impl Drop for ComGuard {
     }
 }
 
-/// 把 HRESULT 包成中文 `PortError`，附带系统给的描述和原始十六进制码。
+/// 把 HRESULT 包成 English 诊断 `PortError`，附带系统给的描述和原始十六进制码。
 pub(crate) fn hr_err(context: &str, hr: HRESULT) -> PortError {
     let detail = windows::core::Error::from_hresult(hr).message();
     if detail.is_empty() {
-        PortError::new(format!("{context}（HRESULT 0x{:08X}）", hr.0 as u32))
+        PortError::new(format!("{context} (HRESULT 0x{:08X})", hr.0 as u32))
     } else {
         PortError::new(format!(
-            "{context}：{detail}（HRESULT 0x{:08X}）",
+            "{context}: {detail} (HRESULT 0x{:08X})",
             hr.0 as u32
         ))
     }
@@ -86,7 +86,7 @@ pub(crate) fn win_err(context: &str, err: windows::core::Error) -> PortError {
     hr_err(context, err.code())
 }
 
-/// 给 `Result<_, windows::core::Error>` 加上中文上下文。
+/// 给 `Result<_, windows::core::Error>` 加上 English 上下文。
 pub(crate) trait WinContext<T> {
     fn ctx(self, context: &str) -> PortResult<T>;
 }

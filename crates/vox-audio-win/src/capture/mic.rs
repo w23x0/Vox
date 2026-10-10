@@ -18,7 +18,7 @@ pub(crate) fn open_microphone(device_name: Option<&str>) -> PortResult<OpenCaptu
         eCapture,
         device_name,
         AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-        "麦克风",
+        "microphone",
     )
 }
 

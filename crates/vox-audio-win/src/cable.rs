@@ -485,10 +485,10 @@ pub fn set_multichannel_endpoint_enabled(enabled: bool) -> EndpointToggleOutcome
         cwd,
         60_000,
         &ElevateMessages {
-            start: "启动系统设备管理工具失败",
-            no_handle: "系统设备管理工具没有返回进程句柄",
-            timeout: "等待系统隐藏音频端点超时",
-            exit_code: "读取设备管理工具结果失败",
+            start: "failed to launch the system device management tool",
+            no_handle: "the system device management tool returned no process handle",
+            timeout: "timed out waiting for the system to hide the audio endpoints",
+            exit_code: "failed to read the device management tool result",
         },
     ) {
         Ok(ElevatedRun::Exited(code)) => code,
@@ -499,7 +499,9 @@ pub fn set_multichannel_endpoint_enabled(enabled: bool) -> EndpointToggleOutcome
         return EndpointToggleOutcome::NeedsReboot;
     }
     if code != 0 {
-        return EndpointToggleOutcome::Failed(format!("系统设备管理工具返回错误码 {code}"));
+        return EndpointToggleOutcome::Failed(format!(
+            "the system device management tool returned error code {code}"
+        ));
     }
 
     std::thread::sleep(Duration::from_millis(700));
@@ -563,7 +565,7 @@ impl Drop for HttpHandle {
     }
 }
 
-/// 取最近一次 Win32 错误，包成中文说明。
+/// 取最近一次 Win32 错误，包成 English 诊断串。
 fn last_error(context: &str) -> String {
     // SAFETY: GetLastError 只读当前线程的错误码，没有任何前置条件。
     let code = unsafe { windows::Win32::Foundation::GetLastError() };
@@ -590,7 +592,7 @@ pub fn download(
     };
 
     if let Err(e) = std::fs::create_dir_all(dir) {
-        return DownloadOutcome::Failed(format!("创建下载目录失败：{e}"));
+        return DownloadOutcome::Failed(format!("failed to create the download directory: {e}"));
     }
     let dest = dir.join(ARCHIVE_FILE_NAME);
 
@@ -606,7 +608,7 @@ pub fn download(
         )
     }) {
         Some(h) => h,
-        None => return DownloadOutcome::Failed(last_error("初始化 WinHTTP 失败")),
+        None => return DownloadOutcome::Failed(last_error("failed to initialize WinHTTP")),
     };
 
     // 解析、连接、发送、接收各给 30 秒，别让界面上的进度条永远转。
@@ -623,7 +625,9 @@ pub fn download(
         WinHttpConnect(session.raw(), PCWSTR(host.as_ptr()), 443, 0)
     }) {
         Some(h) => h,
-        None => return DownloadOutcome::Failed(last_error("连接下载服务器失败")),
+        None => {
+            return DownloadOutcome::Failed(last_error("failed to connect to the download server"))
+        }
     };
 
     let verb = to_wide("GET");
@@ -641,16 +645,22 @@ pub fn download(
         )
     }) {
         Some(h) => h,
-        None => return DownloadOutcome::Failed(last_error("创建下载请求失败")),
+        None => {
+            return DownloadOutcome::Failed(last_error("failed to create the download request"))
+        }
     };
 
     // SAFETY: request 有效；无附加头、无请求体。
     if let Err(e) = unsafe { WinHttpSendRequest(request.raw(), None, None, 0, 0, 0) } {
-        return DownloadOutcome::Failed(hr_err("发送下载请求失败", e.code()).message);
+        return DownloadOutcome::Failed(
+            hr_err("failed to send the download request", e.code()).message,
+        );
     }
     // SAFETY: request 有效。
     if let Err(e) = unsafe { WinHttpReceiveResponse(request.raw(), std::ptr::null_mut()) } {
-        return DownloadOutcome::Failed(hr_err("等待下载响应失败", e.code()).message);
+        return DownloadOutcome::Failed(
+            hr_err("failed to wait for the download response", e.code()).message,
+        );
     }
 
     let mut status: u32 = 0;
@@ -669,13 +679,13 @@ pub fn download(
     }
     .is_ok();
     if !got_status {
-        return DownloadOutcome::Failed(last_error("读取下载响应状态失败"));
+        return DownloadOutcome::Failed(last_error("failed to read the download response status"));
     }
     if status != 200 {
         return DownloadOutcome::Unavailable {
             status,
             hint: format!(
-                "官方下载链接返回 HTTP {status}，可能是官网换了版本。请直接打开 {PRODUCT_URL} 手动下载安装 {PRODUCT_NAME}。"
+                "The official download link returned HTTP {status}; the vendor may have changed versions. Open {PRODUCT_URL} to download and install {PRODUCT_NAME} manually."
             ),
         };
     }
@@ -714,7 +724,7 @@ pub fn download(
                 &mut read,
             )
         } {
-            return DownloadOutcome::Failed(hr_err("下载中断", e.code()).message);
+            return DownloadOutcome::Failed(hr_err("download interrupted", e.code()).message);
         }
         if read == 0 {
             break;
@@ -731,7 +741,7 @@ pub fn download(
                 expected: DOWNLOAD_EXPECTED_BYTES,
                 actual: body.len() as u64,
                 hint: format!(
-                    "下载内容异常偏大，已中止。请直接打开 {PRODUCT_URL} 手动下载安装 {PRODUCT_NAME}。"
+                    "The download is unexpectedly large and was aborted. Open {PRODUCT_URL} to download and install {PRODUCT_NAME} manually."
                 ),
             };
         }
@@ -747,7 +757,7 @@ pub fn download(
     }
 
     if let Err(e) = std::fs::write(&dest, &body) {
-        return DownloadOutcome::Failed(format!("保存驱动包失败：{e}"));
+        return DownloadOutcome::Failed(format!("failed to save the driver package: {e}"));
     }
     DownloadOutcome::Saved {
         path: dest,
@@ -758,8 +768,8 @@ pub fn download(
 /// 大小不符时给用户的提示。抽出来是为了能在不联网的情况下测文案。
 pub(crate) fn size_mismatch_hint(expected: u64, actual: u64) -> String {
     format!(
-        "下载到 {actual} 字节，和预期的 {expected} 字节不一致，为安全起见没有安装。\
-         请直接打开 {PRODUCT_URL} 手动下载安装 {PRODUCT_NAME}（也欢迎在 {DONATION_URL} 支持作者）。"
+        "The download is {actual} bytes but {expected} bytes were expected (mismatch), so nothing was installed for safety. \
+         Open {PRODUCT_URL} to download and install {PRODUCT_NAME} manually (you are also welcome to support the author at {DONATION_URL})."
     )
 }
 
@@ -777,7 +787,7 @@ pub(crate) fn map_install_exit(code: u32) -> InstallOutcome {
         3010 | 1641 => InstallOutcome::NeedsReboot,
         1223 => InstallOutcome::UserDeclinedElevation,
         other => InstallOutcome::Failed(format!(
-            "{PRODUCT_NAME} 安装器返回错误码 {other}。可以打开 {PRODUCT_URL} 手动安装。"
+            "The {PRODUCT_NAME} installer returned error code {other}. You can open {PRODUCT_URL} and install it manually."
         )),
     }
 }
@@ -803,7 +813,7 @@ fn system32_tool(relative: &str) -> PathBuf {
 /// 不行再退回 `Expand-Archive`。
 fn extract_archive(archive: &Path, into: &Path) -> Result<(), String> {
     if let Err(e) = std::fs::create_dir_all(into) {
-        return Err(format!("创建解压目录失败：{e}"));
+        return Err(format!("failed to create the extraction directory: {e}"));
     }
 
     let tar = Command::new(system32_tool("tar.exe"))
@@ -829,10 +839,10 @@ fn extract_archive(archive: &Path, into: &Path) -> Result<(), String> {
     match ps {
         Ok(s) if s.success() => Ok(()),
         Ok(s) => Err(format!(
-            "解压驱动包失败（tar 和 Expand-Archive 都不行，PowerShell 退出码 {:?}）",
+            "failed to extract the driver package (neither tar nor Expand-Archive worked; PowerShell exit code {:?})",
             s.code()
         )),
-        Err(e) => Err(format!("解压驱动包失败：{e}")),
+        Err(e) => Err(format!("failed to extract the driver package: {e}")),
     }
 }
 
@@ -871,7 +881,7 @@ pub(crate) fn find_installer(root: &Path) -> Option<PathBuf> {
 fn preflight(archive: &Path) -> Result<(), InstallOutcome> {
     if !archive.is_file() {
         return Err(InstallOutcome::Failed(format!(
-            "找不到驱动包：{}",
+            "driver package not found: {}",
             archive.display()
         )));
     }
@@ -882,7 +892,9 @@ fn preflight(archive: &Path) -> Result<(), InstallOutcome> {
             DOWNLOAD_EXPECTED_BYTES,
             m.len(),
         ))),
-        Err(e) => Err(InstallOutcome::Failed(format!("读取驱动包信息失败：{e}"))),
+        Err(e) => Err(InstallOutcome::Failed(format!(
+            "failed to read the driver package info: {e}"
+        ))),
     }
 }
 
@@ -922,7 +934,9 @@ pub fn uninstall_with_audio_reset(
         return InstallOutcome::Failed(error);
     }
     let Some(installer) = find_installer(&work) else {
-        return InstallOutcome::Failed(format!("驱动包里没找到 {INSTALLER_EXE}"));
+        return InstallOutcome::Failed(format!(
+            "{INSTALLER_EXE} was not found in the driver package"
+        ));
     };
 
     let escaped = installer.to_string_lossy().replace('\'', "''");
@@ -953,10 +967,10 @@ pub fn uninstall_with_audio_reset(
         &work,
         120_000,
         &ElevateMessages {
-            start: "启动加强卸载流程失败",
-            no_handle: "加强卸载流程没有返回进程句柄",
-            timeout: "加强卸载等待超时",
-            exit_code: "读取加强卸载结果失败",
+            start: "failed to launch the forced uninstall",
+            no_handle: "the forced uninstall returned no process handle",
+            timeout: "timed out waiting for the forced uninstall",
+            exit_code: "failed to read the forced uninstall result",
         },
     ) {
         Ok(ElevatedRun::Exited(code)) => code,
@@ -969,7 +983,7 @@ pub fn uninstall_with_audio_reset(
     std::thread::sleep(Duration::from_millis(1200));
     match detect() {
         CableStatus::NotInstalled => InstallOutcome::Succeeded,
-        _ => InstallOutcome::Failed("Windows 音频服务重启后驱动仍在，卸载没有完成。".into()),
+        _ => InstallOutcome::Failed("The driver is still present after restarting the Windows audio service; the uninstall did not complete.".into()),
     }
 }
 
@@ -993,7 +1007,7 @@ fn run_setup(archive: &Path, action: SetupAction) -> InstallOutcome {
     }
     let Some(installer) = find_installer(&work) else {
         return InstallOutcome::Failed(format!(
-            "驱动包里没找到 {INSTALLER_EXE}，可能官方换了包结构。请打开 {PRODUCT_URL} 手动安装。"
+            "{INSTALLER_EXE} was not found in the driver package; the vendor may have changed its layout. Open {PRODUCT_URL} to install manually."
         ));
     };
 
@@ -1007,9 +1021,9 @@ fn run_setup(archive: &Path, action: SetupAction) -> InstallOutcome {
         &work,
         5 * 60 * 1000,
         &ElevateMessages {
-            start: "启动安装器失败",
-            no_handle: "安装器没有返回进程句柄，无法确认安装结果",
-            timeout: "等待安装器结束超时（5 分钟）。请检查是否有安装向导窗口在等你操作。",
+            start: "failed to launch the installer",
+            no_handle: "the installer returned no process handle, so the result cannot be confirmed",
+            timeout: "Timed out waiting for the installer (5 minutes). Check whether an installer window is waiting for you.",
             exit_code: "读取安装器退出码失败",
         },
     ) {
@@ -1185,7 +1199,7 @@ mod tests {
         else {
             panic!("不存在的包应该失败");
         };
-        assert!(msg.contains("找不到驱动包"), "{msg}");
+        assert!(msg.contains("driver package not found"), "{msg}");
     }
 
     #[test]
@@ -1197,7 +1211,7 @@ mod tests {
         let Err(InstallOutcome::Failed(msg)) = preflight(&fake) else {
             panic!("大小不对应该失败");
         };
-        assert!(msg.contains("不一致"), "{msg}");
+        assert!(msg.contains("mismatch"), "{msg}");
         let _ = std::fs::remove_file(&fake);
         let _ = std::fs::remove_dir(&dir);
     }

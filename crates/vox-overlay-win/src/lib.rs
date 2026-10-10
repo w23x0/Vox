@@ -18,6 +18,7 @@
 // `text` 也是 core 的（字形数据 + `GlyphSource` trait）；GDI 光栅器在本 crate 的 `font`。
 pub use vox_overlay_core::{canvas, color, geom, layout, render, text};
 
+mod fallback;
 mod font;
 mod surface;
 mod window;
@@ -28,7 +29,19 @@ pub use window::GeometryCallback;
 /// 平台光栅器工厂：渲染器只认 trait，这里给它 GDI 那版。
 pub fn font_factory() -> text::FontFactory {
     vox_overlay_core::text::font_factory(|family, size, dpi| {
-        Ok(Box::new(FontRaster::new(family, size, dpi)?))
+        match FontRaster::new(family, size, dpi) {
+            Ok(raster) => Ok(Box::new(raster)),
+            // 拿不到字体文件（`GetFontData` 失败等）就没法整形——但字幕不能整块消失：
+            // 退回 `ExtTextOutW` 按字符串画，让 GDI 经 Uniscribe 整形。
+            Err(error) => {
+                tracing::warn!(
+                    family,
+                    error = %error.message,
+                    "subtitle font could not be loaded for shaping; falling back to plain GDI text drawing"
+                );
+                Ok(Box::new(fallback::TextOutRaster::new(family, size, dpi)?))
+            }
+        }
     })
 }
 
@@ -76,12 +89,14 @@ impl Overlay {
         let handle = std::thread::Builder::new()
             .name("vox-overlay".into())
             .spawn(move || window::run(thread_shared, settings, thread_callback, tx))
-            .map_err(|e| PortError::new(format!("启动悬浮窗线程失败: {e}")))?;
+            .map_err(|e| PortError::new(format!("failed to start the overlay thread: {e}")))?;
 
         let startup = match rx.recv() {
             Ok(Ok(())) => Ok(()),
             Ok(Err(e)) => Err(e),
-            Err(_) => Err(PortError::new("悬浮窗线程在建窗前退出")),
+            Err(_) => Err(PortError::new(
+                "the overlay thread exited before creating the window",
+            )),
         };
         if let Err(e) = startup {
             let _ = handle.join();

@@ -18,7 +18,8 @@ use crate::com::{wide_to_string, WinContext};
 /// 建一个端点枚举器。调用线程必须已经初始化过 COM。
 pub(crate) fn enumerator() -> PortResult<IMMDeviceEnumerator> {
     // SAFETY: CLSID 是系统内置的多媒体设备枚举器，调用线程已由 ComGuard 初始化。
-    unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }.ctx("创建音频设备枚举器失败")
+    unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }
+        .ctx("failed to create the audio device enumerator")
 }
 
 /// 读端点的友好名，例如 `扬声器 (Realtek(R) Audio)`。
@@ -27,10 +28,10 @@ pub(crate) fn friendly_name(device: &IMMDevice) -> PortResult<String> {
     unsafe {
         let store = device
             .OpenPropertyStore(STGM_READ)
-            .ctx("打开设备属性失败")?;
+            .ctx("failed to open the device properties")?;
         let mut value = store
             .GetValue(&PKEY_Device_FriendlyName)
-            .ctx("读设备名失败")?;
+            .ctx("failed to read the device name")?;
         let name = wide_to_string(value.Anonymous.Anonymous.Anonymous.pwszVal.0);
         // PROPVARIANT 里的字符串是 COM 分配的，必须交回去，否则每次枚举都漏一点。
         let _ = PropVariantClear(&mut value);
@@ -42,7 +43,7 @@ pub(crate) fn friendly_name(device: &IMMDevice) -> PortResult<String> {
 pub(crate) fn device_id(device: &IMMDevice) -> PortResult<String> {
     // SAFETY: device 有效；GetId 返回 COM 分配的宽字符串，读完立刻释放。
     unsafe {
-        let raw = device.GetId().ctx("读设备 ID 失败")?;
+        let raw = device.GetId().ctx("failed to read the device ID")?;
         let id = wide_to_string(raw.0);
         windows::Win32::System::Com::CoTaskMemFree(Some(raw.0 as *const _));
         Ok(id)
@@ -67,8 +68,10 @@ pub(crate) fn list_devices(flow: EDataFlow) -> PortResult<Vec<DeviceInfo>> {
     unsafe {
         let collection = enumerator
             .EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE)
-            .ctx("枚举音频设备失败")?;
-        let count = collection.GetCount().ctx("读设备数量失败")?;
+            .ctx("failed to enumerate audio devices")?;
+        let count = collection
+            .GetCount()
+            .ctx("failed to read the device count")?;
         let mut out = Vec::with_capacity(count as usize);
         for i in 0..count {
             let Ok(device) = collection.Item(i) else {
@@ -98,15 +101,17 @@ pub(crate) fn find_device(flow: EDataFlow, name: Option<&str>) -> PortResult<IMM
         // SAFETY: enumerator 有效；eConsole 表示“普通用途”的默认设备，
         // 跟 Windows 声音设置里那个默认设备一致。
         return unsafe { enumerator.GetDefaultAudioEndpoint(flow, eConsole) }
-            .ctx("获取默认音频设备失败");
+            .ctx("failed to get the default audio device");
     };
 
     // SAFETY: enumerator 有效，循环里的接口都由 windows-rs 托管。
     unsafe {
         let collection = enumerator
             .EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE)
-            .ctx("枚举音频设备失败")?;
-        let count = collection.GetCount().ctx("读设备数量失败")?;
+            .ctx("failed to enumerate audio devices")?;
+        let count = collection
+            .GetCount()
+            .ctx("failed to read the device count")?;
         let mut fallback = None;
         let wanted_lower = wanted.to_lowercase();
         for i in 0..count {

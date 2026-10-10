@@ -92,7 +92,7 @@ impl WsTransport {
             .worker_threads(2)
             .enable_all()
             .build()
-            .map_err(|e| PortError::new(format!("无法启动网络运行时：{e}")))?;
+            .map_err(|e| PortError::new(format!("could not start the network runtime: {e}")))?;
         let handle = rt.handle().clone();
         Ok(Self::with_runtime(handle, Some(rt)))
     }
@@ -142,14 +142,14 @@ impl Transport for WsTransport {
             .url
             .as_str()
             .into_client_request()
-            .map_err(|e| PortError::new(format!("URL 格式错误：{e}")))?;
+            .map_err(|e| PortError::new(format!("malformed URL: {e}")))?;
         if !request.auth_header.is_empty() {
             req.headers_mut().insert(
                 "Authorization",
                 request
                     .auth_header
                     .parse()
-                    .map_err(|e| PortError::new(format!("鉴权头格式错误：{e}")))?,
+                    .map_err(|e| PortError::new(format!("malformed auth header: {e}")))?,
             );
         }
 
@@ -169,7 +169,7 @@ impl Transport for WsTransport {
             )
             .await
         })
-        .ok_or_else(|| PortError::new("连接超时（30 秒内未完成握手）"))?
+        .ok_or_else(|| PortError::new("connect timed out (handshake not completed within 30 s)"))?
         .map_err(map_connect_error)?
         .0;
 
@@ -201,12 +201,12 @@ impl Transport for WsTransport {
         let conn = self
             .conn
             .as_mut()
-            .ok_or_else(|| PortError::new("发送失败：连接未建立"))?;
+            .ok_or_else(|| PortError::new("send failed: not connected"))?;
 
         let msg = Message::Text(text.to_owned().into());
         block_on_timeout(&self.handle, WRITE_TIMEOUT, conn.write.send(msg))
-            .ok_or_else(|| PortError::new("发送超时（5 秒内 socket 未能写出）"))?
-            .map_err(|e| PortError::new(format!("发送失败：{e}")))?;
+            .ok_or_else(|| PortError::new("send timed out (socket could not write within 5 s)"))?
+            .map_err(|e| PortError::new(format!("send failed: {e}")))?;
         Ok(())
     }
 
@@ -214,14 +214,14 @@ impl Transport for WsTransport {
         let conn = self
             .conn
             .as_mut()
-            .ok_or_else(|| PortError::new("接收失败：连接未建立"))?;
+            .ok_or_else(|| PortError::new("receive failed: not connected"))?;
 
         if timeout_ms == 0 {
             return match conn.rx.try_recv() {
                 Ok(msg) => Ok(Some(reader_msg(msg))),
                 Err(mpsc::error::TryRecvError::Empty) => Ok(None),
                 Err(mpsc::error::TryRecvError::Disconnected) => Ok(Some(Incoming::Closed(
-                    "连接意外断开（读循环已退出）".to_owned(),
+                    "connection dropped unexpectedly (read loop has exited)".to_owned(),
                 ))),
             };
         }
@@ -233,7 +233,7 @@ impl Transport for WsTransport {
             None => Ok(None),
             // channel 关了（读循环退出了但没来得及发 Error/Closed）。
             Some(None) => Ok(Some(Incoming::Closed(
-                "连接意外断开（读循环已退出）".to_owned(),
+                "connection dropped unexpectedly (read loop has exited)".to_owned(),
             ))),
             Some(Some(msg)) => Ok(Some(reader_msg(msg))),
         }
@@ -688,7 +688,7 @@ async fn reader_task(
                     None => {
                         // Stream 结束，对端关了。
                         let _ = tx.send(ReaderMsg::Closed(
-                            "对端关闭了连接".to_owned(),
+                            "peer closed the connection".to_owned(),
                         )).await;
                         break;
                     }
@@ -726,7 +726,7 @@ async fn reader_task(
                             let _ = tx.send(ReaderMsg::Closed(close_reason(None, &caught))).await;
                             break;
                         }
-                        let reason = format!("连接读取出错：{e}");
+                        let reason = format!("connection read error: {e}");
                         let _ = tx.send(ReaderMsg::Error(reason)).await;
                         break;
                     }
@@ -752,23 +752,26 @@ fn close_reason(
     if let Ok(mut slot) = caught.lock() {
         if let Some(caught) = slot.take() {
             return format!(
-                "服务端关闭连接（{}）：{}",
+                "server closed the connection ({}): {}",
                 caught
                     .code
-                    .map_or_else(|| "无状态码".to_string(), |code| code.to_string()),
+                    .map_or_else(|| "no status code".to_string(), |code| code.to_string()),
                 caught.reason
             );
         }
     }
     match frame {
-        Some(close) => format!("服务端关闭连接（{}）：{}", close.code, close.reason),
-        None => "服务端关闭连接（无附加信息）".to_owned(),
+        Some(close) => format!(
+            "server closed the connection ({}): {}",
+            close.code, close.reason
+        ),
+        None => "server closed the connection (no details)".to_owned(),
     }
 }
 
 // --- 错误映射 ----------------------------------------------------------------
 
-/// 把 tungstenite 的连接错误翻译成中文 PortError，并尽量区分失败类别。
+/// 把 tungstenite 的连接错误翻译成 English 诊断串的 PortError，并尽量区分失败类别。
 fn map_connect_error(err: tungstenite::Error) -> PortError {
     match &err {
         tungstenite::Error::Http(response) => {
@@ -778,26 +781,30 @@ fn map_connect_error(err: tungstenite::Error) -> PortError {
                 .as_ref()
                 .map(|b| String::from_utf8_lossy(b))
                 .unwrap_or_default();
-            PortError::new(format!("服务端拒绝了连接（HTTP {status}）：{body}",))
+            PortError::new(format!(
+                "server rejected the connection (HTTP {status}): {body}",
+            ))
         }
-        tungstenite::Error::HttpFormat(_) => PortError::new(format!("HTTP 协议格式错误：{err}")),
+        tungstenite::Error::HttpFormat(_) => PortError::new(format!("malformed HTTP: {err}")),
         tungstenite::Error::Io(io_err) => {
             let kind = io_err.kind();
             // 区分 DNS / TCP 连接失败。
-            if format!("{err}").contains("域名解析失败")
+            if format!("{err}").contains("DNS resolution failed")
                 || format!("{err}").contains("dns")
                 || format!("{err}").contains("resolve")
                 || format!("{err}").contains("getaddrinfo")
             {
-                PortError::new(format!("DNS 解析失败，检查网络连接：{err}"))
+                PortError::new(format!(
+                    "DNS resolution failed, check the network connection: {err}"
+                ))
             } else {
-                PortError::new(format!("网络连接失败（{kind:?}）：{err}"))
+                PortError::new(format!("network connection failed ({kind:?}): {err}"))
             }
         }
-        tungstenite::Error::Tls(_) => {
-            PortError::new(format!("TLS 握手失败，可能是证书或网络代理问题：{err}"))
-        }
-        _ => PortError::new(format!("WebSocket 连接失败：{err}")),
+        tungstenite::Error::Tls(_) => PortError::new(format!(
+            "TLS handshake failed, possibly a certificate or network proxy issue: {err}"
+        )),
+        _ => PortError::new(format!("WebSocket connection failed: {err}")),
     }
 }
 
@@ -1074,7 +1081,7 @@ mod tests {
         let rt = test_runtime();
         let mut transport = WsTransport::new(rt.handle().clone());
         let err = transport.send("hello").unwrap_err();
-        assert!(err.message.contains("未建立"));
+        assert!(err.message.contains("not connected"));
     }
 
     #[test]
@@ -1082,7 +1089,7 @@ mod tests {
         let rt = test_runtime();
         let mut transport = WsTransport::new(rt.handle().clone());
         let err = transport.recv(100).unwrap_err();
-        assert!(err.message.contains("未建立"));
+        assert!(err.message.contains("not connected"));
     }
 
     /// 百炼额度用尽时真发过来的那条（2026-10-09 `--raw` 抓帧实测，182 字节）。
@@ -1525,7 +1532,7 @@ mod tests {
         let proxy = socks5_proxy(None, vec![(REMOTE_ONLY.to_owned(), addr)]);
         request.network = via(&format!("socks5://{}", proxy.addr));
         let err = transport.connect(&request).unwrap_err();
-        assert!(err.to_string().contains("域名解析失败"), "{err}");
+        assert!(err.to_string().contains("DNS resolution failed"), "{err}");
         assert!(proxy.requests().is_empty());
         drop(rt);
     }
@@ -1543,7 +1550,7 @@ mod tests {
         request.network = via(&format!("http://u:secret-pass@127.0.0.1:{dead}"));
         let mut transport = WsTransport::new(rt.handle().clone());
         let err = transport.connect(&request).unwrap_err().to_string();
-        assert!(err.contains("连接代理"), "{err}");
+        assert!(err.contains("connect to proxy"), "{err}");
         assert!(!err.contains("secret-pass"), "错误里不许有代理密码：{err}");
     }
 

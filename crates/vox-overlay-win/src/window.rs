@@ -209,7 +209,7 @@ fn create(
             None,
         )
     }
-    .map_err(|e| PortError::new(format!("创建悬浮窗失败: {e}")))?;
+    .map_err(|e| PortError::new(format!("failed to create the overlay window: {e}")))?;
 
     // DPI 必须问，不能假设 96：进程的 DPI 感知由外层 Tauri 应用设置（预期
     // per-monitor v2），这里只查当前窗口所在显示器的实际值。
@@ -260,8 +260,8 @@ fn register_class() -> PortResult<()> {
     static ONCE: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
     let result = ONCE.get_or_init(|| {
         // SAFETY: 传 None 取当前模块句柄，失败返回 Err。
-        let module =
-            unsafe { GetModuleHandleW(None) }.map_err(|e| format!("取模块句柄失败: {e}"))?;
+        let module = unsafe { GetModuleHandleW(None) }
+            .map_err(|e| format!("failed to get the module handle: {e}"))?;
         let class = wide(WINDOW_CLASS);
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -282,7 +282,7 @@ fn register_class() -> PortResult<()> {
         if err == windows::Win32::Foundation::ERROR_CLASS_ALREADY_EXISTS {
             Ok(())
         } else {
-            Err(format!("注册窗口类失败: {err:?}"))
+            Err(format!("failed to register the window class: {err:?}"))
         }
     });
     result.clone().map_err(PortError::new)

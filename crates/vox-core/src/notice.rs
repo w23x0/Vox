@@ -50,11 +50,26 @@ impl Msg {
 
     /// 用 English 渲染（无屏档日志、MCP 账本）。查不到 key 就返回 key 本身——与前端同一条回退。
     pub fn render_en(&self) -> String {
+        self.render_lang("en")
+    }
+
+    /// 按界面语言码（`zh-CN` / `ja-JP` / `en`，看前缀）渲染；缺这一语言就回退 English，
+    /// 再缺就是 key 本身——不回退中文，与前端同一条回退。托盘菜单、启动失败对话框这类
+    /// 前端还没起来的地方用它。
+    pub fn render_lang(&self, ui_language: &str) -> String {
         let table = table();
-        let template = table.en.get(self.key).map(String::as_str);
+        let lang = if ui_language.starts_with("zh") {
+            "zh"
+        } else if ui_language.starts_with("ja") {
+            "ja"
+        } else {
+            "en"
+        };
+        let pick = |l: &str| table.text.get(&(l.to_string(), self.key.to_string()));
+        let template = pick(lang).or_else(|| pick("en")).map(String::as_str);
         let mut text = interpolate(template.unwrap_or(self.key), &self.params);
         if let Some(detail) = &self.detail {
-            text.push_str(&table.separator_en);
+            text.push_str(table.separators.get(lang).map_or(": ", String::as_str));
             text.push_str(detail);
         }
         text
@@ -98,8 +113,9 @@ fn interpolate(template: &str, params: &BTreeMap<&'static str, String>) -> Strin
 }
 
 struct Table {
-    en: HashMap<String, String>,
-    separator_en: String,
+    /// `(语言, key) -> 模板`。
+    text: HashMap<(String, String), String>,
+    separators: HashMap<String, String>,
 }
 
 fn table() -> &'static Table {
@@ -108,24 +124,25 @@ fn table() -> &'static Table {
         // 文件是 `include_str!` 进来的、由 `notice::tests` 钉死形状，解析失败 = 构建产物坏了。
         let root: serde_json::Value =
             serde_json::from_str(CATALOG_JSON).unwrap_or(serde_json::Value::Null);
-        let en = root["messages"]
-            .as_object()
-            .map(|messages| {
-                messages
-                    .iter()
-                    .filter_map(|(key, langs)| {
-                        langs["en"]
-                            .as_str()
-                            .map(|text| (key.clone(), text.to_string()))
-                    })
-                    .collect()
+        let mut text = HashMap::new();
+        if let Some(messages) = root["messages"].as_object() {
+            for (key, langs) in messages {
+                for lang in ["zh", "en", "ja"] {
+                    if let Some(t) = langs[lang].as_str() {
+                        text.insert((lang.to_string(), key.clone()), t.to_string());
+                    }
+                }
+            }
+        }
+        let separators = ["zh", "en", "ja"]
+            .iter()
+            .filter_map(|lang| {
+                root["detail_separator"][*lang]
+                    .as_str()
+                    .map(|t| (lang.to_string(), t.to_string()))
             })
-            .unwrap_or_default();
-        let separator_en = root["detail_separator"]["en"]
-            .as_str()
-            .unwrap_or(": ")
-            .to_string();
-        Table { en, separator_en }
+            .collect();
+        Table { text, separators }
     })
 }
 
@@ -185,6 +202,13 @@ declare_keys! {
     HEADLESS_NEEDS_LINUX = "notice.headlessNeedsLinux",
     CABLE_HIDE_FAILED = "notice.cableHideFailed",
     CABLE_RESTORE_FAILED = "notice.cableRestoreFailed",
+    TRAY_SPEAK = "tray.speak",
+    TRAY_LISTEN = "tray.listen",
+    TRAY_SUBTITLE = "tray.subtitle",
+    TRAY_OPEN_SETTINGS = "tray.openSettings",
+    TRAY_QUIT = "tray.quit",
+    STARTUP_FAILED_TITLE = "startup.failedTitle",
+    STARTUP_FAILED_BODY = "startup.failedBody",
     INPUT_DEVICE_NOT_FOUND = "notice.inputDeviceNotFound",
     OUTPUT_DEVICE_NOT_FOUND = "notice.outputDeviceNotFound",
     PROGRAM_SILENT = "notice.programSilent",
@@ -312,6 +336,15 @@ mod tests {
             with_param,
             "\"chrome\" is not running (the program is closed, or the name is wrong)"
         );
+    }
+
+    #[test]
+    fn render_lang_picks_the_language_and_falls_back_to_english() {
+        let m = Msg::new(key::TRAY_QUIT);
+        assert_eq!(m.render_lang("zh-CN"), "退出");
+        assert_eq!(m.render_lang("ja-JP"), "終了");
+        assert_eq!(m.render_lang("en"), "Quit");
+        assert_eq!(m.render_lang("fr"), "Quit");
     }
 
     /// 查不到的 key：渲染成 key 本身（不是空串、不是中文）。

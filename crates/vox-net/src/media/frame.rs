@@ -103,16 +103,28 @@ pub enum MediaError {
 impl fmt::Display for MediaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Short => write!(f, "帧短于 {HEADER_LEN} 字节的头"),
-            Self::Magic => f.write_str("magic 不是 VB"),
-            Self::Version(v) => write!(f, "协议版本 {v} 不认识（本版只认 {VERSION}）"),
-            Self::Kind(k) => write!(f, "帧种类 {k} 不认识"),
-            Self::Flags(flags) => write!(f, "flags 必须为 0，收到 {flags}"),
-            Self::Rate { got, want } => write!(f, "载荷采样率 {got} Hz 与声明的 {want} Hz 不符"),
-            Self::Channels(ch) => write!(f, "声道数必须为 1，收到 {ch}"),
-            Self::Oversize(len) => write!(f, "载荷 {len} 字节超过上限 {MAX_PAYLOAD}"),
-            Self::KeepAlivePayload(len) => write!(f, "保活帧必须没有载荷，收到 {len} 字节"),
-            Self::TextFrame => f.write_str("音频管子只认二进制帧，收到文本帧"),
+            Self::Short => write!(f, "frame is shorter than the {HEADER_LEN}-byte header"),
+            Self::Magic => f.write_str("magic is not VB"),
+            Self::Version(v) => write!(
+                f,
+                "unknown protocol version {v} (this build only speaks {VERSION})"
+            ),
+            Self::Kind(k) => write!(f, "unknown frame kind {k}"),
+            Self::Flags(flags) => write!(f, "flags must be 0, got {flags}"),
+            Self::Rate { got, want } => write!(
+                f,
+                "payload sample rate {got} Hz does not match the declared {want} Hz"
+            ),
+            Self::Channels(ch) => write!(f, "channel count must be 1, got {ch}"),
+            Self::Oversize(len) => {
+                write!(f, "payload of {len} bytes exceeds the limit {MAX_PAYLOAD}")
+            }
+            Self::KeepAlivePayload(len) => {
+                write!(f, "keep-alive frames carry no payload, got {len} bytes")
+            }
+            Self::TextFrame => {
+                f.write_str("the audio pipe only accepts binary frames, got a text frame")
+            }
         }
     }
 }

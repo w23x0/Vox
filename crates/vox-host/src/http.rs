@@ -34,8 +34,8 @@ pub(crate) fn agent_for(
     network: &NetworkSetting,
     target_host: &str,
 ) -> Result<ureq::Agent, String> {
-    let proxy =
-        vox_proxy::resolve(network, target_host).map_err(|e| format!("代理设置无效：{e}"))?;
+    let proxy = vox_proxy::resolve(network, target_host)
+        .map_err(|e| format!("invalid proxy settings: {e}"))?;
     let config = Config::builder()
         .timeout_global(Some(HTTP_TIMEOUT))
         .http_status_as_error(false)

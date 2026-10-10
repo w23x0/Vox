@@ -271,7 +271,7 @@ impl FontRaster {
         // SAFETY: CreateCompatibleDC(None) 用屏幕 DC 做模板，失败返回空句柄，下面立刻查。
         let dc = unsafe { CreateCompatibleDC(None) };
         if dc.is_invalid() {
-            return Err(PortError::new("创建字体用的内存 DC 失败"));
+            return Err(PortError::new("failed to create the memory DC for fonts"));
         }
 
         let mut lf = LOGFONTW {
@@ -296,7 +296,7 @@ impl FontRaster {
                 let _ = DeleteDC(dc);
             }
             return Err(PortError::new(format!(
-                "创建字体失败: {family} {size_pt}pt"
+                "failed to create font: {family} {size_pt}pt"
             )));
         }
         // SAFETY: dc 和 font 都有效；返回的旧字体句柄留着，销毁前要还原。
@@ -313,13 +313,13 @@ impl FontRaster {
         let Some((primary_face, ascent, height)) = read_selected_font(dc) else {
             release(dc, old_font, font);
             return Err(PortError::new(format!(
-                "读取字体「{family}」的度量或文件失败（整形需要字体文件）"
+                "failed to read metrics or file data of font '{family}' (shaping needs the font file)"
             )));
         };
         let Some(faces) = FaceSet::new(primary_face) else {
             release(dc, old_font, font);
             return Err(PortError::new(format!(
-                "字体「{family}」不是整形引擎能打开的 TrueType/OpenType 字体"
+                "font '{family}' is not a TrueType/OpenType font the shaping engine can open"
             )));
         };
         let mut tm = TEXTMETRICW::default();
@@ -377,13 +377,17 @@ impl FontRaster {
         // 生命周期跟 self.bitmap 绑定，Drop 里一起释放。
         let bitmap =
             unsafe { CreateDIBSection(Some(self.dc), &info, DIB_RGB_COLORS, &mut bits, None, 0) }
-                .map_err(|e| PortError::new(format!("创建字形临时位图失败: {e}")))?;
+                .map_err(|e| {
+                PortError::new(format!("failed to create the glyph scratch bitmap: {e}"))
+            })?;
         if bits.is_null() {
             // SAFETY: bitmap 刚建成功，这条路径上要还回去。
             unsafe {
                 let _ = DeleteObject(bitmap.into());
             }
-            return Err(PortError::new("字形临时位图没有返回像素指针"));
+            return Err(PortError::new(
+                "the glyph scratch bitmap returned no pixel pointer",
+            ));
         }
         // SAFETY: dc 有效，bitmap 刚建好且尚未被选进任何 DC。
         let old_bitmap = unsafe { SelectObject(self.dc, bitmap.into()) };
@@ -512,7 +516,7 @@ impl Drop for FontRaster {
 }
 
 /// 把掩码四周全 0 的行列裁掉：缓存小一点，合成时少扫一片空白。
-fn trim(g: Glyph) -> Glyph {
+pub(crate) fn trim(g: Glyph) -> Glyph {
     if g.w <= 0 || g.h <= 0 {
         return g;
     }
@@ -556,7 +560,7 @@ fn trim(g: Glyph) -> Glyph {
 
 /// 往 `LOGFONTW.lfFaceName` 里写字体名。字段是定长 32 且必须以 0 结尾，超长直接截断
 /// ——GDI 自己也是这么处理的，截断后匹配不上会退回系统默认字体，不会失败。
-fn write_face_name(dst: &mut [u16; 32], family: &str) {
+pub(crate) fn write_face_name(dst: &mut [u16; 32], family: &str) {
     let mut i = 0;
     for u in family.encode_utf16() {
         if i + 1 >= dst.len() {

@@ -77,7 +77,7 @@ impl CaptureSource for WinCapture {
         let (handshake, rx) = Handshake::pair();
         let (plan, what) = match target {
             CaptureTarget::Microphone(name) => {
-                (Plan::Microphone(name.clone()), "麦克风采集".to_string())
+                (Plan::Microphone(name.clone()), "microphone capture".to_string())
             }
             CaptureTarget::ProcessLoopback {
                 executable,
@@ -87,7 +87,7 @@ impl CaptureSource for WinCapture {
                     executable: executable.clone(),
                     include_tree: *include_tree,
                 },
-                format!("{executable} 的进程环回采集"),
+                format!("process loopback capture of {executable}"),
             ),
             // 网络采集目标（媒体面）不归 WASAPI 这条路：它由 `vox-net` 的监听侧实现。
             CaptureTarget::Net { .. } => {
@@ -191,7 +191,7 @@ impl CaptureSource for EndpointLoopbackCapture {
             control,
             thread: Some(thread),
         });
-        match await_start(rx, "整机环回采集") {
+        match await_start(rx, "system loopback capture") {
             Ok(format) => Ok(format),
             Err(e) => {
                 self.stop();

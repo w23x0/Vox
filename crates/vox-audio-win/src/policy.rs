@@ -128,7 +128,8 @@ pub fn elevate_and_restore_defaults(
         Err(message) => return Err(message),
     }
 
-    let exe = std::env::current_exe().map_err(|e| format!("找不到自身路径：{e}"))?;
+    let exe =
+        std::env::current_exe().map_err(|e| format!("cannot find own executable path: {e}"))?;
     let args: Vec<String> = [RESTORE_ARG.to_string(), encode(&render), encode(&capture)]
         .into_iter()
         .collect();
@@ -136,10 +137,10 @@ pub fn elevate_and_restore_defaults(
     match code {
         0 => Ok(()),
         val if val == ERROR_CANCELLED.0 => Err(
-            "已取消管理员授权，默认声音设备没有被恢复。可以在 Windows 声音设置里手动改回。".into(),
+            "Administrator approval was cancelled; the default sound devices were not restored. You can change them back in Windows sound settings.".into(),
         ),
         other => Err(format!(
-            "默认声音设备恢复失败（退出码 {other}）。可以在 Windows 声音设置里手动改回。"
+            "Restoring the default sound devices failed (exit code {other}). You can change them back in Windows sound settings."
         )),
     }
 }
@@ -169,13 +170,15 @@ pub fn restore_via_args_if_requested() -> bool {
 /// 设备名走 `speak.output_device`，与这里无关。
 fn set_default_endpoints(render: &Option<String>, capture: &Option<String>) -> Result<(), String> {
     let Ok(_com) = ComGuard::mta() else {
-        return Err("初始化 COM 失败".into());
+        return Err("failed to initialize COM".into());
     };
     if let Some(device_id) = render.as_deref() {
-        set_default_endpoint(device_id).map_err(|e| format!("恢复默认播放设备失败：{e}"))?;
+        set_default_endpoint(device_id)
+            .map_err(|e| format!("failed to restore the default playback device: {e}"))?;
     }
     if let Some(device_id) = capture.as_deref() {
-        set_default_endpoint(device_id).map_err(|e| format!("恢复默认录音设备失败：{e}"))?;
+        set_default_endpoint(device_id)
+            .map_err(|e| format!("failed to restore the default recording device: {e}"))?;
     }
     Ok(())
 }
@@ -185,7 +188,7 @@ fn set_default_endpoint(device_id: &str) -> Result<(), String> {
     // SAFETY: CLSID/接口 IID 是常量；CoCreateInstance 拿实例，接口由 windows_core 管引用计数。
     // CLSCTX_ALL 允许 COM 为所需线程模型自动代理。
     let policy: IPolicyConfig = unsafe { CoCreateInstance(&CLSID_POLICY_CONFIG, None, CLSCTX_ALL) }
-        .map_err(|e| hr_err("创建音频策略对象失败", e.code()).message)?;
+        .map_err(|e| hr_err("failed to create the audio policy object", e.code()).message)?;
 
     let wide = to_wide(device_id);
     // SAFETY: 调用期间 wide 保持有效；SetDefaultEndpoint(此指针→ID, eConsole)。
@@ -197,7 +200,7 @@ fn set_default_endpoint(device_id: &str) -> Result<(), String> {
         )
     };
     if !hr.is_ok() {
-        return Err(hr_err("设置默认声音设备失败", hr).message);
+        return Err(hr_err("failed to set the default sound device", hr).message);
     }
     Ok(())
 }
@@ -211,14 +214,14 @@ fn run_self_elevated(exe: &std::path::Path, args: &[String]) -> Result<u32, Stri
         cwd,
         60_000,
         &ElevateMessages {
-            start: "以管理员身份拉起恢复进程失败",
-            no_handle: "恢复进程没有返回句柄",
-            timeout: "等待恢复进程超时",
-            exit_code: "读取恢复进程退出码失败",
+            start: "failed to launch the restore process as administrator",
+            no_handle: "the restore process returned no handle",
+            timeout: "timed out waiting for the restore process",
+            exit_code: "failed to read the restore process exit code",
         },
     ) {
         Ok(ElevatedRun::Exited(code)) => Ok(code),
-        Ok(ElevatedRun::Declined) => Err("已取消管理员授权".into()),
+        Ok(ElevatedRun::Declined) => Err("Administrator approval was cancelled".into()),
         Err(message) => Err(message),
     }
 }

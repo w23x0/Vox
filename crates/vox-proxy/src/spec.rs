@@ -24,13 +24,16 @@ pub enum ProxyError {
 impl fmt::Display for ProxyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Empty => f.write_str("代理地址为空"),
+            Self::Empty => f.write_str("proxy address is empty"),
             Self::UnsupportedScheme(s) => {
-                write!(f, "不支持的代理协议 {s}://（可用 http、socks5、socks5h）")
+                write!(
+                    f,
+                    "unsupported proxy scheme {s}:// (use http, socks5 or socks5h)"
+                )
             }
-            Self::MissingHost => f.write_str("代理地址缺少主机名"),
-            Self::BadPort(p) => write!(f, "代理端口无效：{p}"),
-            Self::CredentialTooLong => f.write_str("代理账号或密码太长"),
+            Self::MissingHost => f.write_str("proxy address has no host"),
+            Self::BadPort(p) => write!(f, "invalid proxy port: {p}"),
+            Self::CredentialTooLong => f.write_str("proxy username or password is too long"),
         }
     }
 }

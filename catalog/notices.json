@@ -1,6 +1,10 @@
 {
   "schema_version": 1,
-  "detail_separator": { "zh": "：", "en": ": ", "ja": "：" },
+  "detail_separator": {
+    "zh": "：",
+    "en": ": ",
+    "ja": "："
+  },
   "messages": {
     "notice.hostFactsExcess": {
       "zh": "外壳报了能力位上限之外的关闭项（已忽略）：{bits}",
@@ -242,7 +246,6 @@
       "en": "The ALSA backend cannot capture per program. Use the PipeWire backend instead",
       "ja": "ALSA バックエンドではプログラム単位のキャプチャはできません。PipeWire バックエンドを使ってください"
     },
-
     "error.modelListTask": {
       "zh": "模型列表任务失败",
       "en": "The model list task failed",
@@ -437,6 +440,41 @@
       "zh": "打开 VB-CABLE 授权页面失败",
       "en": "Could not open the VB-CABLE licensing page",
       "ja": "VB-CABLE のライセンスページを開けませんでした"
+    },
+    "tray.speak": {
+      "zh": "对外说话",
+      "en": "Speak",
+      "ja": "話す"
+    },
+    "tray.listen": {
+      "zh": "听人说话",
+      "en": "Listen",
+      "ja": "聞く"
+    },
+    "tray.subtitle": {
+      "zh": "显示字幕",
+      "en": "Show subtitles",
+      "ja": "字幕を表示"
+    },
+    "tray.openSettings": {
+      "zh": "打开设置",
+      "en": "Open settings",
+      "ja": "設定を開く"
+    },
+    "tray.quit": {
+      "zh": "退出",
+      "en": "Quit",
+      "ja": "終了"
+    },
+    "startup.failedTitle": {
+      "zh": "Vox 启动失败",
+      "en": "Vox failed to start",
+      "ja": "Vox を起動できませんでした"
+    },
+    "startup.failedBody": {
+      "zh": "初始化时出错，应用无法启动。",
+      "en": "Something went wrong during initialization and the app cannot start.",
+      "ja": "初期化中にエラーが発生し、アプリを起動できません。"
     }
   }
 }

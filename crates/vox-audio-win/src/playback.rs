@@ -111,7 +111,8 @@ impl PlaybackSink for WinPlayback {
         }
 
         // SAFETY: 手动复位事件，句柄交给 OwnedHandle 独占。
-        let wake = unsafe { CreateEventW(None, true, false, None) }.ctx("创建播放停止事件失败")?;
+        let wake = unsafe { CreateEventW(None, true, false, None) }
+            .ctx("failed to create the playback stop event")?;
 
         // 环形缓冲按最坏情况（48 kHz 立体声）一次建好，实际率确定后不重建。
         // 480_000 个槽 × 4 字节 = 1.83 MiB，换来的是设备率比 48k 低时容量只会更宽松，
@@ -295,11 +296,13 @@ fn open_render(device_name: Option<&str>) -> PortResult<OpenRender> {
     let device = devices::find_device(devices::RENDER, device_name)?;
     // SAFETY: device 有效。
     let client: IAudioClient =
-        unsafe { device.Activate(CLSCTX_ALL, None) }.ctx("打开输出设备失败")?;
+        unsafe { device.Activate(CLSCTX_ALL, None) }.ctx("failed to open the output device")?;
 
     // SAFETY: GetMixFormat 返回 COM 分配的格式块，解析后立刻释放。
     let (mix, mix_bytes) = unsafe {
-        let ptr = client.GetMixFormat().ctx("读输出设备混音格式失败")?;
+        let ptr = client
+            .GetMixFormat()
+            .ctx("failed to read the output device mix format")?;
         let parsed = parse_format(ptr);
         let byte_len = if ptr.is_null() {
             0
@@ -355,8 +358,8 @@ fn open_render(device_name: Option<&str>) -> PortResult<OpenRender> {
                 mix.sample_rate
             );
             // SAFETY: device 有效；失败过的 client 不能重复 Initialize，只能再要一个。
-            let retry: IAudioClient =
-                unsafe { device.Activate(CLSCTX_ALL, None) }.ctx("重开输出设备失败")?;
+            let retry: IAudioClient = unsafe { device.Activate(CLSCTX_ALL, None) }
+                .ctx("failed to reopen the output device")?;
             let mix_ptr = mix_bytes
                 .as_ptr()
                 .cast::<windows::Win32::Media::Audio::WAVEFORMATEX>();
@@ -369,7 +372,7 @@ fn open_render(device_name: Option<&str>) -> PortResult<OpenRender> {
                     mix_ptr,
                 )
             }
-            .ctx("初始化输出流失败")?;
+            .ctx("failed to initialize the output stream")?;
             (
                 retry,
                 mix.sample_rate,
@@ -382,19 +385,22 @@ fn open_render(device_name: Option<&str>) -> PortResult<OpenRender> {
 
     // SAFETY: 自动复位事件，句柄交给 OwnedHandle 独占。
     let event = OwnedHandle::new(
-        unsafe { CreateEventW(None, false, false, None) }.ctx("创建播放事件失败")?,
+        unsafe { CreateEventW(None, false, false, None) }
+            .ctx("failed to create the playback event")?,
     );
     // SAFETY: client 已初始化；事件在 OpenRender 存活期间有效。
-    unsafe { client.SetEventHandle(event.raw()) }.ctx("绑定播放事件失败")?;
+    unsafe { client.SetEventHandle(event.raw()) }.ctx("failed to bind the playback event")?;
     // SAFETY: client 已初始化，取渲染服务接口。
-    let render: IAudioRenderClient = unsafe { client.GetService() }.ctx("获取播放渲染接口失败")?;
+    let render: IAudioRenderClient =
+        unsafe { client.GetService() }.ctx("failed to get the playback render interface")?;
     // SAFETY: client 已初始化。
-    let buffer_frames = unsafe { client.GetBufferSize() }.ctx("读播放缓冲大小失败")?;
+    let buffer_frames =
+        unsafe { client.GetBufferSize() }.ctx("failed to read the playback buffer size")?;
     let stream_latency_ms = unsafe { client.GetStreamLatency() }
         .map(|hns| (hns.max(0) as u64).div_ceil(10_000))
         .unwrap_or(0);
     // SAFETY: 一切就绪。
-    unsafe { client.Start() }.ctx("启动播放流失败")?;
+    unsafe { client.Start() }.ctx("failed to start the playback stream")?;
 
     Ok(OpenRender {
         client,

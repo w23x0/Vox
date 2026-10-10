@@ -164,7 +164,7 @@ pub(crate) fn open_process_loopback(pid: u32, include_tree: bool) -> PortResult<
             &handler,
         )
     }
-    .ctx("发起进程环回激活失败")?;
+    .ctx("failed to start process loopback activation")?;
 
     // 等回调。带超时，不能无限等——目标进程在激活途中退出时回调可能不来。
     {
@@ -198,7 +198,7 @@ pub(crate) fn open_process_loopback(pid: u32, include_tree: bool) -> PortResult<
     let mut interface = None;
     // SAFETY: operation 有效；两个出参都指向本地变量。
     unsafe { operation.GetActivateResult(&mut activate_hr, &mut interface) }
-        .ctx("读进程环回激活结果失败")?;
+        .ctx("failed to read the process loopback activation result")?;
     if activate_hr.is_err() {
         return Err(loopback_activation_error(activate_hr, pid));
     }
@@ -207,7 +207,7 @@ pub(crate) fn open_process_loopback(pid: u32, include_tree: bool) -> PortResult<
             PortError::new("process-loopback activation succeeded but returned no audio interface")
         })?
         .cast()
-        .ctx("进程环回激活结果不是音频接口")?;
+        .ctx("the process loopback activation result is not an audio interface")?;
 
     // 格式必须自己造：这个伪设备上 GetMixFormat 是不能用的（会失败或给垃圾）。
     let format = float_format(LOOPBACK_RATE, LOOPBACK_CHANNELS);
@@ -220,16 +220,17 @@ pub(crate) fn open_process_loopback(pid: u32, include_tree: bool) -> PortResult<
             &format.Format,
         )
     }
-    .ctx("初始化进程环回流失败")?;
+    .ctx("failed to initialize the process loopback stream")?;
 
     let event = create_stream_event()?;
     // SAFETY: client 已初始化；事件在 OpenCapture 存活期间有效。
-    unsafe { client.SetEventHandle(event.raw()) }.ctx("绑定进程环回事件失败")?;
+    unsafe { client.SetEventHandle(event.raw()) }
+        .ctx("failed to bind the process loopback event")?;
     // SAFETY: client 已初始化，取采集服务接口。
-    let capture: IAudioCaptureClient =
-        unsafe { client.GetService() }.ctx("获取进程环回采集接口失败")?;
+    let capture: IAudioCaptureClient = unsafe { client.GetService() }
+        .ctx("failed to get the process loopback capture interface")?;
     // SAFETY: 一切就绪，开始走流。
-    unsafe { client.Start() }.ctx("启动进程环回流失败")?;
+    unsafe { client.Start() }.ctx("failed to start the process loopback stream")?;
 
     // 注意：这里绝不能用 GetBufferSize 去算缓冲大小。伪设备上它返回垃圾
     //（见过 3131961357）而且不报错，照它分配内存就是几个 GB。
@@ -252,13 +253,13 @@ fn loopback_activation_error(hr: HRESULT, pid: u32) -> PortError {
     let code = hr.0 as u32;
     let hint = match code {
         // E_ILLEGAL_METHOD_CALL：回调对象没在 MTA 上，或者没实现 IAgileObject。
-        0x8000_000E => "（回调对象套间不对，这是代码问题，不是环境问题）",
+        0x8000_000E => " (callback apartment mismatch: a code bug, not an environment problem)",
         // E_INVALIDARG：参数结构体没活到回调，或者 blob 大小写错了。
-        0x8007_0057 => "（激活参数不对，可能是目标 PID 已经没了）",
+        0x8007_0057 => " (bad activation parameters; the target PID may be gone)",
         _ => "",
     };
     hr_err(
-        &format!("进程环回激活被系统拒绝（目标 PID {pid}）{hint}"),
+        &format!("process loopback activation was refused by the system (target PID {pid}){hint}"),
         hr,
     )
 }

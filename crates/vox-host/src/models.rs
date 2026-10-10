@@ -264,13 +264,13 @@ fn fetch_official(
         serde_json::from_str(&body).map_err(|e| ModelListError {
             kind: ErrorKind::Other,
             host: host.clone(),
-            message: format!("响应不是合法 JSON：{e}"),
+            message: format!("response is not valid JSON: {e}"),
         })
     };
     let bad_shape = |what: &str| ModelListError {
         kind: ErrorKind::Other,
         host: host.clone(),
-        message: format!("响应形状不对：{what}"),
+        message: format!("unexpected response shape: {what}"),
     };
 
     match provider {
@@ -282,7 +282,7 @@ fn fetch_official(
                 );
                 let json = get(&url, &[("Authorization", &bearer)])?;
                 let (total, models) =
-                    parse_aliyun_page(&json).ok_or_else(|| bad_shape("缺 output.models"))?;
+                    parse_aliyun_page(&json).ok_or_else(|| bad_shape("missing output.models"))?;
                 let empty = models.is_empty();
                 all.extend(models);
                 if empty || all.len() as u64 >= total {
@@ -293,7 +293,7 @@ fn fetch_official(
         }
         ModelProvider::Gpt => {
             let json = get(base, &[("Authorization", &bearer)])?;
-            let ids = parse_openai(&json).ok_or_else(|| bad_shape("缺 data[]"))?;
+            let ids = parse_openai(&json).ok_or_else(|| bad_shape("missing data[]"))?;
             Ok(simple_entries(ModelProvider::Gpt, ids))
         }
         ModelProvider::Gemini => {
@@ -306,7 +306,8 @@ fn fetch_official(
                     url.push_str(t);
                 }
                 let json = get(&url, &[("x-goog-api-key", key)])?;
-                let (ids, next) = parse_gemini(&json).ok_or_else(|| bad_shape("缺 models[]"))?;
+                let (ids, next) =
+                    parse_gemini(&json).ok_or_else(|| bad_shape("missing models[]"))?;
                 all.extend(ids);
                 match next {
                     Some(t) => token = Some(t),

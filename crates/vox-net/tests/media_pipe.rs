@@ -858,7 +858,7 @@ async fn the_media_ports_refuse_what_they_do_not_serve() {
     let err = second
         .start(&net_target(), 20, Box::new(|_chunk: AudioChunk| {}))
         .expect_err("第二条腿该报错，不许静默抢连接");
-    assert!(err.message.contains("另一条腿"), "报错要说清原因：{err}");
+    assert!(err.message.contains("another leg"), "报错要说清原因：{err}");
 
     // 释放之后能重新开工（stop 要放掉腿槽位）。
     capture.stop();

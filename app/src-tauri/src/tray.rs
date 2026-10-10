@@ -13,7 +13,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use tauri::menu::{CheckMenuItem, MenuBuilder};
+use tauri::menu::{CheckMenuItem, MenuBuilder, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
 use vox_core::event::Pipeline;
@@ -32,6 +32,8 @@ const ID_QUIT: &str = "quit";
 
 /// 需要从外部刷新勾选状态的菜单项句柄。
 struct MenuItems {
+    open: MenuItem<tauri::Wry>,
+    quit: MenuItem<tauri::Wry>,
     speak: CheckMenuItem<tauri::Wry>,
     listen: CheckMenuItem<tauri::Wry>,
     subtitle: CheckMenuItem<tauri::Wry>,
@@ -42,6 +44,13 @@ struct MenuItems {
 /// 模块级单例：install() 写一次，sync() 读。
 /// OnceLock 保证并发安全且无锁开销（只写一次后都是只读）。
 static ITEMS: OnceLock<MenuItems> = OnceLock::new();
+
+/// 菜单文字当前对应的界面语言；`sync()` 发现设置里的语言变了就重设文字。
+static MENU_LANG: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+fn label(key: &'static str, lang: &str) -> String {
+    vox_core::Msg::new(key).render_lang(lang)
+}
 
 /// 托盘图标**用户真的看得见**吗。
 ///
@@ -71,10 +80,28 @@ pub fn install(app: &tauri::AppHandle, state: &Arc<AppState>) -> tauri::Result<(
     let speak_checked = state.runtime.pipeline_state(Pipeline::Speak).is_running();
     let listen_checked = state.runtime.pipeline_state(Pipeline::Listen).is_running();
     let subtitle_checked = state.runtime.settings().subtitle.visible;
+    let lang = state.runtime.settings().ui_language;
+    if let Ok(mut current) = MENU_LANG.lock() {
+        *current = lang.clone();
+    }
+    let item_open = MenuItem::with_id(
+        app,
+        ID_OPEN_SETTINGS,
+        label(vox_core::notice::key::TRAY_OPEN_SETTINGS, &lang),
+        true,
+        None::<&str>,
+    )?;
+    let item_quit = MenuItem::with_id(
+        app,
+        ID_QUIT,
+        label(vox_core::notice::key::TRAY_QUIT, &lang),
+        true,
+        None::<&str>,
+    )?;
     let item_speak = CheckMenuItem::with_id(
         app,
         ID_TOGGLE_SPEAK,
-        "对外说话",
+        label(vox_core::notice::key::TRAY_SPEAK, &lang),
         true,
         speak_checked,
         None::<&str>,
@@ -82,7 +109,7 @@ pub fn install(app: &tauri::AppHandle, state: &Arc<AppState>) -> tauri::Result<(
     let item_listen = CheckMenuItem::with_id(
         app,
         ID_TOGGLE_LISTEN,
-        "听人说话",
+        label(vox_core::notice::key::TRAY_LISTEN, &lang),
         true,
         listen_checked,
         None::<&str>,
@@ -90,24 +117,26 @@ pub fn install(app: &tauri::AppHandle, state: &Arc<AppState>) -> tauri::Result<(
     let item_subtitle = CheckMenuItem::with_id(
         app,
         ID_TOGGLE_SUBTITLE,
-        "显示字幕",
+        label(vox_core::notice::key::TRAY_SUBTITLE, &lang),
         true,
         subtitle_checked,
         None::<&str>,
     )?;
 
     let menu = MenuBuilder::new(app)
-        .text(ID_OPEN_SETTINGS, "打开设置")
+        .item(&item_open)
         .separator()
         .item(&item_speak)
         .item(&item_listen)
         .item(&item_subtitle)
         .separator()
-        .text(ID_QUIT, "退出")
+        .item(&item_quit)
         .build()?;
 
     // 保存句柄，供 sync() 刷新勾选状态。
     let _ = ITEMS.set(MenuItems {
+        open: item_open,
+        quit: item_quit,
         speak: item_speak,
         listen: item_listen,
         subtitle: item_subtitle,
@@ -184,7 +213,16 @@ pub fn sync(state: &AppState) {
     // 也就不会在主线程上再去抢内核的锁。
     let speak_running = state.runtime.pipeline_state(Pipeline::Speak).is_running();
     let listen_running = state.runtime.pipeline_state(Pipeline::Listen).is_running();
-    let subtitle_visible = state.runtime.settings().subtitle.visible;
+    let settings = state.runtime.settings();
+    let subtitle_visible = settings.subtitle.visible;
+    // 界面语言变了：文字也要跟着换（只在变了的时候重设）。
+    let new_lang = match MENU_LANG.lock() {
+        Ok(mut current) if *current != settings.ui_language => {
+            *current = settings.ui_language.clone();
+            Some(settings.ui_language.clone())
+        }
+        _ => None,
+    };
 
     // 投递失败只能是事件循环已经没了（进程正在退出），忽略即可。
     let _ = items.app.run_on_main_thread(move || {
@@ -193,6 +231,14 @@ pub fn sync(state: &AppState) {
         let _ = items.speak.set_checked(speak_running);
         let _ = items.listen.set_checked(listen_running);
         let _ = items.subtitle.set_checked(subtitle_visible);
+        if let Some(lang) = new_lang {
+            use vox_core::notice::key;
+            let _ = items.open.set_text(label(key::TRAY_OPEN_SETTINGS, &lang));
+            let _ = items.speak.set_text(label(key::TRAY_SPEAK, &lang));
+            let _ = items.listen.set_text(label(key::TRAY_LISTEN, &lang));
+            let _ = items.subtitle.set_text(label(key::TRAY_SUBTITLE, &lang));
+            let _ = items.quit.set_text(label(key::TRAY_QUIT, &lang));
+        }
     });
 }
 

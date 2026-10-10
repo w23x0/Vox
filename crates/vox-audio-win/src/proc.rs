@@ -30,8 +30,8 @@ pub(crate) struct ProcessEntry {
 pub(crate) fn snapshot_processes() -> PortResult<Vec<ProcessEntry>> {
     // SAFETY: 快照句柄拿到后立刻由下面的作用域负责关闭；失败时返回 INVALID_HANDLE_VALUE，
     // 由 `ctx` 转成带 HRESULT 的错误。
-    let snapshot =
-        unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }.ctx("给进程列表拍快照失败")?;
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
+        .ctx("failed to snapshot the process list")?;
 
     let mut entries = Vec::new();
     let mut pe = PROCESSENTRY32W {

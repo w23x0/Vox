@@ -42,8 +42,10 @@ fn enumerate_sessions() -> PortResult<Vec<SessionRecord>> {
     unsafe {
         let collection = enumerator
             .EnumAudioEndpoints(devices::RENDER, DEVICE_STATE_ACTIVE)
-            .ctx("枚举输出设备失败")?;
-        let count = collection.GetCount().ctx("读设备数量失败")?;
+            .ctx("failed to enumerate output devices")?;
+        let count = collection
+            .GetCount()
+            .ctx("failed to read the device count")?;
         for i in 0..count {
             let Ok(device) = collection.Item(i) else {
                 continue;
@@ -65,10 +67,14 @@ pub(crate) fn cable_sessions() -> PortResult<Vec<AudioApp>> {
         let collection = unsafe {
             enumerator
                 .EnumAudioEndpoints(flow, DEVICE_STATE_ACTIVE)
-                .ctx("枚举虚拟声卡端点失败")?
+                .ctx("failed to enumerate virtual cable endpoints")?
         };
         // SAFETY: collection 有效。
-        let count = unsafe { collection.GetCount().ctx("读虚拟声卡端点数量失败")? };
+        let count = unsafe {
+            collection
+                .GetCount()
+                .ctx("failed to read the virtual cable endpoint count")?
+        };
         for index in 0..count {
             // SAFETY: index 小于 count。
             let Ok(device) = (unsafe { collection.Item(index) }) else {
