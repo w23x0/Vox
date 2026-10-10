@@ -197,6 +197,8 @@ declare_keys! {
     ERR_OSC_NOT_STARTED = "error.oscNotStarted",
     ERR_OSC_AVATAR_PARAM_MISSING = "error.oscAvatarParamMissing",
     ERR_OSC_FAILED = "error.oscFailed",
+    ERR_NET_TEST_TASK = "error.netTestTask",
+    ERR_TAKEOVER_TASK = "error.takeoverTask",
     ERR_DEVICE_SCAN_TASK = "error.deviceScanTask",
     ERR_UNKNOWN_PIPELINE = "error.unknownPipeline",
     ERR_UNKNOWN_PROVIDER = "error.unknownProvider",

@@ -385,7 +385,7 @@ const NET_MODES: { value: NetworkMode; labelKey: string }[] = [
 
 function NetworkCard({ provider }: { provider: ModelProvider }) {
   const { settings, patch, api } = useStore();
-  const { t } = useLang();
+  const { t, msg } = useLang();
   const toast = useToast();
   const saved = settings.network?.[provider];
   const mode: NetworkMode = saved?.mode ?? "direct";
@@ -428,7 +428,7 @@ function NetworkCard({ provider }: { provider: ModelProvider }) {
     try {
       setReport(await api.testNetwork(provider));
     } catch (error: unknown) {
-      toast("danger", t("models.netTestFailed", { error: String(error) }));
+      toast("danger", t("models.netTestFailed", { error: msg(error) }));
     } finally {
       setTesting(false);
     }

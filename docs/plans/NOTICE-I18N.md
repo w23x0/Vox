@@ -56,7 +56,7 @@ catalog/notices.json
 
 ## 5. 后续（不在本单）
 
-- **NET 工单的文件**（本单不碰）：`crates/vox-net/**`（`ws.rs`、`media/*` 里的 `PortError::new` 中文诊断串，约 36 处）、`crates/vox-host/src/{netcheck*,models*,http.rs}`（`ModelListError.message` 等）。它们的诊断串仍是中文，会作为 `detail` 原样出现在阶段 key 后面；合入后按本稿做法改成 English 诊断串或带 key 的 `PortError::user`。
+- **NET 工单的文件**（已合入 main，本单只合并、不改它们的文案）：`crates/vox-net/**`（`ws.rs`、`media/*` 里的 `PortError::new` 中文诊断串，约 36 处）、`crates/vox-proxy/**`（`spec.rs` 的 `Display`、`dial.rs` 的 `DialError.message`：代理地址为空 / 域名解析失败 / 代理握手…，测速与接管检测报告里直接显示）、`crates/vox-host/src/{netcheck*,models*,http.rs}`（`ModelListError.message`、测速阶段文案）。它们的诊断串仍是中文，会作为 `detail` 或报告字段原样出现；按本稿做法改成 English 诊断串或带 key 的 `PortError::user` / 报告里存 `Msg`。本单只迁了 NET 新增的两条命令外壳错误（`error.netTestTask`、`error.takeoverTask`）与前端 `netTestFailed` 的渲染。
 - **overlay 工单的文件**：`crates/vox-overlay-*` 的 `PortError::new`（字体、窗口，约 20 处）同上。
 - **Windows 外壳的 COM 诊断上下文**：`vox-audio-win` 里 `.ctx("…")` / `hr_err("…")` / `cable.rs` 下载提示 / `policy.rs`（约 60 条中文，Windows 才会走到，本机只能 `cargo check --target x86_64-pc-windows-gnu`）。
 - **托盘菜单文字**（`app/src-tauri/src/tray.rs`：对外说话 / 听人说话 / 显示字幕 / 打开设置 / 退出）与**启动失败对话框**（`lib.rs` 的"Vox 启动失败"，此时前端和语言都还没有）：不是通知，需要另外按 `ui_language` 重建菜单，单独一张工单。

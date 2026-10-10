@@ -273,6 +273,16 @@
       "en": "OSC error",
       "ja": "OSC エラー"
     },
+    "error.netTestTask": {
+      "zh": "测速任务失败",
+      "en": "The speed test task failed",
+      "ja": "速度テストのタスクが失敗しました"
+    },
+    "error.takeoverTask": {
+      "zh": "接管检测任务失败",
+      "en": "The proxy takeover check task failed",
+      "ja": "プロキシ引き継ぎ検出のタスクが失敗しました"
+    },
     "error.deviceScanTask": {
       "zh": "设备枚举线程异常",
       "en": "The device scan task failed",

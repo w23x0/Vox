@@ -58,7 +58,7 @@ pub async fn list_models(
 pub async fn test_network(
     state: State<'_>,
     provider: String,
-) -> Result<vox_host::netcheck::NetworkReport, String> {
+) -> Result<vox_host::netcheck::NetworkReport, Msg> {
     let provider = parse_provider(&provider)?;
     let settings = state.runtime.settings();
     let network = settings.network.of(provider).clone();
@@ -67,7 +67,7 @@ pub async fn test_network(
         vox_host::netcheck::test_network(provider, &network, region)
     })
     .await
-    .map_err(|e| format!("测速任务失败：{e}"))
+    .map_err(|e| Msg::new(key::ERR_NET_TEST_TASK).detail(e.to_string()))
 }
 
 /// 代理软件接管检测（只检测 + 引导，绝不尝试绕过，`docs/plans/NET.md` N4）：
@@ -76,11 +76,11 @@ pub async fn test_network(
 #[tauri::command]
 pub async fn detect_takeover(
     provider: String,
-) -> Result<vox_host::netcheck::TakeoverReport, String> {
+) -> Result<vox_host::netcheck::TakeoverReport, Msg> {
     let provider = parse_provider(&provider)?;
     tauri::async_runtime::spawn_blocking(move || vox_host::netcheck::detect_takeover(provider))
         .await
-        .map_err(|e| format!("接管检测任务失败：{e}"))
+        .map_err(|e| Msg::new(key::ERR_TAKEOVER_TASK).detail(e.to_string()))
 }
 
 // ─── 设置 ──────────────────────────────────────────────────────────────────────
