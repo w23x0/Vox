@@ -74,9 +74,7 @@ pub async fn test_network(
 /// 服务商域名解析进 `198.18.0.0/15` = 假 IP 模式；网卡名像 Clash/Meta/Wintun/TAP。
 /// 检测的是"这家服务商的域名的解析结果"，与当前设置无关，所以不需要 state。
 #[tauri::command]
-pub async fn detect_takeover(
-    provider: String,
-) -> Result<vox_host::netcheck::TakeoverReport, Msg> {
+pub async fn detect_takeover(provider: String) -> Result<vox_host::netcheck::TakeoverReport, Msg> {
     let provider = parse_provider(&provider)?;
     tauri::async_runtime::spawn_blocking(move || vox_host::netcheck::detect_takeover(provider))
         .await
