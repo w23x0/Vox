@@ -10,11 +10,11 @@ meta gate_active_at_boot true
 meta translate true
 meta output_device CABLE_Input
 # wire
-wire 0 {"event_id":"event_0_1","session":{"audio":{"input":{"format":{"sample_rate":16000,"type":"pcm"}},"output":{"format":{"sample_rate":24000,"type":"pcm"},"voice":"Tina"}},"output_modalities":["text","audio"],"translation":{"language":"ja"}},"type":"session.update"}
-wire 1 {"event_id":"event_0_2","session":{"audio":{"input":{"format":{"sample_rate":16000,"type":"pcm"}},"output":{"format":{"sample_rate":24000,"type":"pcm"}}},"output_modalities":["text"],"translation":{"language":"ja"}},"type":"session.update"}
+wire 0 {"event_id":"event_0_1","session":{"input_audio_format":"pcm","modalities":["text","audio"],"output_audio_format":"pcm","translation":{"language":"ja"},"voice":"Tina"},"type":"session.update"}
+wire 1 {"event_id":"event_0_2","session":{"input_audio_format":"pcm","modalities":["text"],"output_audio_format":"pcm","translation":{"language":"ja"}},"type":"session.update"}
 wire 2 audio_append 0 640 936b78f74a8f9f25
 wire 3 audio_append 1 640 6f8eeea9d7eddb25
-wire 4 {"event_id":"event_0_5","session":{"audio":{"input":{"format":{"sample_rate":16000,"type":"pcm"}},"output":{"format":{"sample_rate":24000,"type":"pcm"},"voice":"Tina"}},"output_modalities":["text","audio"],"translation":{"language":"ja"}},"type":"session.update"}
+wire 4 {"event_id":"event_0_5","session":{"input_audio_format":"pcm","modalities":["text","audio"],"output_audio_format":"pcm","translation":{"language":"ja"},"voice":"Tina"},"type":"session.update"}
 # play
 play open 3 default
 play pushed 6 9fe77f10cf0b5ea5

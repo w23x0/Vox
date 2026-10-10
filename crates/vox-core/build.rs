@@ -93,7 +93,15 @@ struct Dialect {
     match_prefixes: Vec<String>,
     #[serde(default)]
     transcription_model: Option<String>,
+    /// 会话中途发 `session.update` 服务端认不认。缺省认；qwen3.8 会回
+    /// `session already started`，写 `false` 让流水线改走静默重连。
+    #[serde(default = "default_true")]
+    hot_session_update: bool,
     languages: DialectLanguages,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// `catalog/*.json` `models[]` 里的一条。**表里只放官方接口给不了的东西**：
@@ -458,7 +466,7 @@ fn main() {
     ] {
         for (id, dialect) in dialects {
             out.push_str(&format!(
-                "    DialectInfo {{ id: {}, label: {}, provider: {}, shape: {}, match_prefixes: &[{}], transcription_model: {}, languages: {} }},\n",
+                "    DialectInfo {{ id: {}, label: {}, provider: {}, shape: {}, match_prefixes: &[{}], transcription_model: {}, hot_session_update: {}, languages: {} }},\n",
                 lit(id),
                 lit(&dialect.label.zh),
                 lit(provider_id),
@@ -478,6 +486,7 @@ fn main() {
                     .as_deref()
                     .filter(|model| !model.trim().is_empty())
                     .map_or_else(|| "None".to_string(), lit),
+                dialect.hot_session_update,
                 dialect_languages_literal(id, &dialect.languages, &registry)
             ));
         }

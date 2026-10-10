@@ -61,6 +61,9 @@ pub use chain::OpTiming;
 pub const INPUT_BLOCK_MS: u32 = 20;
 /// 输入最多积压 160 ms；满了丢最旧的，实时语音优先保新鲜而不是保完整。
 pub const INPUT_QUEUE_SIZE: usize = 8;
+/// 有意重连（换语言/音色，握手要重做）期间最多攒 3 秒音频，连上后补发，
+/// 不丢话；超了照旧丢最旧的。
+pub const HOLD_QUEUE_SIZE: usize = 3000 / INPUT_BLOCK_MS as usize;
 /// 主循环一拍最多阻塞多久（ms）。也是 Stop 握手的最坏响应时间。
 const POLL_MS: u32 = 5;
 /// 阀门状态最多多久报一次（ms）。照抄旧版的 0.2 秒。
@@ -414,6 +417,8 @@ struct InboxState {
     dropped: u64,
     /// 已经走完全程的块数。丢帧率 = dropped / (processed + dropped)。
     processed: u64,
+    /// 有意重连中：积压上限放宽到 `HOLD_QUEUE_SIZE`，重连完再放出去。
+    holding: bool,
 }
 
 struct QueuedAudio {
@@ -457,7 +462,12 @@ impl Inbox {
         if state.stopping {
             return;
         }
-        if state.audio.len() >= INPUT_QUEUE_SIZE {
+        let limit = if state.holding {
+            HOLD_QUEUE_SIZE
+        } else {
+            INPUT_QUEUE_SIZE
+        };
+        if state.audio.len() >= limit {
             state.audio.pop_front();
             state.dropped += 1;
             let dropped = state.dropped;
@@ -470,6 +480,10 @@ impl Inbox {
             enqueued_at: Instant::now(),
         });
         self.wake.notify_all();
+    }
+
+    fn set_holding(&self, holding: bool) {
+        self.state.lock().holding = holding;
     }
 
     fn take_notes(&self) -> Vec<Note> {
@@ -693,6 +707,8 @@ struct Worker {
     /// 汇报给账本的运行状态，去重用。
     reported: Option<PipelineState>,
     backoff: cloud::Backoff,
+    /// 热更新落不了地（方言不收中途 session.update），主循环下一拍静默重连。
+    reconnect_requested: bool,
     latency: LatencyTracker,
     last_latency_emit: u64,
     session_opened_at: u64,
@@ -738,6 +754,7 @@ impl Worker {
             sent_text: String::new(),
             reported: None,
             backoff: cloud::Backoff::new(),
+            reconnect_requested: false,
             latency: LatencyTracker::default(),
             last_latency_emit: 0,
             session_opened_at: 0,
@@ -1006,6 +1023,9 @@ impl Worker {
             if self.stopping() {
                 return;
             }
+            if std::mem::take(&mut self.reconnect_requested) && !self.reconnect(true) {
+                return;
+            }
             // 上行一次最多吃四块；即使 CPU 跟不上，也不能让下行字幕/译音饿死。
             let mut did_work = false;
             for _ in 0..MAX_AUDIO_PER_TICK {
@@ -1037,7 +1057,7 @@ impl Worker {
             };
             if !self.drain_messages(recv_timeout) {
                 // 连接掉了，走重连；重连也走不通就退出。
-                if !self.reconnect() {
+                if !self.reconnect(false) {
                     return;
                 }
             }
@@ -1106,7 +1126,21 @@ impl Worker {
     }
 
     /// 断线重连。返回 `false` = 别再试了（被停了，或者是死错误）。
-    fn reconnect(&mut self) -> bool {
+    ///
+    /// `deliberate` = 我们自己要换参数（握手带新语言/音色）：首次不退避，
+    /// 重连期间放宽输入积压（见 `HOLD_QUEUE_SIZE`），连上后补发而不是丢。
+    fn reconnect(&mut self, deliberate: bool) -> bool {
+        if deliberate {
+            self.inbox.set_holding(true);
+        }
+        let ok = self.reconnect_inner(deliberate);
+        if deliberate {
+            self.inbox.set_holding(false);
+        }
+        ok
+    }
+
+    fn reconnect_inner(&mut self, deliberate: bool) -> bool {
         if self.stopping() {
             return false;
         }
@@ -1120,8 +1154,13 @@ impl Worker {
         self.chain.on_disconnect();
         self.report(PipelineState::Reconnecting);
 
+        let mut immediate = deliberate;
         loop {
-            let wait = self.backoff.fail();
+            let wait = if std::mem::take(&mut immediate) {
+                0
+            } else {
+                self.backoff.fail()
+            };
             if self.inbox.wait(wait as u64) {
                 return false;
             }
@@ -1601,7 +1640,14 @@ impl Worker {
             return;
         }
         let now = self.now();
+        let before = self.session.params().clone();
         let frame = self.session.hot_update(&change, now);
+        if frame.is_none()
+            && self.session.params() != &before
+            && self.session.hot_update_needs_reconnect()
+        {
+            self.reconnect_requested = true;
+        }
         self.plan.params = self.session.params().clone();
         if let Some(frame) = frame {
             if let Some(transport) = self.transport.as_mut() {
@@ -1648,6 +1694,8 @@ pub(crate) mod tests {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     const MODEL: &str = "qwen3.8-livetranslate-flash-realtime";
+    /// 认中途 `session.update` 的方言（qwen3.8 不认，会走静默重连）。
+    pub(crate) const HOT_MODEL: &str = "qwen3.5-livetranslate-flash-realtime";
 
     // --- 测试用的假件 ------------------------------------------------------
 
@@ -2009,6 +2057,8 @@ pub(crate) mod tests {
                 settings.speak.activation_mode = crate::catalog::ActivationMode::Hold;
                 settings.speak.voice = "Tina".to_string();
                 settings.speak.output_device = Some("CABLE Input".to_string());
+                // 本例钉"通知不重建链、不重连"，得用认热更新的方言。
+                settings.speak.model_name = HOT_MODEL.to_string();
             });
 
             let events = Arc::new(Mutex::new(Vec::new()));
@@ -2948,6 +2998,7 @@ pub(crate) mod tests {
     fn translation_audio_can_be_enabled_and_disabled_without_reconnecting() {
         let rig = Rig::new();
         let mut config = speak_config();
+        config.model_name = HOT_MODEL.to_string();
         config.voice = None;
         let output_device = config.output_device.clone();
         let session = rig.start(config);
@@ -2966,7 +3017,7 @@ pub(crate) mod tests {
         assert!(enabled
             .last()
             .unwrap()
-            .contains(r#""output_modalities":["text","audio"]"#));
+            .contains(r#""modalities":["text","audio"]"#));
         assert_eq!(rig.wire.connects.load(Ordering::SeqCst), 1);
 
         rig.engine
@@ -2982,7 +3033,7 @@ pub(crate) mod tests {
         assert!(disabled
             .last()
             .unwrap()
-            .contains(r#""output_modalities":["text"]"#));
+            .contains(r#""modalities":["text"]"#));
         assert_eq!(
             rig.wire.connects.load(Ordering::SeqCst),
             1,
@@ -3112,7 +3163,9 @@ pub(crate) mod tests {
     #[test]
     fn hot_update_sends_a_session_update_without_reconnecting() {
         let rig = Rig::new();
-        let session = rig.start(speak_config());
+        let mut config = speak_config();
+        config.model_name = HOT_MODEL.to_string();
+        let session = rig.start(config);
 
         rig.engine
             .apply(PipelineCommand::HotUpdate {
@@ -3131,6 +3184,56 @@ pub(crate) mod tests {
         assert_eq!(rig.wire.connects.load(Ordering::SeqCst), 1);
         assert_eq!(rig.wire.closes.load(Ordering::SeqCst), 0);
         rig.engine.shutdown();
+    }
+
+    #[test]
+    fn qwen38_language_change_reconnects_quietly_instead_of_session_update() {
+        // qwen3.8 会拒中途 session.update（session already started）：改成
+        // 静默重连，让新握手带新参数。
+        let rig = Rig::new();
+        let session = rig.start(speak_config());
+        rig.drain_events();
+
+        rig.engine
+            .apply(PipelineCommand::HotUpdate {
+                session_id: session,
+                target_language: Some("en".to_string()),
+                voice: None,
+            })
+            .unwrap();
+        rig.wait_until(|| rig.wire.connects.load(Ordering::SeqCst) >= 2);
+        rig.wait_until(|| rig.wire.sent().len() >= 2);
+
+        let sent = rig.wire.sent();
+        assert_eq!(sent.len(), 2, "只有两次握手，没有中途帧：{sent:?}");
+        assert!(sent[1].contains("session.update") && sent[1].contains("\"en\""));
+        assert_eq!(rig.wire.closes.load(Ordering::SeqCst), 1, "旧连接收掉了");
+        assert!(
+            rig.events()
+                .iter()
+                .all(|e| !matches!(e, Event::Notice { .. })),
+            "有意重连不弹通知：{:?}",
+            rig.events()
+        );
+        rig.engine.shutdown();
+    }
+
+    #[test]
+    fn a_deliberate_reconnect_holds_a_few_seconds_of_audio() {
+        let inbox = Inbox::default();
+        let chunk = || AudioChunk {
+            samples: vec![0.0],
+            sample_rate: 48_000,
+            channels: 1,
+        };
+        inbox.set_holding(true);
+        for _ in 0..HOLD_QUEUE_SIZE {
+            inbox.push_audio(chunk());
+        }
+        assert_eq!(inbox.dropped(), 0, "3 秒内不丢");
+        inbox.push_audio(chunk());
+        assert_eq!(inbox.dropped(), 1, "超了照旧丢最旧的");
+        assert_eq!(inbox.state.lock().audio.len(), HOLD_QUEUE_SIZE);
     }
 
     #[test]
@@ -3254,7 +3357,7 @@ pub(crate) mod tests {
             rig.wire
                 .sent()
                 .iter()
-                .any(|f| f.contains("\"output_modalities\":[\"text\"]"))
+                .any(|f| f.contains("\"modalities\":[\"text\"]"))
         });
 
         // ④ 开闸：门开着才上传，链一动不动。

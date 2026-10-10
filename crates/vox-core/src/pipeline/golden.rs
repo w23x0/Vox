@@ -47,7 +47,7 @@
 
 use std::sync::atomic::Ordering;
 
-use super::tests::{speak_config, Rig};
+use super::tests::{speak_config, Rig, HOT_MODEL};
 use super::GATE_THROTTLE_MS;
 use crate::catalog::ActivationMode;
 use crate::event::{Event, Pipeline, PipelineState};
@@ -730,7 +730,8 @@ fn speak_16k_capture() -> String {
 /// 以及（INV-1）整条上行链一动不动——降噪计数继续涨、阀门照旧放行。
 fn speak_48k_hot_update() -> String {
     let rig = Rig::build(RATE_48);
-    start_speak(&rig, true, |_| {});
+    // 用认中途 session.update 的方言；qwen3.8 会改走静默重连。
+    start_speak(&rig, true, |speak| speak.model_name = HOT_MODEL.to_string());
     rig.feed(loud(BLOCK_48, 1));
     hot_update(&rig, Some("ko"), Some("Cherry"));
     rig.feed(loud(BLOCK_48, 2));
@@ -818,7 +819,7 @@ fn speak_48k_gate_commands() -> String {
 /// 回听各收一份。
 fn speak_48k_translation_audio_toggle() -> String {
     let rig = Rig::build(RATE_48);
-    start_speak(&rig, true, |_| {});
+    start_speak(&rig, true, |speak| speak.model_name = HOT_MODEL.to_string());
     rig.push_message(audio_delta(&[16384, -16384]));
     rig.wait_until(|| rig.speaker.played.lock().len() >= 2);
     // 关掉译音：播放汇先冲再关。

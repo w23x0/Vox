@@ -276,6 +276,28 @@ impl Session {
         }
     }
 
+    /// 这条会话的服务端认不认中途 `session.update`。只有阿里云按方言区分
+    /// （qwen3.8 回 `session already started`）；GPT 认，Gemini 另有能力位挡着。
+    fn accepts_hot_session_update(&self) -> bool {
+        match self.provider {
+            ModelProvider::Aliyun => crate::catalog::dialect_by_prefix(&self.params.model_name)
+                .is_none_or(|dialect| dialect.hot_session_update),
+            _ => true,
+        }
+    }
+
+    /// 这条会话的热更新得靠重连落地（能力上认热更新、但方言不收中途
+    /// `session.update`）。[`Self::hot_update`] 返回 `None` 且参数确实变了时，
+    /// 调用方据此静默重连，让握手带上新参数。
+    pub fn hot_update_needs_reconnect(&self) -> bool {
+        self.handshaken
+            && crate::catalog::supports(
+                self.provider,
+                crate::capability::Capability::HotUpdateLanguage,
+            )
+            && !self.accepts_hot_session_update()
+    }
+
     /// 热更新。真有东西变了才返回要发的帧，白改不发（省一次往返）。
     pub fn hot_update(&mut self, change: &HotChange, now_ms: u64) -> Option<String> {
         let mut dirty = false;
@@ -309,6 +331,10 @@ impl Session {
             self.provider,
             crate::capability::Capability::HotUpdateLanguage,
         ) {
+            return None;
+        }
+        // 方言不收中途 session.update：参数已记下，由调用方重连后经握手带上。
+        if !self.accepts_hot_session_update() {
             return None;
         }
         match self.provider {
@@ -495,12 +521,18 @@ mod tests {
     use serde_json::Value;
 
     const LIVE: &str = "qwen3.8-livetranslate-flash-realtime";
+    /// 认中途 `session.update` 的阿里云方言。
+    const HOT_LIVE: &str = "qwen3.5-livetranslate-flash-realtime";
 
     fn session() -> Session {
+        session_for(LIVE)
+    }
+
+    fn session_for(model: &str) -> Session {
         Session::new(
             "sk-test",
             SessionParams {
-                model_name: LIVE.to_string(),
+                model_name: model.to_string(),
                 target_language: "ja".to_string(),
                 voice: Some("Tina".to_string()),
                 clone_frequency: None,
@@ -750,7 +782,7 @@ mod tests {
 
     #[test]
     fn language_change_is_a_hot_update_not_a_reconnect() {
-        let mut s = session();
+        let mut s = session_for(HOT_LIVE);
         s.handshake(0);
         let frame = s
             .hot_update(&HotChange::language("en"), 1)
@@ -788,11 +820,11 @@ mod tests {
 
     #[test]
     fn voice_can_be_swapped_or_turned_off_live() {
-        let mut s = session();
+        let mut s = session_for(HOT_LIVE);
         s.handshake(0);
 
         let frame = parse(&s.hot_update(&HotChange::voice("Chelsie"), 1).unwrap());
-        assert_eq!(frame["session"]["audio"]["output"]["voice"], "Chelsie");
+        assert_eq!(frame["session"]["voice"], "Chelsie");
 
         // Some(None) = 只要文字。
         let off = HotChange {
@@ -800,11 +832,34 @@ mod tests {
             ..HotChange::default()
         };
         let frame = parse(&s.hot_update(&off, 2).unwrap());
-        assert_eq!(
-            frame["session"]["output_modalities"],
-            serde_json::json!(["text"])
+        assert_eq!(frame["session"]["modalities"], serde_json::json!(["text"]));
+        assert!(frame["session"].get("voice").is_none());
+    }
+
+    #[test]
+    fn qwen38_rejects_mid_session_updates_so_changes_wait_for_a_reconnect() {
+        let mut s = session();
+        s.handshake(0);
+        assert!(
+            s.hot_update(&HotChange::language("en"), 1).is_none(),
+            "qwen3.8 会回 session already started，不能发"
         );
-        assert!(frame["session"]["audio"]["output"].get("voice").is_none());
+        assert!(s.hot_update(&HotChange::voice("Chelsie"), 2).is_none());
+        assert!(s.hot_update_needs_reconnect());
+        assert_eq!(s.params().target_language, "en", "参数照记");
+        // 重连后的握手带上新参数。
+        s.on_disconnected();
+        let frame = parse(&s.handshake(3));
+        assert_eq!(frame["session"]["translation"]["language"], "en");
+        assert_eq!(frame["session"]["audio"]["output"]["voice"], "Chelsie");
+    }
+
+    #[test]
+    fn qwen35_and_gpt_still_hot_update() {
+        let mut s = session_for(HOT_LIVE);
+        s.handshake(0);
+        assert!(!s.hot_update_needs_reconnect());
+        assert!(s.hot_update(&HotChange::language("en"), 1).is_some());
     }
 
     #[test]

@@ -43,6 +43,8 @@ pub struct DialectInfo {
     pub match_prefixes: &'static [&'static str],
     /// 显式指定源文识别模型。`None` = 不发这个字段（服务端用缺省）。
     pub transcription_model: Option<&'static str>,
+    /// 会话中途发 `session.update` 服务端认不认。不认的（qwen3.8）换语言/音色得静默重连。
+    pub hot_session_update: bool,
     /// 这条方言会说哪些语言（规范码）、每个目标语言出不出语音、规范码 → 线上码。
     pub languages: DialectLanguages,
 }
