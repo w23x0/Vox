@@ -704,6 +704,11 @@ struct Worker {
     last_gate_active: bool,
     /// 已经推给字幕轨的文字。服务端的 delta 是**累计整句**，得自己算增量。
     sent_text: String,
+    /// 本轮有没有发过「终稿」（`done=true` 的字幕事件）。
+    ///
+    /// `response.done` 到达时拿它判断：这一轮是不是不声不响就结束了（服务端没发
+    /// `.text.done`），要不要补一次收口。见 `ServerEvent::TurnDone` 那个分支。
+    turn_sealed: bool,
     /// 汇报给账本的运行状态，去重用。
     reported: Option<PipelineState>,
     backoff: cloud::Backoff,
@@ -752,6 +757,7 @@ impl Worker {
             last_gate_emit: 0,
             last_gate_active: false,
             sent_text: String::new(),
+            turn_sealed: false,
             reported: None,
             backoff: cloud::Backoff::new(),
             reconnect_requested: false,
@@ -1149,6 +1155,7 @@ impl Worker {
         }
         self.session.on_disconnected();
         self.sent_text.clear();
+        self.turn_sealed = false;
         // 半句作废：降噪的分帧缓冲与重采样缓冲里的零头都别带到下一条连接去。
         // **门不动**（INV-2）——`Chain::on_disconnect` 逐节决定清不清，理由见那里。
         self.chain.on_disconnect();
@@ -1427,6 +1434,18 @@ impl Worker {
             ServerEvent::TurnDone { usage } => {
                 self.runtime
                     .record_usage(&self.plan.params.model_name, &usage);
+                // 服务端偶尔只发 `response.done`、不发 `.text.done`（解码器那边
+                // `response.done` 直接把半句作废）。那样这一句就**永不定稿**：
+                // 字幕轨丢不掉非定稿句（会越叠越长），ChatBox 也收不到终稿、
+                // 长度基线跨轮残留。用最后的渲染值补一次收口。
+                //
+                // 正常路径上 `.text.done` 已经收过口（`turn_sealed`），补的这条不会发；
+                // 就算发了，ChatBox 那边"终稿与刚发过的一行相同就不重发"也会兜住。
+                if !self.turn_sealed && !self.sent_text.is_empty() {
+                    let last = self.sent_text.clone();
+                    self.push_text(&last, true, Some(&last));
+                }
+                self.turn_sealed = false;
                 self.sent_text.clear();
                 let now = self.now();
                 if let Some(probe) = self.turn_probe.take() {
@@ -1470,6 +1489,9 @@ impl Worker {
     /// ChatBox）做的是"整行替换推进"，按旧语义吃这两个字段。`confirmed`（不再会变的
     /// 那段完整句）也照旧单独透传，字幕轨拿它判断哪些字可以画成全不透明。
     fn push_text(&mut self, full: &str, done: bool, confirmed: Option<&str>) {
+        if done {
+            self.turn_sealed = true;
+        }
         let (delta, replace) = match full.strip_prefix(self.sent_text.as_str()) {
             // 前缀延续：只发新增的后缀，外层按增量推进。
             Some(rest) => (rest.to_string(), false),
@@ -2974,6 +2996,86 @@ pub(crate) mod tests {
         rig.wait_until(|| subtitle_deltas(&rig.events()).len() >= 2);
 
         assert_eq!(subtitle_deltas(&rig.events()), vec!["こんに", "さようなら"]);
+        rig.engine.shutdown();
+    }
+
+    /// 回归：一轮只发 `response.done`、不发 `.text.done` 时，那句话也必须定稿。
+    ///
+    /// 不定稿的后果两半：字幕轨丢不掉非定稿句（`trim_sealed` 只丢定稿句 ⇒ 越叠越长），
+    /// 以及 VRChat ChatBox 收不到终稿、长度基线跨轮残留（下一句短话会被 +6 压住）。
+    #[test]
+    fn a_turn_that_ends_without_text_done_still_seals_the_sentence() {
+        let rig = Rig::new();
+        rig.boot(Pipeline::Speak);
+        rig.wait_until(|| rig.runtime.pipeline_state(Pipeline::Speak) == PipelineState::Ready);
+        rig.drain_events();
+
+        // LiveTranslate 形状：整句还在 stash 里，然后一轮结束——没有 `.text.done`。
+        rig.push_message(r#"{"type":"response.text.text","text":"","stash":"你好吗"}"#);
+        rig.push_message(r#"{"type":"response.done"}"#);
+        rig.wait_until(|| {
+            rig.events()
+                .iter()
+                .any(|event| matches!(event, Event::SubtitleDelta { done: true, .. }))
+        });
+
+        let sealed: Vec<Option<String>> = rig
+            .events()
+            .iter()
+            .filter_map(|event| match event {
+                Event::SubtitleDelta {
+                    done: true,
+                    confirmed,
+                    ..
+                } => Some(confirmed.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            sealed,
+            vec![Some("你好吗".to_string())],
+            "该补且只补一条终稿，正文是整句（含 stash 里的尾巴）"
+        );
+        assert!(
+            !rig.runtime.subtitle_frame().lines.is_empty(),
+            "收口不能把已经显示的那句话抹掉"
+        );
+        rig.engine.shutdown();
+    }
+
+    /// 对照：`.text.done` 正常到位时，不允许再补第二条终稿（VRChat 会多一条一样的气泡）。
+    #[test]
+    fn a_normal_text_done_is_not_duplicated_by_the_turn_end() {
+        let rig = Rig::new();
+        rig.boot(Pipeline::Speak);
+        rig.wait_until(|| rig.runtime.pipeline_state(Pipeline::Speak) == PipelineState::Ready);
+        rig.drain_events();
+
+        rig.push_message(r#"{"type":"response.text.text","text":"","stash":"你好吗"}"#);
+        rig.push_message(r#"{"type":"response.text.done","text":"你好吗"}"#);
+        // 带上 usage，好拿 `UsageChanged` 当「`response.done` 已经吃进去了」的同步点。
+        rig.push_message(
+            r#"{"type":"response.done","response":{"usage":{"input_tokens":30,"output_tokens":12,"total_tokens":42}}}"#,
+        );
+        rig.wait_until(|| {
+            rig.events()
+                .iter()
+                .filter(|event| matches!(event, Event::SubtitleDelta { done: true, .. }))
+                .count()
+                >= 1
+        });
+        // 让 `response.done` 确实被吃进去，再数一遍。
+        rig.wait_until(|| {
+            rig.events()
+                .iter()
+                .any(|event| matches!(event, Event::UsageChanged { .. }))
+        });
+        let sealed = rig
+            .events()
+            .iter()
+            .filter(|event| matches!(event, Event::SubtitleDelta { done: true, .. }))
+            .count();
+        assert_eq!(sealed, 1, "正常路径只能有一条终稿，实际 {sealed} 条");
         rig.engine.shutdown();
     }
 

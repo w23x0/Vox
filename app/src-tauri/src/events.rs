@@ -219,7 +219,13 @@ pub fn wire(state: &Arc<AppState>, app: tauri::AppHandle) {
                 }
             }
             Event::MicActive { .. } => {}
-            Event::SubtitleCleared { .. } => {}
+            Event::SubtitleCleared { .. } => {
+                // 轨被清了（关掉「显示译文」/ 换回话），ChatBox 的长度基线得跟着作废。
+                // 不清的话，这之后第一句短话会被上一句留下的基线按 +STEP 压住——
+                // 跟 `chatbox_step` 里「上一条不是前缀就按新一轮发」防的是同一件事，
+                // 只是一个从事件入口防、一个从判定入口防。
+                *osc_last_sent.lock() = None;
+            }
             Event::SourceDetected { .. } => {}
             Event::LatencyChanged { .. } => {}
             Event::DevicesChanged => {}
