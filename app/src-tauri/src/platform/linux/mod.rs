@@ -173,16 +173,19 @@ pub fn stop_hotkeys() {
 /// 所以这里直接建；不是主线程会拿到明确错误（见 `window.rs`）。
 pub fn spawn_overlay(
     settings: &SubtitleSettings,
-    _on_geometry: GeometryCallback,
+    on_geometry: GeometryCallback,
 ) -> Result<OverlayHandle, OverlayFailure> {
-    // 几何回调先不接：Linux 侧是永久鼠标穿透（`docs/architecture/DECISIONS.md` A5），窗口拖不动，
-    // 也就没有"用户改了几何"这回事。
-    let overlay = vox_overlay_linux::spawn(settings).map_err(|error| OverlayFailure {
-        // GTK 建窗只有一条失败路：不在 GTK 主线程上（`vox-overlay-linux/src/window.rs`）。
-        // 那是装配层没接对，不是这台机器做不到——`not_wired` 正是为这种中间态准备的。
-        reason: UnavailableReason::NotWired,
-        error,
-    })?;
+    // 平时永久鼠标穿透（`docs/architecture/DECISIONS.md` A5），几何只会在用户进入
+    // 「调整位置」模式（`overlay_set_edit_mode`）并拖完/缩放完后回写。
+    let overlay =
+        vox_overlay_linux::spawn_with_geometry(settings, on_geometry).map_err(|error| {
+            OverlayFailure {
+                // GTK 建窗只有一条失败路：不在 GTK 主线程上（`vox-overlay-linux/src/window.rs`）。
+                // 那是装配层没接对，不是这台机器做不到——`not_wired` 正是为这种中间态准备的。
+                reason: UnavailableReason::NotWired,
+                error,
+            }
+        })?;
     let _ = OVERLAY.set(Arc::clone(&overlay));
     Ok(overlay)
 }
@@ -190,6 +193,14 @@ pub fn spawn_overlay(
 /// 窗口还活着吗。帧线程靠它发现"窗被关了"。
 pub fn overlay_running() -> bool {
     OVERLAY.get().is_some_and(|overlay| overlay.is_running())
+}
+
+/// 进入/退出悬浮字幕窗的「调整位置」模式。窗口没起来就什么也不做（返回 `Ok`）。
+pub fn overlay_set_edit_mode(enabled: bool) -> Result<(), vox_core::Msg> {
+    if let Some(overlay) = OVERLAY.get() {
+        overlay.set_edit_mode(enabled);
+    }
+    Ok(())
 }
 
 pub fn shutdown_overlay() {

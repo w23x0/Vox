@@ -136,6 +136,7 @@ pub fn run() {
             commands::osc_stop,
             commands::osc_send_chatbox,
             commands::osc_set_avatar,
+            commands::overlay_set_edit_mode,
             commands::reset_usage,
             commands::reset_usage_model,
             commands::refresh_devices,

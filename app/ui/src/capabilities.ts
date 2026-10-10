@@ -96,6 +96,17 @@ export function hostBit(snapshot: Snapshot | null, bit: HostCapability): Capabil
 }
 
 /**
+ * 悬浮字幕窗是否走「调整位置」模式（Linux 桌面：平时永久鼠标穿透，只能临时进编辑模式拖）。
+ * Windows 的字幕窗任何时候都能直接拖，不需要。
+ *
+ * 这不是能力位（没有"关"这回事，只是交互方式不同），所以放在这里当一个最小的档位判断；
+ * 快照没到时按 `false`（先显示原来的说明，不闪）。
+ */
+export function overlayNeedsEditMode(snapshot: Snapshot | null): boolean {
+  return snapshot?.capabilities.tier === "linux_desktop";
+}
+
+/**
  * 位为假时那句说明（位为真返回 `null`）：`{位名}：{reason 文案}`。
  *
  * 句子必须说清三件事（R2）：**现在为什么不行 + 要用户做什么 + 做完之后去哪**；

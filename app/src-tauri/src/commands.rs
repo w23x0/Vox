@@ -218,6 +218,15 @@ pub fn osc_set_avatar(state: State<'_>, on: bool) -> Result<(), Msg> {
     }
 }
 
+// ─── 悬浮字幕 ──────────────────────────────────────────────────────────────────
+
+/// 进入/退出悬浮字幕窗的「调整位置」模式（仅 Linux 有实际效果；Windows 恒 `Ok`，
+/// 窗口没起来也是 `Ok`）。编辑状态不落盘。
+#[tauri::command]
+pub fn overlay_set_edit_mode(enabled: bool) -> Result<(), Msg> {
+    crate::platform::overlay_set_edit_mode(enabled)
+}
+
 // ─── 用量 ──────────────────────────────────────────────────────────────────────
 
 #[tauri::command]

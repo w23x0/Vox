@@ -14,22 +14,37 @@
 //! `GDK_BACKEND=x11` 设上，整个应用跑在 X11 兼容层里。实测 X11 下 `move()` 与
 //! `set_keep_above()` 都生效（见 `docs/platform/LINUX.md` §2.3）。
 //!
-//! 鼠标穿透按 `docs/architecture/DECISIONS.md` A5 的既定方针：**永久穿透**，不做拖动/缩放交互
-//! （Windows 侧后来加了拖动，那属于那边的历史包袱，Linux 这边不做）。
+//! 鼠标穿透按 `docs/architecture/DECISIONS.md` A5 的既定方针：**平时永久穿透**。
+//! 唯一例外是用户主动进入的「调整位置」模式（`Overlay::set_edit_mode`，见
+//! `docs/plans/SUBTITLE-V2.md` §1）：临时还原整窗输入域，画边框/手柄/示例字，按下后交给窗口管理器
+//! 拖动或缩放（`begin_move_drag` / `begin_resize_drag`），拖完去抖回写几何。
+//! 编辑状态只活在内存里，Esc / 完成 / 30 秒无操作都会退回穿透，进程崩溃也不会留下可交互的窗。
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use gtk::prelude::*;
-use vox_core::ports::{PortError, PortResult};
+use vox_core::ports::{PortError, PortResult, SubtitleFrame, SubtitleLine};
 use vox_core::settings::{OverlayGeometry, SubtitleSettings};
+use vox_core::subtitle::{RenderedChar, Track};
 use vox_overlay_core::canvas::Canvas;
 use vox_overlay_core::layout;
 use vox_overlay_core::render::{FrameInput, Renderer};
 use vox_overlay_core::text::FontFactory;
 
+use super::edit::{self, Edge, Geo, Hit};
 use super::mailbox::Mailbox;
+
+/// 拖动或缩放结束时通知宿主，把用户的几何设置写回配置（与 Windows 侧同一形状）。
+pub type GeometryCallback = Arc<dyn Fn(OverlayGeometry) + Send + Sync + 'static>;
+
+/// 窗口尺寸下限，和设置夹值（`vox-core` 的 160×60）一致。
+const MIN_WIDTH: i32 = 160;
+const MIN_HEIGHT: i32 = 60;
+/// 编辑模式里窗口上的提示语。
+const EDIT_HINT: &str = "拖动移动 · 拖边缘缩放 · 按 Esc / 点「完成」退出";
 
 // GTK 对象只能在主线程碰，所以放 `thread_local`（`static` 要求 `Sync`，GTK 不是）。
 // 全进程只有一个悬浮窗（`docs/architecture/DECISIONS.md` A6：两条流水线共用一个窗、两行分色），
@@ -73,6 +88,22 @@ struct Inner {
     canvas: Canvas,
     /// 上屏用的像素缓冲，复用；`cairo` 每帧借它的指针，不拥有它。
     pixels: Vec<u8>,
+    /// 几何回写（可选）。在主线程上调。
+    on_geometry: Option<GeometryCallback>,
+    /// 「调整位置」状态；`None` = 平时的穿透态。**不落盘**。
+    edit: Option<EditState>,
+    /// 编辑会话计数，用来让上一次会话的定时器自己作废。
+    edit_epoch: u64,
+}
+
+/// 编辑模式的运行时状态。
+struct EditState {
+    epoch: u64,
+    last_interaction: Instant,
+    /// 上次回写（或进入编辑时）的几何。
+    last_reported: Geo,
+    /// configure 事件计数，去抖用。
+    cfg_gen: u64,
 }
 
 /// 悬浮窗。外面（帧线程 / 装配层）只拿这个句柄，调的都是线程安全的操作。
@@ -82,7 +113,11 @@ pub struct Overlay {
 
 impl Overlay {
     /// 建窗。**必须在 GTK 主线程上调**，否则报错。
-    pub fn spawn(settings: &SubtitleSettings, font_factory: FontFactory) -> PortResult<Arc<Self>> {
+    pub fn spawn(
+        settings: &SubtitleSettings,
+        font_factory: FontFactory,
+        on_geometry: Option<GeometryCallback>,
+    ) -> PortResult<Arc<Self>> {
         let context = glib::MainContext::default();
         if !context.is_owner() {
             return Err(PortError::new(
@@ -101,6 +136,12 @@ impl Overlay {
         window.set_skip_taskbar_hint(true);
         window.set_skip_pager_hint(true);
         window.set_app_paintable(true);
+        // 编辑模式要收按键/点击/移动事件；平时输入域是空的，这些事件到不了。
+        window.add_events(
+            gtk::gdk::EventMask::BUTTON_PRESS_MASK
+                | gtk::gdk::EventMask::KEY_PRESS_MASK
+                | gtk::gdk::EventMask::POINTER_MOTION_MASK,
+        );
         window.set_keep_above(true);
         window.set_type_hint(gtk::gdk::WindowTypeHint::Notification);
         if let Some(visual) =
@@ -137,7 +178,24 @@ impl Overlay {
                 mailbox: Arc::clone(&mailbox),
                 canvas: Canvas::new(width, height),
                 pixels: Vec::new(),
+                on_geometry,
+                edit: None,
+                edit_epoch: 0,
             });
+        });
+
+        window.connect_button_press_event(|_, ev| {
+            with_inner(|inner| inner.on_press(ev)).unwrap_or(glib::Propagation::Proceed)
+        });
+        window.connect_motion_notify_event(|_, ev| {
+            with_inner(|inner| inner.on_motion(ev)).unwrap_or(glib::Propagation::Proceed)
+        });
+        window.connect_key_press_event(|_, ev| {
+            with_inner(|inner| inner.on_key(ev)).unwrap_or(glib::Propagation::Proceed)
+        });
+        window.connect_configure_event(|_, _| {
+            with_inner(|inner| inner.on_configure());
+            false
         });
 
         // 重画回调：主线程上跑，从邮箱取最新一帧。
@@ -170,6 +228,22 @@ impl Overlay {
             INNER.with(|slot| {
                 if let Some(inner) = slot.borrow().as_ref() {
                     inner.area.queue_draw();
+                }
+            });
+        });
+    }
+
+    /// 进入/退出「调整位置」模式。**线程安全**：真正的 GTK 操作排到主线程上做。
+    ///
+    /// 进入：还原整窗输入域、能缩放、能拿焦点，画框 + 手柄 + 提示 + 示例字；
+    /// 退出：回到永久穿透。窗口没了就什么也不做。
+    pub fn set_edit_mode(&self, enabled: bool) {
+        glib::MainContext::default().invoke(move || {
+            with_inner(|inner| {
+                if enabled {
+                    inner.enter_edit();
+                } else {
+                    inner.exit_edit();
                 }
             });
         });
@@ -218,7 +292,8 @@ impl Inner {
             )
         };
 
-        if !visible {
+        let editing = self.edit.is_some();
+        if !visible && !editing {
             self.clear(cr);
             return;
         }
@@ -231,6 +306,12 @@ impl Inner {
             self.settings = settings.clone();
         }
 
+        // 编辑模式下没有真字幕就摆两行示例，否则空窗没东西可拖。
+        let frame = match frame {
+            Some(frame) if !frame.lines.is_empty() => Some(frame),
+            _ if editing => Some(sample_frame(&settings)),
+            other => other,
+        };
         let Some(frame) = frame else {
             self.clear(cr);
             return;
@@ -253,8 +334,16 @@ impl Inner {
         // 否则最上面一块区域会被裁掉。只长不缩——多出来的是透明且鼠标穿透的。
         if out.client_height > height {
             let (x, y) = self.window.position();
-            self.area.set_size_request(width, out.client_height);
-            self.window.move_(x, y - (out.client_height - height));
+            let grow = out.client_height - height;
+            // 编辑模式里宽度只给下限，用户要能把窗口拉窄；平时钉住当前宽度（窗口不可缩放）。
+            let min_width = if editing { MIN_WIDTH } else { width };
+            self.area.set_size_request(min_width, out.client_height);
+            self.window.move_(x, y - grow);
+            // 这是内容撑出来的，不是用户改的：编辑模式里把基线同步挪过去，别当成"用户改了几何"回写。
+            if let Some(edit) = self.edit.as_mut() {
+                edit.last_reported.1 -= grow;
+                edit.last_reported.3 += grow;
+            }
             self.area.queue_draw();
         }
 
@@ -283,6 +372,19 @@ impl Inner {
             tracing::warn!("设置绘制源失败：{e}");
             return;
         }
+        if editing {
+            // 先铺一层淡底，窗口才看得见、抓得到；字幕像素盖在上面。
+            cr.set_operator(gtk::cairo::Operator::Source);
+            cr.set_source_rgba(0.08, 0.1, 0.16, 0.45);
+            let _ = cr.paint();
+            if cr.set_source_surface(&surface, 0.0, 0.0).is_err() {
+                return;
+            }
+            cr.set_operator(gtk::cairo::Operator::Over);
+            let _ = cr.paint();
+            draw_edit_chrome(cr, width, height);
+            return;
+        }
         cr.set_operator(gtk::cairo::Operator::Source);
         let _ = cr.paint();
     }
@@ -292,6 +394,271 @@ impl Inner {
         cr.set_operator(gtk::cairo::Operator::Source);
         cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
         let _ = cr.paint();
+    }
+}
+
+impl Inner {
+    fn touch(&mut self) {
+        if let Some(edit) = self.edit.as_mut() {
+            edit.last_interaction = Instant::now();
+        }
+    }
+
+    fn geo(&self) -> Geo {
+        let (x, y) = self.window.position();
+        let (w, h) = self.window.size();
+        (x, y, w, h)
+    }
+
+    fn enter_edit(&mut self) {
+        if self.edit.is_some() {
+            self.touch();
+            return;
+        }
+        self.edit_epoch += 1;
+        let epoch = self.edit_epoch;
+        // 非 resizable 的窗口 WM 不给缩放；区域也别被之前"只长不缩"的请求撑住。
+        self.area.set_size_request(MIN_WIDTH, MIN_HEIGHT);
+        self.window.set_resizable(true);
+        self.window.set_accept_focus(true);
+        // 输入域还原成整窗（X Shape 会把它裁到窗口范围内，取个足够大的矩形即可）。
+        if let Some(gdk_window) = self.window.window() {
+            let full = gtk::cairo::Region::create_rectangle(&gtk::cairo::RectangleInt::new(
+                0, 0, 32767, 32767,
+            ));
+            gdk_window.input_shape_combine_region(&full, 0, 0);
+        }
+        self.edit = Some(EditState {
+            epoch,
+            last_interaction: Instant::now(),
+            last_reported: self.geo(),
+            cfg_gen: 0,
+        });
+        self.window.present();
+        self.area.queue_draw();
+
+        // 30 秒无交互自动退出。
+        glib::timeout_add_seconds_local(1, move || {
+            let keep = with_inner(|inner| match inner.edit.as_ref() {
+                Some(edit) if edit.epoch == epoch => {
+                    if edit::idle_expired(edit.last_interaction.elapsed()) {
+                        inner.exit_edit();
+                        false
+                    } else {
+                        true
+                    }
+                }
+                _ => false,
+            })
+            .unwrap_or(false);
+            if keep {
+                glib::ControlFlow::Continue
+            } else {
+                glib::ControlFlow::Break
+            }
+        });
+    }
+
+    fn exit_edit(&mut self) {
+        if self.edit.is_none() {
+            return;
+        }
+        // 退出前把没到点的几何先写回，免得"刚拖完立刻点完成"丢掉。
+        self.report_now();
+        self.edit = None;
+        clear_input_shape(&self.window);
+        if let Some(gdk_window) = self.window.window() {
+            gdk_window.set_cursor(None);
+        }
+        // 钉住当前大小再取消 resizable，窗口不会缩回旧尺寸。
+        let (w, h) = self.window.size();
+        self.area.set_size_request(w, h);
+        self.window.set_default_size(w, h);
+        self.window.set_resizable(false);
+        self.window.set_accept_focus(false);
+        self.area.queue_draw();
+    }
+
+    /// 读当前几何，变了就回写。
+    fn report_now(&mut self) {
+        let now = self.geo();
+        let Some(edit) = self.edit.as_mut() else {
+            return;
+        };
+        if edit.last_reported == now {
+            return;
+        }
+        edit.last_reported = now;
+        if let Some(callback) = self.on_geometry.as_ref() {
+            callback(OverlayGeometry {
+                x: now.0,
+                y: now.1,
+                width: now.2.max(MIN_WIDTH) as u32,
+                height: now.3.max(MIN_HEIGHT) as u32,
+            });
+        }
+    }
+
+    fn on_press(&mut self, ev: &gtk::gdk::EventButton) -> glib::Propagation {
+        if self.edit.is_none() {
+            return glib::Propagation::Proceed;
+        }
+        self.touch();
+        if ev.button() != 1 {
+            return glib::Propagation::Stop;
+        }
+        let (w, h) = self.window.size();
+        let (x, y) = ev.position();
+        let (rx, ry) = ev.root();
+        let (rx, ry, time) = (rx as i32, ry as i32, ev.time());
+        match edit::hit_test(x, y, w, h) {
+            Hit::Move => self.window.begin_move_drag(1, rx, ry, time),
+            Hit::Resize(edge) => self
+                .window
+                .begin_resize_drag(edge_of(edge), 1, rx, ry, time),
+        }
+        glib::Propagation::Stop
+    }
+
+    fn on_motion(&mut self, ev: &gtk::gdk::EventMotion) -> glib::Propagation {
+        if self.edit.is_none() {
+            return glib::Propagation::Proceed;
+        }
+        self.touch();
+        let (w, h) = self.window.size();
+        let (x, y) = ev.position();
+        let name = match edit::hit_test(x, y, w, h) {
+            Hit::Move => "move",
+            Hit::Resize(Edge::North) => "n-resize",
+            Hit::Resize(Edge::South) => "s-resize",
+            Hit::Resize(Edge::West) => "w-resize",
+            Hit::Resize(Edge::East) => "e-resize",
+            Hit::Resize(Edge::NorthWest) => "nw-resize",
+            Hit::Resize(Edge::NorthEast) => "ne-resize",
+            Hit::Resize(Edge::SouthWest) => "sw-resize",
+            Hit::Resize(Edge::SouthEast) => "se-resize",
+        };
+        if let Some(gdk_window) = self.window.window() {
+            let cursor = gtk::gdk::Cursor::from_name(&gdk_window.display(), name);
+            gdk_window.set_cursor(cursor.as_ref());
+        }
+        glib::Propagation::Proceed
+    }
+
+    fn on_key(&mut self, ev: &gtk::gdk::EventKey) -> glib::Propagation {
+        if self.edit.is_none() {
+            return glib::Propagation::Proceed;
+        }
+        self.touch();
+        if ev.keyval() == gtk::gdk::keys::constants::Escape {
+            self.exit_edit();
+            return glib::Propagation::Stop;
+        }
+        glib::Propagation::Proceed
+    }
+
+    /// 窗口动了/变了大小。编辑中去抖 200ms 后回写。
+    fn on_configure(&mut self) {
+        let Some(edit) = self.edit.as_mut() else {
+            return;
+        };
+        edit.last_interaction = Instant::now();
+        edit.cfg_gen += 1;
+        let (epoch, scheduled) = (edit.epoch, edit.cfg_gen);
+        self.area.queue_draw();
+        glib::timeout_add_local_once(edit::REPORT_DEBOUNCE, move || {
+            with_inner(|inner| {
+                let now = inner.geo();
+                let Some(edit) = inner.edit.as_ref() else {
+                    return;
+                };
+                if edit.epoch == epoch
+                    && edit::should_report(scheduled, edit.cfg_gen, edit.last_reported, now)
+                {
+                    inner.report_now();
+                }
+            });
+        });
+    }
+}
+
+/// 在主线程上借 `INNER`。重入（正好在别的借用里）或窗口已没了返回 `None`。
+fn with_inner<R>(f: impl FnOnce(&mut Inner) -> R) -> Option<R> {
+    INNER.with(|slot| {
+        let mut guard = slot.try_borrow_mut().ok()?;
+        guard.as_mut().map(f)
+    })
+}
+
+fn edge_of(edge: Edge) -> gtk::gdk::WindowEdge {
+    use gtk::gdk::WindowEdge as W;
+    match edge {
+        Edge::North => W::North,
+        Edge::South => W::South,
+        Edge::West => W::West,
+        Edge::East => W::East,
+        Edge::NorthWest => W::NorthWest,
+        Edge::NorthEast => W::NorthEast,
+        Edge::SouthWest => W::SouthWest,
+        Edge::SouthEast => W::SouthEast,
+    }
+}
+
+/// 编辑模式的示例字幕：两行，颜色跟设置走。
+fn sample_frame(settings: &SubtitleSettings) -> SubtitleFrame {
+    let line = |track, text: &str, color: &str| SubtitleLine {
+        track,
+        origin: 0,
+        chars: text
+            .chars()
+            .map(|ch| RenderedChar { ch, alpha: 1.0 })
+            .collect(),
+        color: color.to_string(),
+    };
+    SubtitleFrame {
+        lines: vec![
+            line(
+                Track::Listen,
+                "这句是听人说话的字幕示例",
+                &settings.listen_color,
+            ),
+            line(
+                Track::Speak,
+                "Hello，这句是对外说话的字幕示例",
+                &settings.speak_color,
+            ),
+        ],
+    }
+}
+
+/// 编辑模式的装饰：2px 高亮边框、四角手柄、顶部提示语。
+fn draw_edit_chrome(cr: &gtk::cairo::Context, width: i32, height: i32) {
+    let (w, h) = (width as f64, height as f64);
+    cr.set_operator(gtk::cairo::Operator::Over);
+    cr.set_source_rgba(0.25, 0.62, 1.0, 1.0);
+    cr.set_line_width(2.0);
+    cr.rectangle(1.0, 1.0, w - 2.0, h - 2.0);
+    let _ = cr.stroke();
+    let s = 12.0;
+    for (x, y) in [(0.0, 0.0), (w - s, 0.0), (0.0, h - s), (w - s, h - s)] {
+        cr.rectangle(x, y, s, s);
+        let _ = cr.fill();
+    }
+    cr.select_font_face(
+        "sans-serif",
+        gtk::cairo::FontSlant::Normal,
+        gtk::cairo::FontWeight::Normal,
+    );
+    cr.set_font_size(13.0);
+    if let Ok(ext) = cr.text_extents(EDIT_HINT) {
+        let x = ((w - ext.width()) / 2.0 - ext.x_bearing()).max(16.0);
+        let y = 16.0 + 13.0;
+        cr.set_source_rgba(0.0, 0.0, 0.0, 0.85);
+        cr.move_to(x + 1.0, y + 1.0);
+        let _ = cr.show_text(EDIT_HINT);
+        cr.set_source_rgba(1.0, 1.0, 1.0, 1.0);
+        cr.move_to(x, y);
+        let _ = cr.show_text(EDIT_HINT);
     }
 }
 
@@ -323,11 +690,28 @@ fn placement_of(
     height: i32,
     geometry: Option<OverlayGeometry>,
 ) -> (i32, i32) {
+    let display = gtk::prelude::GtkWindowExt::screen(window).map(|screen| screen.display());
     if let Some(geometry) = geometry {
-        return (geometry.x, geometry.y);
+        // 存档的位置不在任何显示器里（拔了外接屏 / 存档被改坏）就当没存过。
+        let monitors: Vec<vox_overlay_core::geom::RectI> = display
+            .as_ref()
+            .map(|display| {
+                (0..display.n_monitors())
+                    .filter_map(|i| display.monitor(i))
+                    .map(|m| {
+                        let r = m.geometry();
+                        vox_overlay_core::geom::RectI::new(r.x(), r.y(), r.width(), r.height())
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if edit::geometry_on_screen(geometry, &monitors) {
+            return (geometry.x, geometry.y);
+        }
+        tracing::warn!("字幕窗存档位置不在任何显示器内，回落默认位置");
     }
-    let work = gtk::prelude::GtkWindowExt::screen(window)
-        .and_then(|screen| screen.display().primary_monitor())
+    let work = display
+        .and_then(|display| display.primary_monitor())
         .map(|monitor| {
             let area = monitor.workarea();
             (area.x(), area.y(), area.width(), area.height())

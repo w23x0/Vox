@@ -8,6 +8,7 @@
 
 #![cfg(target_os = "linux")]
 
+mod edit;
 mod font;
 mod mailbox;
 mod window;
@@ -18,7 +19,7 @@ use vox_core::ports::{PortResult, SubtitleFrame, SubtitleView};
 use vox_core::settings::SubtitleSettings;
 
 pub use font::font_factory;
-pub use window::Overlay;
+pub use window::{GeometryCallback, Overlay};
 
 impl SubtitleView for Overlay {
     fn show(&self) {
@@ -54,5 +55,13 @@ impl SubtitleView for Overlay {
 
 /// 起一个悬浮窗。**必须在 GTK 主线程上调**（装配层的 `assemble()` 就在主线程）。
 pub fn spawn(settings: &SubtitleSettings) -> PortResult<Arc<Overlay>> {
-    Overlay::spawn(settings, font_factory())
+    Overlay::spawn(settings, font_factory(), None)
+}
+
+/// 同 [`spawn`]，另带几何回写：「调整位置」模式里拖完/缩放完（去抖后）调它。
+pub fn spawn_with_geometry(
+    settings: &SubtitleSettings,
+    on_geometry: GeometryCallback,
+) -> PortResult<Arc<Overlay>> {
+    Overlay::spawn(settings, font_factory(), Some(on_geometry))
 }

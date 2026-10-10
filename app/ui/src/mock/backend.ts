@@ -546,6 +546,9 @@ export function createMockApi(): VoxApi {
     async oscSetAvatar() {
       await wait(180);
     },
+    async overlaySetEditMode() {
+      await wait(60);
+    },
     async resetUsage() {
       usage = {};
       emit({ kind: "usage_changed", usage });

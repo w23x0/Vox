@@ -66,6 +66,8 @@ export interface VoxApi {
   oscSendChatbox(text: string): Promise<void>;
   /** 手动设一个头像状态参数（旁路测试用；自动跟随交由后端）。 */
   oscSetAvatar(on: boolean): Promise<void>;
+  /** 悬浮字幕窗「调整位置」模式开关（仅 Linux 有效果，别处是空操作）。 */
+  overlaySetEditMode(enabled: boolean): Promise<void>;
   resetUsage(): Promise<void>;
   resetUsageModel(model: string): Promise<void>;
   refreshDevices(): Promise<void>;
@@ -133,6 +135,8 @@ function createTauriApi(): VoxApi {
     oscStop: async () => void (await call<unknown>("osc_stop")),
     oscSendChatbox: async (text) => void (await call<unknown>("osc_send_chatbox", { text })),
     oscSetAvatar: async (on) => void (await call<unknown>("osc_set_avatar", { on })),
+    overlaySetEditMode: async (enabled) =>
+      void (await call<unknown>("overlay_set_edit_mode", { enabled })),
     resetUsage: async () => void (await call<unknown>("reset_usage")),
     resetUsageModel: async (model) => void (await call<unknown>("reset_usage_model", { model })),
     refreshDevices: async () => void (await call<unknown>("refresh_devices")),
