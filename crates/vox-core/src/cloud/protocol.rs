@@ -444,6 +444,12 @@ pub struct ParsedEvent {
 #[derive(Debug, Default)]
 pub struct Decoder {
     parts: String,
+    /// 最近一次的**渲染值**：`.text` 形状下 = 确认前缀 + stash，`.delta` 形状下 = 累积整句。
+    ///
+    /// 只给 `finish` 当兜底：`.done` 偶尔不带文字，而那时 `parts` 对 `.text` 形状**不是整句**
+    /// （只有确认前缀，尾巴还在 stash 里），拿它兜底会把用户刚听到的半句整段吃掉。
+    /// `parts` 的语义不动（`pending()` 与它的测试钉着「确认前缀才进累积，stash 不落账」）。
+    render: String,
 }
 
 impl Decoder {
@@ -459,6 +465,7 @@ impl Decoder {
     /// 丢掉没说完的半句（换会话、被抢占时用）。
     pub fn reset(&mut self) {
         self.parts.clear();
+        self.render.clear();
     }
 
     /// 吃一条服务端消息。解析不出 JSON 就返回 `None`——网络上的垃圾不该让流水线炸。
@@ -507,6 +514,7 @@ impl Decoder {
             "response.done" => {
                 // 一轮说完了，半句作废。
                 self.parts.clear();
+                self.render.clear();
                 ServerEvent::TurnDone {
                     usage: usage_from_response(&value),
                 }
@@ -547,11 +555,15 @@ impl Decoder {
     /// 攒一片，吐出到目前为止的整句。（坑 3）
     fn accumulate(&mut self, piece: Option<&str>) -> ServerEvent {
         match assembled(&mut self.parts, piece) {
-            Some(text) => ServerEvent::TextDelta {
-                // delta 类型的累积是单调增长的整句，整句就是已确认部分。
-                confirmed: Some(text.clone()),
-                text,
-            },
+            Some(text) => {
+                // delta 形状没有 stash 这一层：累积值本身就是整句，兜底值与 parts 同源。
+                self.render.clone_from(&text);
+                ServerEvent::TextDelta {
+                    // delta 类型的累积是单调增长的整句，整句就是已确认部分。
+                    confirmed: Some(text.clone()),
+                    text,
+                }
+            }
             // 空增量当没发生过。
             None => ServerEvent::Other {
                 event_type: "response.text.delta".to_string(),
@@ -574,6 +586,9 @@ impl Decoder {
             };
         }
         self.parts = confirmed.to_string();
+        // 兜底值必须是**整句**（含 stash）：.done 不带文字时，finish 从这里取，
+        // 而不是从只有确认前缀的 parts 取。
+        self.render.clone_from(&render);
         ServerEvent::TextDelta {
             text: render,
             // 渲染值里只有 confirmed 是稳的（stash 每次都会被服务端重写），
@@ -586,9 +601,12 @@ impl Decoder {
     fn finish(&mut self, text: Option<&str>) -> ServerEvent {
         let final_text = match text.filter(|t| !t.is_empty()) {
             Some(t) => t.to_string(),
-            None => std::mem::take(&mut self.parts),
+            // 兜底取渲染值而不是 `parts`：`.text` 形状下 parts 只有确认前缀，
+            // 短句整句还躺在 stash 里时，取 parts 会吐出空串——字幕最后一个字都出不来。
+            None => std::mem::take(&mut self.render),
         };
         self.parts.clear();
+        self.render.clear();
         ServerEvent::TextDone { text: final_text }
     }
 }
@@ -1151,6 +1169,56 @@ mod tests {
             }
         );
         assert_eq!(dec.pending(), "");
+    }
+
+    /// 坑 4（回归）：`.text` 形状下整句都在 stash 里、`.done` 又没带文字时，
+    /// 终稿**不能是空串**。
+    ///
+    /// 这条是 2026-10-10 真实踩到的：阿里云 LiveTranslate 说**一句短话**时，
+    /// 确认前缀（`.text`）整句都是空的，尾巴全在 `stash` 里；`.done` 不带文字时
+    /// 原来回退到 `parts`（= 只有确认前缀）⇒ 终稿变成 `""`。
+    /// 后果不是“少几个字”，而是 VRChat ChatBox 一个字都收不到——
+    /// `app/src-tauri/src/events.rs` 那条 done 分支拿 `confirmed` 当正文，
+    /// `Some("")` 会盖过 `text`，`!line.is_empty()` 直接跳过。
+    #[test]
+    fn empty_done_after_a_stash_only_sentence_keeps_the_whole_sentence() {
+        let mut dec = Decoder::new();
+        // 整个渲染值都在 stash，`.text`（确认前缀）是空的。
+        let delta = dec
+            .decode(r#"{"type":"response.text.text","text":"","stash":"你好吗"}"#)
+            .unwrap();
+        assert_eq!(
+            delta.event,
+            ServerEvent::TextDelta {
+                text: "你好吗".into(),
+                confirmed: Some("".into())
+            }
+        );
+
+        let done = dec.decode(r#"{"type":"response.text.done"}"#).unwrap();
+        assert_eq!(
+            done.event,
+            ServerEvent::TextDone {
+                text: "你好吗".into()
+            },
+            "终稿取渲染值（含 stash），拿只有确认前缀的 parts 兑底会吐出空串"
+        );
+        assert_eq!(dec.pending(), "", "收尾后不能留半句");
+    }
+
+    /// 同上，但确认前缀只走了一半：终稿要带上 stash 尾巴，不能只给确认前缀。
+    #[test]
+    fn empty_done_keeps_the_stash_tail_after_a_partial_confirm() {
+        let mut dec = Decoder::new();
+        dec.decode(r#"{"type":"response.text.text","text":"你好","stash":"世界啊"}"#);
+        let done = dec.decode(r#"{"type":"response.text.done"}"#).unwrap();
+        assert_eq!(
+            done.event,
+            ServerEvent::TextDone {
+                text: "你好世界啊".into()
+            },
+            "尾巴'世界啊'不能因为只累积了确认前缀就丢掉"
+        );
     }
 
     /// LiveTranslate 的流式文字走 `.text`：`text` 是确认前缀（整体替换累积那半），

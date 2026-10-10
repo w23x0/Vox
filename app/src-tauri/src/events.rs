@@ -202,32 +202,20 @@ pub fn wire(state: &Arc<AppState>, app: tauri::AppHandle) {
                 if !client.chat_enabled() {
                     return;
                 }
-                if *done {
-                    // 终稿：把完整译文作为一条 VRChat 聊天消息真发出去（immediate=true，
-                    // 不弹输入框、直接发言）。用权威终稿收口，覆盖逐字推进可能残留的中间态。
-                    let line = confirmed.as_deref().unwrap_or(text);
-                    if !line.is_empty() {
-                        let _ = client.chatbox(&truncate_for_chat(line), true);
+                let mut last = osc_last_sent.lock();
+                match chatbox_step(*done, text, confirmed.as_deref(), last.as_deref()) {
+                    ChatboxStep::Idle => {}
+                    ChatboxStep::Send(line) => {
+                        // immediate=true：VRChat 不弹输入框、直接把这一行发出去。
+                        let _ = client.chatbox(&line, true);
+                        *last = Some(line);
                     }
-                    *osc_last_sent.lock() = None;
-                } else if let Some(prefix) = confirmed {
-                    // 逐字推进：拿已确认前缀（不含服务端还会改写的 stash 尾巴），
-                    // 满 STEP 字符才真发一条（immediate=true，VRChat 不弹输入框、直接发出去），
-                    // 让译文以「越变越完整的一条条消息」实时推进。步长控制频度，
-                    // 别逐 token 每帧发——那会刷出一长串碎消息。
-                    let proposed = truncate_for_chat(prefix);
-                    if proposed.is_empty() {
-                        return;
+                    ChatboxStep::Finish(line) => {
+                        // 用权威终稿收口，覆盖逐字推进可能残留的中间态。
+                        let _ = client.chatbox(&line, true);
+                        *last = None;
                     }
-                    let mut last = osc_last_sent.lock();
-                    let grew_enough = last.as_deref().is_none_or(|sent| {
-                        proposed.chars().count()
-                            >= sent.chars().count().saturating_add(OSC_CHAT_STEP_CHARS)
-                    });
-                    if grew_enough {
-                        let _ = client.chatbox(&proposed, true);
-                        *last = Some(proposed);
-                    }
+                    ChatboxStep::FinishQuiet => *last = None,
                 }
             }
             Event::MicActive { .. } => {}
@@ -247,6 +235,74 @@ pub fn wire(state: &Arc<AppState>, app: tauri::AppHandle) {
 const OSC_CHAT_STEP_CHARS: usize = 6;
 /// VRChat 聊天框 /chatbox/input 一次能塞的字符上限附近（估 144），超出截断加省略号。
 const OSC_CHAT_MAX_CHARS: usize = 144;
+
+/// 一条 `SubtitleDelta` 对 VRChat ChatBox 意味着什么（**纯函数**，可单测）。
+///
+/// 抽成纯函数是为了一条：这里四路分支（本轮首条 / 攒够步长 / 换了句 / 终稿）以前散在
+/// 事件闭包里，**没有任何一条单测看得到它们**——"短句一个字都发不出去"能活到今天，
+/// 根因就是它散在闭包里。喂四个参数就能把四路全钉住，用得着 `AppHandle` 吗。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ChatboxStep {
+    /// 不发，基线不动。
+    Idle,
+    /// 发这一行，基线推进到它。
+    Send(String),
+    /// 发这一行收口，然后清基线。
+    Finish(String),
+    /// 不发，但要清基线（终稿与刚发过的那条一模一样，不刷重复气泡）。
+    FinishQuiet,
+}
+
+/// 决定这一条字幕事件要不要写成 VRChat 消息、写哪一行。
+///
+/// `last` = 上一条**真发出去**的整行（`None` = 本轮还没发过）。
+///
+/// 两条纪律：
+///
+/// 1. **中间推进只吃已确认前缀**（`.text` 形状下是 `confirmed`）。`stash` 尾巴还会被
+///    服务端改写，而 `immediate=true` 的消息发出去收不回来——宁可少推进，不能报错字。
+/// 2. **终稿以 `confirmed` 为准，但空的 `Some("")` 不许盖掉 `text`**。
+///    `Some("")` 是"一个字都还没确认"，不是"没有正文"。
+pub(crate) fn chatbox_step(
+    done: bool,
+    text: &str,
+    confirmed: Option<&str>,
+    last: Option<&str>,
+) -> ChatboxStep {
+    if done {
+        let line = truncate_for_chat(confirmed.filter(|s| !s.is_empty()).unwrap_or(text));
+        if line.is_empty() {
+            return ChatboxStep::FinishQuiet;
+        }
+        // 中间推进刚发过同一行（整句一次确认完的短句就是这样），别发第二遍：
+        // VRChat 那边就是两条一模一样的气泡。
+        if last == Some(line.as_str()) {
+            return ChatboxStep::FinishQuiet;
+        }
+        return ChatboxStep::Finish(line);
+    }
+    let Some(prefix) = confirmed.filter(|p| !p.is_empty()) else {
+        return ChatboxStep::Idle;
+    };
+    let proposed = truncate_for_chat(prefix);
+    if proposed.is_empty() {
+        return ChatboxStep::Idle;
+    }
+    let grew_enough = match last {
+        // 本轮首条：一定发。不发的话，短句永远等不到——它的确认前缀可能整句都空。
+        None => true,
+        // 上一条不是这一条的前缀 = **换句了**。服务端偶尔只发 `response.done` 不发
+        // `.text.done`，那时基线没被清掉；不按新一轮重来的话，这一整句短话会被
+        // +STEP 的闸门永久压住，一条都发不出去。
+        Some(sent) if !proposed.starts_with(sent) => true,
+        Some(sent) => proposed.chars().count() >= sent.chars().count() + OSC_CHAT_STEP_CHARS,
+    };
+    if grew_enough {
+        ChatboxStep::Send(proposed)
+    } else {
+        ChatboxStep::Idle
+    }
+}
 
 /// 把一长句截到 ChatBox 一次能发的长度，末尾补 `…`。按字符边界切，不劈开 UTF-8。
 fn truncate_for_chat(text: &str) -> String {
@@ -595,6 +651,116 @@ mod tests {
         });
         assert_eq!(json["kind"], "subtitle_cleared");
         assert_eq!(json["track"], "speak");
+    }
+
+    // --- VRChat ChatBox 推进判定（`chatbox_step`）-----------------------------
+    //
+    // 这一组钉的是 2026-10-10 报上来的那条："只说**一句短话**时 VRChat 里没有字幕；
+    // 快速说很多话反而正常"。自证：把 `chatbox_step` 里 `None => true` 改回"攒够才发"，
+    // `a_non_prefix_means_a_new_sentence_and_sends_immediately` 就得变红。
+
+    /// 本轮首条一定发。短句的确认前缀可能整句都空，首发不无条件放行就永远等不到。
+    #[test]
+    fn the_first_chunk_of_a_turn_always_goes_out() {
+        assert_eq!(
+            chatbox_step(false, "", Some("你好吗"), None),
+            ChatboxStep::Send("你好吗".into())
+        );
+    }
+
+    /// 同一句里没攒够步长就先憋着，别逐 token 刷一长串碎气泡。
+    ///
+    /// 用重复字把字数写死（上一条 3 字，步长 6 ⇒ 阈值 9 字），
+    /// 免得汉字数得不清不楚、测试自己先错。
+    #[test]
+    fn within_a_sentence_the_step_gate_holds_back_short_growth() {
+        let sent = "好".repeat(3);
+        assert_eq!(
+            chatbox_step(false, "", Some(&"好".repeat(4)), Some(&sent)),
+            ChatboxStep::Idle,
+            "只涨 1 个字（4 < 3 + 6）不该发"
+        );
+        assert_eq!(
+            chatbox_step(false, "", Some(&"好".repeat(8)), Some(&sent)),
+            ChatboxStep::Idle,
+            "还差一个字（8 < 9）"
+        );
+        assert_eq!(
+            chatbox_step(false, "", Some(&"好".repeat(9)), Some(&sent)),
+            ChatboxStep::Send("好".repeat(9)),
+            "刚好涨到步长（9 ≥ 3 + 6）就该推进一步"
+        );
+    }
+
+    /// 上一条不是这一条的前缀 = **换句了**，按新一轮重来。
+    ///
+    /// 服务端偶尔只发 `response.done` 不发 `.text.done`，基线就没被清掉；
+    /// 不走这一路的话，下一句短话（字数远少于上一句）会被 +6 的闸门**永久压住**，
+    /// 一个字都发不出去——这就是用户说的"只有一句话时没有字幕"。
+    #[test]
+    fn a_non_prefix_means_a_new_sentence_and_sends_immediately() {
+        assert_eq!(
+            chatbox_step(false, "", Some("好"), Some("你好吗我是小明")),
+            ChatboxStep::Send("好".into()),
+        );
+    }
+
+    /// 终稿发一次，然后把基线清掉，下一轮重新首发。
+    #[test]
+    fn the_final_line_is_sent_once_and_resets_the_baseline() {
+        assert_eq!(
+            chatbox_step(true, "", Some("你好吗我是小明"), Some("你好吗")),
+            ChatboxStep::Finish("你好吗我是小明".into())
+        );
+    }
+
+    /// 终稿跟刚发过的那条一模一样：不许再发一遍。
+    /// 整句一次就确认完的短句就是这条路径，以前会在 VRChat 里出两条一样的气泡。
+    #[test]
+    fn the_final_line_is_not_duplicated_when_it_was_just_sent() {
+        assert_eq!(
+            chatbox_step(true, "", Some("你好吗"), Some("你好吗")),
+            ChatboxStep::FinishQuiet
+        );
+    }
+
+    /// 空的 `Some("")` = "一个字都还没确认"，不是"没有正文"：不许盖掉事件带的 `text`。
+    /// 盖掉的话终稿就变成空串，一个字都发不出去。
+    #[test]
+    fn an_empty_confirmed_does_not_shadow_the_text() {
+        assert_eq!(
+            chatbox_step(true, "你好吗", Some(""), None),
+            ChatboxStep::Finish("你好吗".into())
+        );
+    }
+
+    /// 整句还在服务端 stash 里（`confirmed` 空）的短句：
+    /// 说话过程中**不发**是设计如此（stash 会被改写，而 VRChat 消息发出去收不回来）；
+    /// 但终稿必须落地，不能一个字都不出。
+    #[test]
+    fn a_stash_only_sentence_lands_on_the_final_line() {
+        assert_eq!(
+            chatbox_step(false, "你好吗", Some(""), None),
+            ChatboxStep::Idle,
+            "confirm 为空时中间推进不发（stash 尾巴会被改写）"
+        );
+        assert_eq!(
+            chatbox_step(true, "", Some("你好吗"), None),
+            ChatboxStep::Finish("你好吗".into()),
+            "终稿必须把整句发出去"
+        );
+    }
+
+    /// 撞了 144 字上限之后：下一条还是那 144 字，不能因为"长度又涨了"而重发同一条。
+    #[test]
+    fn the_character_cap_does_not_refire_on_the_same_line() {
+        let long = "好".repeat(200);
+        let capped = truncate_for_chat(&long);
+        assert!(capped.ends_with('…'));
+        assert_eq!(
+            chatbox_step(false, "", Some(&long), Some(&capped)),
+            ChatboxStep::Idle
+        );
     }
 
     /// 代理密码只许住在设置账本与落盘那一侧：转发给前端的 `SettingsChanged`
