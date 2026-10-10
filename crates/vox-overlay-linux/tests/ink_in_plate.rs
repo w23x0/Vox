@@ -1,6 +1,6 @@
 //! 回归：字幕墨迹必须完整落在底衬圆角框内（含上下内边距）。
 //!
-//! 做法：同一帧画两次——字符 alpha=1（有墨迹）与 alpha=0（只有底衬，布局完全相同）。
+//! 做法：同一帧画两次——字符 alpha=1（有墨迹）与 alpha≈1/255（几乎只有底衬，布局完全相同）。
 //! 两张画布不同的像素就是墨迹；底衬矩形取只含底衬那张里 alpha>0 的像素。
 //! 用真实的系统字体（swash 光栅器），因为 bug 出在字体度量上。
 
@@ -55,7 +55,9 @@ fn check(lines: &[(Track, &str)], font_size: u32, dpi: u32) -> Vec<String> {
         font_size,
         ..SubtitleSettings::default()
     };
-    let plates = render(&settings, dpi, &frame(lines, 0.0));
+    // 「只有底衬」这一帧不能用 alpha=0：整行全透明时渲染器不再画底衬（逐句淡出的行为），
+    // 所以用肉眼不可见、但量化后不为 0 的 alpha（≈1/255），墨迹贡献的像素差仍远小于 alpha=1。
+    let plates = render(&settings, dpi, &frame(lines, 1.0 / 255.0));
     let full = render(&settings, dpi, &frame(lines, 1.0));
     assert_eq!(plates.height(), full.height());
     let (w, h) = (plates.width(), plates.height());
