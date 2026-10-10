@@ -295,9 +295,13 @@ fn qwen38_session_object(params: &SessionParams) -> Value {
         "format".into(),
         json!({ "type": "pcm", "sample_rate": OUTPUT_SAMPLE_RATE }),
     );
-    if let Some(voice) = params.effective_voice() {
-        output.insert("voice".into(), json!(voice));
-    }
+    // 文字模式也要报一个有效音色：不报的话服务端会填它自己的缺省 `Chelsie`，
+    // 3.8 不认，整个会话报 `Voice 'Chelsie' is not supported`。
+    let voice = params.effective_voice().map_or_else(
+        || catalog::default_voice_for_language(&params.target_language),
+        str::to_owned,
+    );
+    output.insert("voice".into(), json!(voice));
     session.insert(
         "audio".into(),
         json!({
@@ -985,9 +989,10 @@ mod tests {
     fn text_only_session_asks_for_no_audio_modality() {
         let session = SessionParams::text_only(LIVE, "en").to_session_object();
         assert_eq!(session["output_modalities"], json!(["text"]));
-        assert!(
-            session["audio"]["output"].get("voice").is_none(),
-            "不要语音就别报音色"
+        assert_eq!(
+            session["audio"]["output"]["voice"],
+            catalog::default_voice_for_language("en"),
+            "文字模式也得报有效音色，否则服务端填 Chelsie 被拒"
         );
     }
 
@@ -1003,7 +1008,10 @@ mod tests {
         assert!(!params.audio_enabled());
         let session = params.to_session_object();
         assert_eq!(session["output_modalities"], json!(["text"]));
-        assert!(session["audio"]["output"].get("voice").is_none());
+        assert_eq!(
+            session["audio"]["output"]["voice"],
+            catalog::default_voice_for_language("yue")
+        );
     }
 
     #[test]
