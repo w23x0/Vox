@@ -21,7 +21,14 @@ fn frame(lines: &[(Track, &str)], alpha: f32) -> SubtitleFrame {
             .map(|(track, text)| SubtitleLine {
                 track: *track,
                 origin: 0,
-                chars: text.chars().map(|ch| RenderedChar { ch, alpha }).collect(),
+                chars: text
+                    .chars()
+                    .map(|ch| RenderedChar {
+                        ch,
+                        alpha,
+                        idle_ms: 0,
+                    })
+                    .collect(),
                 color: "#ffffff".into(),
             })
             .collect(),

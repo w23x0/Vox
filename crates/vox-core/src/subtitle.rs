@@ -64,12 +64,17 @@ pub struct SubtitleChar {
     pub confirmed: bool,
 }
 
-/// 渲染用的一个字：字形 + 当前不透明度。
+/// 渲染用的一个字：字形 + 当前不透明度 + 它所在句的静默时长。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RenderedChar {
     pub ch: char,
-    /// 0.0..=1.0。
+    /// 0.0..=1.0。只含 0 类淡化与未确认尾巴，**不含**随时间的淡出——
+    /// 淡出要按视觉行取最新的 `idle_ms` 算（见 `vox-overlay-core`）。
     pub alpha: f32,
+    /// 这个字所在句距最近一次更新/定稿过去了多少毫秒（饱和到 `u32::MAX`）。
+    /// 渲染侧折行之后，一个视觉行的淡出取该行所有字里最小的 `idle_ms`：
+    /// 同一行上只要还有活字，整行就一起活着，不会在左边留出空洞。
+    pub idle_ms: u32,
 }
 
 /// 一条字幕区域的时间参数。
@@ -396,8 +401,9 @@ impl SubtitleTrack {
 
     /// 当前该画的字 + 每个字的不透明度。
     ///
-    /// 不透明度 = 所在句的淡出 × (0 类淡化) × (未确认尾巴 0.7 倍)。**没有逐字生命周期**：
-    /// 字一旦摆上去，在它那一句淡出之前一直是不透明的。淡完的句子仍占位（alpha=0）。
+    /// `alpha` = (0 类淡化) × (未确认尾巴 0.7 倍)；时间淡出交给渲染侧按**视觉行**算：
+    /// 每个字带着自己句子的 `idle_ms`，一行取最小值。**没有逐字生命周期**。
+    /// 淡完的句子仍占位，字形位置不动。
     pub fn render(&self, now_ms: u64) -> Vec<RenderedChar> {
         let dim = if self.timing.dim_zeros {
             self.timing.dim_alpha.clamp(0.0, 1.0)
@@ -406,13 +412,16 @@ impl SubtitleTrack {
         };
         let mut out = Vec::with_capacity(self.char_count());
         for sentence in &self.sentences {
-            let region = sentence.fade(now_ms, &self.timing);
+            let idle_ms = now_ms
+                .saturating_sub(sentence.last_update_ms)
+                .min(u32::MAX as u64) as u32;
             for c in &sentence.chars {
                 let base = if c.is_noise { dim } else { 1.0 };
                 let alpha = base * if c.confirmed { 1.0 } else { UNCONFIRMED_ALPHA };
                 out.push(RenderedChar {
                     ch: c.ch,
-                    alpha: (alpha * region).clamp(0.0, 1.0),
+                    alpha: alpha.clamp(0.0, 1.0),
+                    idle_ms,
                 });
             }
         }
@@ -421,11 +430,14 @@ impl SubtitleTrack {
 
     /// 当前该画的纯文本（不含透明度），给 UI 的历史面板用。
     pub fn text(&self, now_ms: u64) -> String {
-        self.render(now_ms)
-            .into_iter()
-            .filter(|c| c.alpha > 0.0)
-            .map(|c| c.ch)
-            .collect()
+        let mut out = String::new();
+        for sentence in &self.sentences {
+            if sentence.fade(now_ms, &self.timing) <= 0.0 {
+                continue;
+            }
+            out.extend(sentence.chars.iter().map(|c| c.ch));
+        }
+        out
     }
 
     /// 队首已经丢掉的字数累计：`render()` 返回的第 0 个字的绝对下标。
@@ -496,6 +508,23 @@ impl Default for Subtitles {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    impl SubtitleTrack {
+        /// 测试用：`render` 只给 `idle_ms`，这里按**句**把时间淡出乘回 alpha，
+        /// 方便断言句级生命周期（视觉行级的合并淡出在 vox-overlay-core 里测）。
+        fn render_faded(&self, now_ms: u64) -> Vec<RenderedChar> {
+            let mut out = self.render(now_ms);
+            let mut i = 0;
+            for s in &self.sentences {
+                let f = s.fade(now_ms, &self.timing);
+                for _ in &s.chars {
+                    out[i].alpha *= f;
+                    i += 1;
+                }
+            }
+            out
+        }
+    }
 
     fn timing() -> SubtitleTiming {
         SubtitleTiming {
@@ -576,10 +605,22 @@ mod tests {
     }
 
     #[test]
+    fn render_reports_idle_time_per_sentence_without_baking_in_the_fade() {
+        let mut t = paper();
+        t.update_sentence("甲", 1, 0);
+        t.finish_sentence("甲", 100);
+        t.update_sentence("乙", 1, 3000);
+        let r = t.render(3500);
+        assert_eq!(r[0].idle_ms, 3400, "定稿句从定稿时刻起算，不被乙刷新");
+        assert_eq!(r[1].idle_ms, 500);
+        assert!(r.iter().all(|c| c.alpha == 1.0), "alpha 不含时间淡出");
+    }
+
+    #[test]
     fn unconfirmed_tail_is_dimmed_and_brightens_when_confirmed() {
         let mut t = track();
         t.update_sentence("abcd", 2, 0);
-        let r = t.render(0);
+        let r = t.render_faded(0);
         assert_eq!(r.len(), 4);
         assert!(
             r[0].alpha == 1.0 && r[1].alpha == 1.0,
@@ -592,7 +633,7 @@ mod tests {
         );
         t.update_sentence("abcd", 4, 100);
         assert!(
-            t.render(100).iter().all(|c| c.alpha == 1.0),
+            t.render_faded(100).iter().all(|c| c.alpha == 1.0),
             "确认之后恢复全不透明"
         );
     }
@@ -601,10 +642,13 @@ mod tests {
     fn the_whole_region_fades_out_then_clears() {
         let mut t = track();
         t.update_sentence("字幕", 2, 0);
-        assert!(t.render(999).iter().all(|c| c.alpha == 1.0), "静默期内不淡");
-        let mid = t.render(1100)[0].alpha;
+        assert!(
+            t.render_faded(999).iter().all(|c| c.alpha == 1.0),
+            "静默期内不淡"
+        );
+        let mid = t.render_faded(1100)[0].alpha;
         assert!((mid - 0.5).abs() < 0.01, "淡出半程约 0.5，实际 {mid}");
-        assert_eq!(t.render(1200)[0].alpha, 0.0, "淡完就该全透明");
+        assert_eq!(t.render_faded(1200)[0].alpha, 0.0, "淡完就该全透明");
         assert!(!t.is_empty(), "淡完但还没 prune 时，字还在模型里");
         t.prune(1300);
         assert!(t.is_empty(), "淡完再 prune 就该清空");
@@ -616,7 +660,7 @@ mod tests {
         t.update_sentence("字幕", 2, 0);
         t.update_sentence("字幕啊", 3, 900);
         assert!(
-            t.render(1500).iter().all(|c| c.alpha == 1.0),
+            t.render_faded(1500).iter().all(|c| c.alpha == 1.0),
             "还在静默期内"
         );
         t.prune(1900);
@@ -635,7 +679,7 @@ mod tests {
     }
 
     fn alphas(t: &SubtitleTrack, now: u64) -> Vec<f32> {
-        t.render(now).iter().map(|c| c.alpha).collect()
+        t.render_faded(now).iter().map(|c| c.alpha).collect()
     }
 
     #[test]
@@ -698,8 +742,8 @@ mod tests {
         t.update_sentence("第一句。", 4, 0);
         t.finish_sentence("第一句。", 0);
         t.update_sentence("第二句", 3, 2000);
-        let before = t.render(2500);
-        let after = t.render(3500);
+        let before = t.render_faded(2500);
+        let after = t.render_faded(3500);
         assert_eq!(before.len(), after.len(), "淡完的句子仍占位");
         let ch = |r: &[RenderedChar]| r.iter().map(|c| c.ch).collect::<String>();
         assert_eq!(ch(&before), ch(&after));
@@ -764,12 +808,12 @@ mod tests {
         timing.dim_alpha = 0.3;
         let mut t = SubtitleTrack::new(timing);
         t.update_sentence("正⌀常⌀常", 6, 0);
-        let r = t.render(0);
+        let r = t.render_faded(0);
         assert_eq!(r.len(), 3, "⌀ 本身不显示");
         assert_eq!(r[0].alpha, 1.0);
         assert!((r[1].alpha - 0.3).abs() < 1e-6, "0 类字按 dim_alpha 画");
         assert_eq!(r[2].alpha, 1.0, "⌀ 之后的字恢复普通亮度");
-        let mid = t.render(1100);
+        let mid = t.render_faded(1100);
         assert!(
             (mid[1].alpha - 0.15).abs() < 0.01,
             "0 类字要跟着整块一起淡，实际 {}",

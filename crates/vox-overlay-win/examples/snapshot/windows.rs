@@ -197,7 +197,11 @@ fn line(track: Track, color: &str, chars: Vec<RenderedChar>) -> SubtitleLine {
 /// 全不透明的一行，用来看排版和字形。
 fn opaque(text: &str) -> Vec<RenderedChar> {
     text.chars()
-        .map(|ch| RenderedChar { ch, alpha: 1.0 })
+        .map(|ch| RenderedChar {
+            ch,
+            alpha: 1.0,
+            idle_ms: 0,
+        })
         .collect()
 }
 

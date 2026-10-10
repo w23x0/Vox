@@ -207,7 +207,11 @@ mod tests {
                 origin: 0,
                 chars: "悬浮字幕测试"
                     .chars()
-                    .map(|ch| RenderedChar { ch, alpha: 1.0 })
+                    .map(|ch| RenderedChar {
+                        ch,
+                        alpha: 1.0,
+                        idle_ms: 0,
+                    })
                     .collect(),
                 color: "#eef6ff".into(),
             }],
@@ -237,7 +241,11 @@ mod tests {
                             origin: 0,
                             chars: format!("{worker}-{i}")
                                 .chars()
-                                .map(|ch| RenderedChar { ch, alpha: 1.0 })
+                                .map(|ch| RenderedChar {
+                                    ch,
+                                    alpha: 1.0,
+                                    idle_ms: 0,
+                                })
                                 .collect(),
                             color: "#fff4de".into(),
                         }],
@@ -271,7 +279,11 @@ mod gdi_render_tests {
             origin: 0,
             chars: text
                 .chars()
-                .map(|ch| RenderedChar { ch, alpha: 1.0 })
+                .map(|ch| RenderedChar {
+                    ch,
+                    alpha: 1.0,
+                    idle_ms: 0,
+                })
                 .collect(),
             color: "#ffffff".into(),
         }
@@ -319,7 +331,11 @@ mod gdi_render_tests {
                 origin: 0,
                 chars: "完全透明"
                     .chars()
-                    .map(|ch| RenderedChar { ch, alpha: 0.0 })
+                    .map(|ch| RenderedChar {
+                        ch,
+                        alpha: 0.0,
+                        idle_ms: 0,
+                    })
                     .collect(),
                 color: "#ffffff".into(),
             }],

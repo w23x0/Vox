@@ -78,8 +78,14 @@ fn main() {
                 continue;
             }
             let existing = lines.iter_mut().find(|line| line.track == *track);
-            let chars: Vec<RenderedChar> =
-                text.chars().map(|ch| RenderedChar { ch, alpha }).collect();
+            let chars: Vec<RenderedChar> = text
+                .chars()
+                .map(|ch| RenderedChar {
+                    ch,
+                    alpha,
+                    idle_ms: 0,
+                })
+                .collect();
             match existing {
                 Some(line) => line.chars = chars,
                 None => lines.push(SubtitleLine {

@@ -386,7 +386,11 @@ mod tests {
                     origin: 0,
                     chars: text
                         .chars()
-                        .map(|ch| RenderedChar { ch, alpha: 1.0 })
+                        .map(|ch| RenderedChar {
+                            ch,
+                            alpha: 1.0,
+                            idle_ms: 0,
+                        })
                         .collect(),
                     color: "#ffffff".into(),
                 }],

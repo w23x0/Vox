@@ -51,6 +51,9 @@ pub struct FrameOutput {
 
 #[derive(Clone, Copy)]
 struct RowStyle {
+    /// 字幕静默多久后开始淡（`char_ttl_ms`）与淡出时长（`char_fade_ms`）。
+    ttl_ms: u32,
+    fade_ms: u32,
     color: Rgb,
     plate_alpha: u8,
     radius: f32,
@@ -564,6 +567,8 @@ impl Renderer {
                 continue;
             };
             let style = RowStyle {
+                ttl_ms: input.settings.char_ttl_ms,
+                fade_ms: input.settings.char_fade_ms,
                 color,
                 plate_alpha: input.settings.background_alpha,
                 radius: metrics.plate_radius as f32,
@@ -664,20 +669,15 @@ fn draw_line(
         return;
     }
     let y = (placed.y + dy).round() as i32;
-    // 整行的字都已淡成透明（逐句淡出时前面的句子先走）就不画底衬：
-    // 行位置不动，只是不留一块空底衬杵在上面。
-    let (c0, c1) = (placed.first, placed.last);
-    let all_clear = c1 > c0
-        && (c0..c1).all(|i| {
-            line.chars
-                .get(i)
-                .is_some_and(|rc| alpha_to_u8(rc.alpha) == 0)
-        });
-    let plate_alpha = if all_clear {
-        0
-    } else {
-        (style.plate_alpha as f32 * fade).round() as u8
-    };
+    // 一个视觉行的淡出只看它最新的字：同一行上只要还有活字（后一句从这行中间接着写），
+    // 整行连同前一句的尾巴一起活着；整行都老了才一起淡。位置不动。
+    let idle = line
+        .chars
+        .get(placed.first..placed.last)
+        .and_then(|cs| cs.iter().map(|rc| rc.idle_ms).min())
+        .unwrap_or(0);
+    let fade = fade * time_fade(idle, style.ttl_ms, style.fade_ms);
+    let plate_alpha = (style.plate_alpha as f32 * fade).round() as u8;
     if plate_alpha > 0 {
         canvas.fill_round_rect(
             crate::geom::RectI::new(placed.plate_x, y, placed.plate_w, placed.plate_h),
@@ -720,6 +720,17 @@ fn draw_line(
             pen += glyph.advance;
         }
     });
+}
+
+/// 静默 `ttl` 毫秒之内满亮，之后 `fade` 毫秒线性淡到 0。
+fn time_fade(idle_ms: u32, ttl_ms: u32, fade_ms: u32) -> f32 {
+    if idle_ms < ttl_ms {
+        return 1.0;
+    }
+    if fade_ms == 0 {
+        return 0.0;
+    }
+    (1.0 - (idle_ms - ttl_ms).min(fade_ms) as f32 / fade_ms as f32).clamp(0.0, 1.0)
 }
 
 fn find_line(frame: &SubtitleFrame, track: Track) -> Option<&SubtitleLine> {
@@ -798,7 +809,11 @@ mod tests {
                     origin: 0,
                     chars: text
                         .chars()
-                        .map(|ch| vox_core::subtitle::RenderedChar { ch, alpha: 1.0 })
+                        .map(|ch| vox_core::subtitle::RenderedChar {
+                            ch,
+                            alpha: 1.0,
+                            idle_ms: 0,
+                        })
                         .collect(),
                     color: "#ffffff".into(),
                 })
