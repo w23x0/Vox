@@ -179,6 +179,15 @@ fn load_face(family: &str) -> PortResult<(Arc<Vec<u8>>, u32)> {
     Ok(loaded)
 }
 
+/// 字体族名的"实质词集"：小写、拆词，丢掉只表示打包/变体的修饰词。
+fn family_tokens(name: &str) -> std::collections::BTreeSet<String> {
+    name.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty() && !matches!(*t, "nf" | "normal" | "nerd" | "font" | "propo"))
+        .map(str::to_owned)
+        .collect()
+}
+
 /// 设置里的字体族 → 系统里真实存在的字体面。
 fn query_font(db: &fontdb::Database, family: &str) -> Option<fontdb::ID> {
     let by_name = |name: &str| {
@@ -190,6 +199,19 @@ fn query_font(db: &fontdb::Database, family: &str) -> Option<fontdb::ID> {
     if !family.trim().is_empty() {
         if let Some(id) = by_name(family) {
             return Some(id);
+        }
+        // 设置里的名字常是 Windows 上的写法（"Maple Mono Normal CN"），Linux 上同一款字体
+        // 叫 "Maple Mono NF CN"。精确名对不上时，按"去掉 NF / Normal / Nerd 等修饰词后
+        // 词集相同"再找一次，别一上来就掉到无关的回退字体。
+        let want = family_tokens(family);
+        let alias = db.faces().find_map(|face| {
+            face.families
+                .iter()
+                .any(|(name, _)| family_tokens(name) == want)
+                .then_some(face.id)
+        });
+        if alias.is_some() {
+            return alias;
         }
     }
     // 回退顺序：先找能写中文的，再退到系统无衬线。
@@ -393,5 +415,13 @@ mod tests {
             Some(("/f/NotoSansArabic-Regular.ttf".to_string(), 0))
         );
         assert_eq!(pick_fallback(""), None, "没有候选就没有回退");
+    }
+    #[test]
+    fn family_aliases_ignore_packaging_words() {
+        assert_eq!(
+            family_tokens("Maple Mono Normal CN"),
+            family_tokens("Maple Mono NF CN")
+        );
+        assert_ne!(family_tokens("Maple Mono CN"), family_tokens("Maple Mono"));
     }
 }
