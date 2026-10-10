@@ -1,4 +1,4 @@
-//! 字幕模型：**句子序列** + 整块淡出。
+//! 字幕模型：**句子序列** + 逐句淡出。
 //!
 //! 两条流水线各占一个区域（对外说话暖白、听人说话冷白），听在上、说在下，
 //! 谁也不推谁。模型只回答两件事："这条轨现在有哪些字、每个字多亮"，
@@ -15,6 +15,15 @@
 //! - [`SubtitleTrack::finish_sentence`] 同样 diff 一次，然后把这句话定稿。
 //!
 //! 定稿过的句子再也不会被服务端改动，于是它后面的字一旦摆上屏就永远不挪位置。
+//!
+//! ## 逐句生命周期
+//!
+//! 每句话有自己的计时起点 `last_update_ms`：进行中句每次更新都刷新它；定稿句在
+//! 定稿那一刻起算 `char_ttl_ms`（静默保持）再 `char_fade_ms`（线性淡出），**之后
+//! 不再被任何后到的句子刷新**——后一句开始说话不会让快淡完的前一句"回光返照"。
+//! 淡到全透明的句子**留在序列里当 alpha=0 的占位**：字形位置不能变（"定稿的字永不挪位置"
+//! 这条不变量不让步），清掉它们的事交给 `trim_sealed` 的预算与渲染侧锚点。
+//! 只有整条轨所有句子都淡完，[`SubtitleTrack::prune`] 才整轨清空。
 //!
 //! 时间一律用"启动至今的毫秒数"传进来，不在这里读系统时钟——测试可以直接喂时间。
 //!
@@ -66,9 +75,10 @@ pub struct RenderedChar {
 /// 一条字幕区域的时间参数。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SubtitleTiming {
-    /// **静默多久之后**整块开始淡出（旧的"字符 Lifetime"，现在按区域算）。
+    /// 一句话**静默多久之后**开始淡出（按句各算各的：进行中句从最近一次更新起算，
+    /// 定稿句从定稿那一刻起算）。
     pub char_ttl_ms: u32,
-    /// 整块淡出的时长。
+    /// 一句话的淡出时长。
     pub char_fade_ms: u32,
     /// "0 类字幕"开关：开了之后 0 类字按 `dim_alpha` 画。
     pub dim_zeros: bool,
@@ -100,12 +110,14 @@ struct Sentence {
     /// 上一句的最后一个字，用来判断两句之间要不要补空格。
     lead_prev: Option<char>,
     finalized: bool,
+    /// 这句话自己的计时起点：创建/每次更新时刷新，定稿时记定稿时刻，此后不再变。
+    last_update_ms: u64,
     /// 最近一次喂进来的整句原文（含 `⌀` 定界符），给增量入口拼整句用。
     source: String,
 }
 
 impl Sentence {
-    fn new(start_noise: bool, lead_prev: Option<char>) -> Self {
+    fn new(start_noise: bool, lead_prev: Option<char>, now_ms: u64) -> Self {
         Self {
             chars: Vec::new(),
             start_noise,
@@ -113,8 +125,23 @@ impl Sentence {
             lead: None,
             lead_prev,
             finalized: false,
+            last_update_ms: now_ms,
             source: String::new(),
         }
+    }
+
+    /// 这句话当前的淡出系数：静默 `ttl` 之后线性淡到 0，只看**自己的**年龄。
+    fn fade(&self, now_ms: u64, timing: &SubtitleTiming) -> f32 {
+        let age = now_ms.saturating_sub(self.last_update_ms);
+        let idle = timing.char_ttl_ms as u64;
+        if age < idle {
+            return 1.0;
+        }
+        let fade = timing.char_fade_ms as u64;
+        if fade == 0 {
+            return 0.0;
+        }
+        (1.0 - (age - idle).min(fade) as f32 / fade as f32).clamp(0.0, 1.0)
     }
 
     /// 按字做 diff：公共前缀里的字保留身份与 `born_ms`，其后的换成新字。
@@ -230,8 +257,6 @@ pub fn confirmed_char_count(full: &str, confirmed: Option<&str>) -> usize {
 pub struct SubtitleTrack {
     sentences: Vec<Sentence>,
     timing: SubtitleTiming,
-    /// 最后一次收到字幕的时间：整块淡出的计时起点。
-    last_update_ms: u64,
     /// 还没收到过任何内容（跟"收到过但已经淡出清空"区分开）。
     started: bool,
     /// 从队首丢掉（清空 / 截断）过的字数累计，只增不减。
@@ -246,7 +271,6 @@ impl SubtitleTrack {
         Self {
             sentences: Vec::new(),
             timing,
-            last_update_ms: 0,
             started: false,
             dropped: 0,
         }
@@ -265,21 +289,26 @@ impl SubtitleTrack {
         if full.is_empty() {
             return;
         }
-        self.current_mut().apply_full(full, confirmed_len, now_ms);
-        self.last_update_ms = now_ms;
+        let sentence = self.current_mut(now_ms);
+        sentence.apply_full(full, confirmed_len, now_ms);
+        sentence.last_update_ms = now_ms;
         self.started = true;
     }
 
     /// 这一句说完了。同样先按字 diff 一次（终稿也可能跟进行中的不一样），然后定稿。
     pub fn finish_sentence(&mut self, final_text: &str, now_ms: u64) {
         if !final_text.is_empty() {
-            self.current_mut()
-                .apply_full(final_text, final_text.chars().count(), now_ms);
-            self.last_update_ms = now_ms;
+            let sentence = self.current_mut(now_ms);
+            sentence.apply_full(final_text, final_text.chars().count(), now_ms);
+            sentence.last_update_ms = now_ms;
             self.started = true;
         }
         if let Some(sentence) = self.sentences.last_mut() {
-            sentence.finalized = true;
+            // 定稿时刻 = 这句话生命周期的起点；已经定稿的句子不再被碰。
+            if !sentence.finalized {
+                sentence.finalized = true;
+                sentence.last_update_ms = now_ms;
+            }
         }
     }
 
@@ -294,7 +323,7 @@ impl SubtitleTrack {
     }
 
     /// 取进行中的句；没有就新起一句（带上与上一句的分隔）。
-    fn current_mut(&mut self) -> &mut Sentence {
+    fn current_mut(&mut self, now_ms: u64) -> &mut Sentence {
         if self.sentences.last().is_some_and(|s| !s.finalized) {
             let last = self.sentences.len() - 1;
             return &mut self.sentences[last];
@@ -305,7 +334,8 @@ impl SubtitleTrack {
             .last()
             .and_then(|s| s.chars.last())
             .map(|c| c.ch);
-        self.sentences.push(Sentence::new(start_noise, lead_prev));
+        self.sentences
+            .push(Sentence::new(start_noise, lead_prev, now_ms));
         let last = self.sentences.len() - 1;
         &mut self.sentences[last]
     }
@@ -317,14 +347,19 @@ impl SubtitleTrack {
         self.started = false;
     }
 
-    /// 静默超过 `char_ttl_ms + char_fade_ms` 就把这条轨清空。
+    /// **所有**句子都已淡完（各自静默超过 `char_ttl_ms + char_fade_ms`）才把这条轨清空。
     ///
-    /// 淡出本身由 [`SubtitleTrack::render`] 按 `now` 算——这里只管"淡完了就别留了"。
+    /// 淡出本身由 [`SubtitleTrack::render`] 按 `now` 算——这里只管"全淡完了就别留了"。
+    /// 只要还有一句没淡完，淡完的前几句就作为 alpha=0 的占位留着（位置不能动）。
     pub fn prune(&mut self, now_ms: u64) {
         if !self.started || self.is_empty() {
             return;
         }
-        if self.region_fade(now_ms) <= 0.0 {
+        if self
+            .sentences
+            .iter()
+            .all(|s| s.fade(now_ms, &self.timing) <= 0.0)
+        {
             self.clear();
         }
     }
@@ -359,26 +394,11 @@ impl SubtitleTrack {
         dropped
     }
 
-    /// 整块当前的 alpha：静默够久之后线性淡到 0。
-    fn region_fade(&self, now_ms: u64) -> f32 {
-        let age = now_ms.saturating_sub(self.last_update_ms);
-        let idle = self.timing.char_ttl_ms as u64;
-        if age < idle {
-            return 1.0;
-        }
-        let fade = self.timing.char_fade_ms as u64;
-        if fade == 0 {
-            return 0.0;
-        }
-        (1.0 - (age - idle).min(fade) as f32 / fade as f32).clamp(0.0, 1.0)
-    }
-
     /// 当前该画的字 + 每个字的不透明度。
     ///
-    /// 不透明度 = 区域淡出 × (0 类淡化) × (未确认尾巴 0.7 倍)。**没有逐字生命周期**：
-    /// 字一旦摆上去，在整块淡出之前一直是不透明的。
+    /// 不透明度 = 所在句的淡出 × (0 类淡化) × (未确认尾巴 0.7 倍)。**没有逐字生命周期**：
+    /// 字一旦摆上去，在它那一句淡出之前一直是不透明的。淡完的句子仍占位（alpha=0）。
     pub fn render(&self, now_ms: u64) -> Vec<RenderedChar> {
-        let region = self.region_fade(now_ms);
         let dim = if self.timing.dim_zeros {
             self.timing.dim_alpha.clamp(0.0, 1.0)
         } else {
@@ -386,6 +406,7 @@ impl SubtitleTrack {
         };
         let mut out = Vec::with_capacity(self.char_count());
         for sentence in &self.sentences {
+            let region = sentence.fade(now_ms, &self.timing);
             for c in &sentence.chars {
                 let base = if c.is_noise { dim } else { 1.0 };
                 let alpha = base * if c.confirmed { 1.0 } else { UNCONFIRMED_ALPHA };
@@ -602,6 +623,102 @@ mod tests {
         assert!(!t.is_empty(), "静默期还没走完");
         t.prune(2200);
         assert!(t.is_empty(), "静默 1000 + 淡出 200 之后就该清空");
+    }
+
+    fn paper() -> SubtitleTrack {
+        SubtitleTrack::new(SubtitleTiming {
+            char_ttl_ms: 2600,
+            char_fade_ms: 900,
+            dim_zeros: false,
+            dim_alpha: 0.3,
+        })
+    }
+
+    fn alphas(t: &SubtitleTrack, now: u64) -> Vec<f32> {
+        t.render(now).iter().map(|c| c.alpha).collect()
+    }
+
+    #[test]
+    fn a_later_sentence_does_not_refresh_a_finished_one() {
+        let mut t = paper();
+        t.update_sentence("第一句。", 4, 0);
+        t.finish_sentence("第一句。", 0);
+        t.update_sentence("第二句", 3, 2000);
+        let a = alphas(&t, 3000);
+        assert!(
+            a[..4].iter().all(|&x| x < 1.0 && x > 0.0),
+            "s1 已在淡出：{a:?}"
+        );
+        assert!(a[4..].iter().all(|&x| x == 1.0), "s2 还是满亮：{a:?}");
+        let a = alphas(&t, 3500);
+        assert!(a[..4].iter().all(|&x| x == 0.0), "s1 已全透明：{a:?}");
+        assert!(a[4..].iter().all(|&x| x == 1.0), "s2 仍可见：{a:?}");
+        assert_eq!(t.text(3500), "第二句", "text 只留 alpha>0 的字");
+    }
+
+    #[test]
+    fn updating_the_open_sentence_leaves_the_finished_clock_alone() {
+        let mut t = paper();
+        t.update_sentence("甲", 1, 0);
+        t.finish_sentence("甲", 100);
+        for ms in [1000, 2000, 3000] {
+            t.update_sentence("乙乙乙乙", 4, ms);
+        }
+        let a = alphas(&t, 3300);
+        assert!(a[0] < 1.0, "定稿句按定稿时刻（100）起算：{a:?}");
+        assert!(
+            a[1..].iter().all(|&x| x == 1.0),
+            "进行中句每次更新都刷新自己"
+        );
+        // 重复 finish 不会重置已定稿句的计时
+        t.finish_sentence("", 3200);
+        t.finish_sentence("", 3300);
+        assert_eq!(alphas(&t, 3300)[0], a[0]);
+    }
+
+    #[test]
+    fn the_track_clears_only_when_every_sentence_has_faded() {
+        let mut t = paper();
+        t.update_sentence("一", 1, 0);
+        t.finish_sentence("一", 0);
+        t.update_sentence("二", 1, 2000);
+        t.prune(3500); // s1 淡完了，s2 还在静默期
+        assert!(!t.is_empty(), "还有一句没淡完就不能整轨清空");
+        assert_eq!(t.origin(), 0);
+        t.prune(2000 + 2600 + 899);
+        assert!(!t.is_empty());
+        t.prune(2000 + 2600 + 900);
+        assert!(t.is_empty(), "全淡完才清空");
+        assert_eq!(t.origin(), 2, "清空计入 origin");
+    }
+
+    #[test]
+    fn fading_a_sentence_never_moves_the_glyphs() {
+        let mut t = paper();
+        t.update_sentence("第一句。", 4, 0);
+        t.finish_sentence("第一句。", 0);
+        t.update_sentence("第二句", 3, 2000);
+        let before = t.render(2500);
+        let after = t.render(3500);
+        assert_eq!(before.len(), after.len(), "淡完的句子仍占位");
+        let ch = |r: &[RenderedChar]| r.iter().map(|c| c.ch).collect::<String>();
+        assert_eq!(ch(&before), ch(&after));
+        t.prune(3500);
+        assert_eq!(t.origin(), 0, "prune 不会因为 s1 淡完就丢它");
+    }
+
+    #[test]
+    fn rewriting_the_open_sentence_keeps_the_prefix_while_siblings_fade() {
+        let mut t = paper();
+        t.update_sentence("旧句。", 3, 0);
+        t.finish_sentence("旧句。", 0);
+        t.update_sentence("今天天气", 2, 2000);
+        t.update_sentence("今天天气不错", 4, 2500);
+        t.update_sentence("今天天气很好", 4, 3000);
+        let kept: Vec<u64> = t.sentences[1].chars.iter().map(|c| c.born_ms).collect();
+        assert_eq!(kept, [2000, 2000, 2000, 2000, 3000, 3000], "前缀身份不变");
+        assert_eq!(t.sentences[0].last_update_ms, 0, "改译不碰前一句的计时");
+        assert_eq!(t.text(3500), "今天天气很好");
     }
 
     #[test]

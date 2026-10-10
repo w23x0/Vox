@@ -664,7 +664,20 @@ fn draw_line(
         return;
     }
     let y = (placed.y + dy).round() as i32;
-    let plate_alpha = (style.plate_alpha as f32 * fade).round() as u8;
+    // 整行的字都已淡成透明（逐句淡出时前面的句子先走）就不画底衬：
+    // 行位置不动，只是不留一块空底衬杵在上面。
+    let (c0, c1) = (placed.first, placed.last);
+    let all_clear = c1 > c0
+        && (c0..c1).all(|i| {
+            line.chars
+                .get(i)
+                .is_some_and(|rc| alpha_to_u8(rc.alpha) == 0)
+        });
+    let plate_alpha = if all_clear {
+        0
+    } else {
+        (style.plate_alpha as f32 * fade).round() as u8
+    };
     if plate_alpha > 0 {
         canvas.fill_round_rect(
             crate::geom::RectI::new(placed.plate_x, y, placed.plate_w, placed.plate_h),
