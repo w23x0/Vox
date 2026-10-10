@@ -1,6 +1,7 @@
 /**
  * 模型页：左边三家服务商（状态点：已配置 / 未配置 / 出错），右边该服务商的
- * 密钥、地区 / 接入点（仅阿里云）、可用模型（现场拉官方列表，拉不到退回内置列表并标注）。
+ * 密钥、地区 / 接入点（仅阿里云）、网络出口、可用模型（现场拉官方列表，
+ * 拉不到退回内置列表并标注）。
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -10,10 +11,19 @@ import { useLang } from "../i18n/context";
 import { fmtAgo } from "../lib/format";
 import { fetchModels, useModelList } from "../lib/models";
 import { useStore } from "../store";
-import type { AliyunRegion, ModelEntry, ModelList, ModelProvider } from "../types";
+import type {
+  AliyunRegion,
+  EndpointResult,
+  ModelEntry,
+  ModelList,
+  ModelProvider,
+  NetworkMode,
+  NetworkReport,
+  TakeoverReport,
+} from "../types";
 import { ConfirmButton } from "../ui/ConfirmButton";
 import { Dropdown } from "../ui/controls";
-import { IconChevron, IconExternal, IconRefresh, IconSave } from "../ui/icons";
+import { IconChevron, IconExternal, IconRefresh, IconSave, IconSpeed } from "../ui/icons";
 import { useToast } from "../ui/toast";
 
 type ProviderStatus = "configured" | "none" | "error";
@@ -84,6 +94,7 @@ function ProviderDetail({ provider }: { provider: ModelProvider }) {
     <div className="models-detail">
       <KeyCard provider={provider} />
       {provider === "aliyun" ? <EndpointCard /> : null}
+      <NetworkCard provider={provider} />
       <ModelsCard provider={provider} />
     </div>
   );
@@ -349,6 +360,242 @@ function EndpointCard() {
         </div>
       </details>
     </section>
+  );
+}
+
+/* ---- 网络出口 ------------------------------------------------------ */
+
+/**
+ * 与后端 `vox_proxy::ProxySpec::parse` 同一条校验：只认 `http://` / `socks5://` /
+ * `socks5h://`（也可不带 scheme，当 http），可带 `user:pass@`；端口缺省 8080 / 1080。
+ * 只做"格式像不像"，真的连不上由测速那一栏报出来。
+ */
+const PROXY_SCHEME = /^(?:https?|socks5h?):\/\//i;
+const PROXY_AUTHORITY =
+  /^(?:[^@/\s]+@)?(?:\[[0-9a-fA-F:.]+\]|[^:\s/?#]+)(?::\d{1,5})?(?:[/?#]\S*)?$/;
+const isValidProxy = (value: string) =>
+  PROXY_AUTHORITY.test(PROXY_SCHEME.test(value) ? value.replace(/^[a-z0-9+.-]+:\/\//i, "") : value);
+
+/** 模式三选一的下拉项（顺序即界面顺序）。 */
+const NET_MODES: { value: NetworkMode; labelKey: string }[] = [
+  { value: "direct", labelKey: "models.netModeDirect" },
+  { value: "system", labelKey: "models.netModeSystem" },
+  { value: "custom", labelKey: "models.netModeCustom" },
+];
+
+function NetworkCard({ provider }: { provider: ModelProvider }) {
+  const { settings, patch, api } = useStore();
+  const { t } = useLang();
+  const toast = useToast();
+  const saved = settings.network?.[provider];
+  const mode: NetworkMode = saved?.mode ?? "direct";
+  const [draft, setDraft] = useState(saved?.proxy ?? "");
+  const [invalid, setInvalid] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [report, setReport] = useState<NetworkReport | null>(null);
+  const [takeover, setTakeover] = useState<TakeoverReport | null>(null);
+
+  // 保存后的值（后端脱敏过的）覆盖回来时，输入框跟着走。
+  useEffect(() => setDraft(saved?.proxy ?? ""), [saved?.proxy]);
+
+  // 接管检测进卡片就查一次：它只解析服务商域名 + 扫网卡名，不发任何数据。
+  useEffect(() => {
+    let alive = true;
+    void api
+      .detectTakeover(provider)
+      .then((r) => alive && setTakeover(r))
+      .catch(() => alive && setTakeover(null));
+    return () => {
+      alive = false;
+    };
+  }, [api, provider]);
+
+  const commitProxy = () => {
+    const value = draft.trim();
+    if (value !== "" && !isValidProxy(value)) {
+      setInvalid(true);
+      return;
+    }
+    setInvalid(false);
+    if (value !== (saved?.proxy ?? "")) {
+      // 只补丁这一格：带着账号的密码存在后端账本里，界面从来不碰它。
+      patch({ network: { [provider]: { proxy: value } } });
+    }
+  };
+
+  const runTest = async () => {
+    setTesting(true);
+    try {
+      setReport(await api.testNetwork(provider));
+    } catch (error: unknown) {
+      toast("danger", t("models.netTestFailed", { error: String(error) }));
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  /**
+   * TUN 引导：只对阿里云 + 直连模式（N4）。另两家本来就要走代理，
+   * 被代理软件接管不是问题；阿里云直连时被绕到海外才会延迟升高。
+   */
+  const showTakeover = provider === "aliyun" && mode === "direct" && takeover?.detected === true;
+
+  return (
+    <section className="card" aria-labelledby={`net-title-${provider}`}>
+      <div className="card-head">
+        <h2 className="card-title" id={`net-title-${provider}`}>
+          {t("models.netTitle")}
+        </h2>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          style={{ marginLeft: "auto" }}
+          disabled={testing}
+          data-focus-item
+          onClick={() => void runTest()}
+        >
+          <IconSpeed size={14} />
+          {testing ? t("models.netTesting") : t("models.netTest")}
+        </button>
+      </div>
+
+      <div className="settings-item" style={{ paddingTop: 12 }}>
+        <div className="si-text">
+          <div className="si-title">
+            <label htmlFor={`dd-net-mode-${provider}`}>{t("models.netMode")}</label>
+          </div>
+          <div className="si-desc">{t(`models.netMode_${mode}`)}</div>
+        </div>
+        <div className="si-control si-control-w">
+          <Dropdown
+            id={`dd-net-mode-${provider}`}
+            label={t("models.netModeAria")}
+            value={mode}
+            options={NET_MODES.map((m) => ({ value: m.value, label: t(m.labelKey) }))}
+            onChange={(value) => patch({ network: { [provider]: { mode: value as NetworkMode } } })}
+          />
+        </div>
+      </div>
+
+      {mode === "custom" ? (
+        <div className="settings-item">
+          <div className="si-text">
+            <div className="si-title">
+              <label htmlFor={`f-net-proxy-${provider}`}>{t("models.netProxy")}</label>
+            </div>
+            <div className="si-desc">
+              {saved?.proxy_auth ? t("models.netProxyAuthSet") : t("models.netProxyHint")}
+            </div>
+          </div>
+          <div className="si-control si-control-w">
+            <input
+              id={`f-net-proxy-${provider}`}
+              className="form-input mono"
+              type="text"
+              value={draft}
+              placeholder="socks5h://127.0.0.1:1080"
+              autoComplete="off"
+              spellCheck={false}
+              aria-invalid={invalid}
+              data-focus-item
+              onChange={(event) => {
+                setDraft(event.currentTarget.value);
+                setInvalid(false);
+              }}
+              onBlur={commitProxy}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") commitProxy();
+              }}
+            />
+            {invalid ? (
+              <div className="hint hint-danger" style={{ marginTop: 6 }}>
+                {t("models.netProxyInvalid")}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      <div className="hint" style={{ margin: "0 0 4px" }}>
+        {t("models.netRestart")}
+      </div>
+
+      {showTakeover ? (
+        <div className="hint hint-warn" style={{ marginTop: 8 }}>
+          {t("models.netTakeover")}
+          <br />
+          <span className="mono">DOMAIN-SUFFIX,aliyuncs.com,DIRECT</span>
+        </div>
+      ) : null}
+
+      {report ? <NetworkReportView report={report} /> : null}
+    </section>
+  );
+}
+
+/* ---- 测速结果 ----------------------------------------------------- */
+
+function NetworkReportView({ report }: { report: NetworkReport }) {
+  const { t } = useLang();
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="sub-row">
+        <span>{t("models.netVia")}</span>
+        <span className="mono">{report.via ?? t("models.netViaDirect")}</span>
+      </div>
+      <div className="model-list">
+        {report.results.map((result) => (
+          <EndpointRow key={`${result.id}-${result.host}`} result={result} />
+        ))}
+      </div>
+      {report.suggestion ? (
+        <div className="hint hint-warn" style={{ marginTop: 10 }}>
+          {t("models.netSuggest", { host: report.suggestion.host })}
+        </div>
+      ) : null}
+      {report.results.some((result) => result.error) ? (
+        <div className="hint" style={{ marginTop: 10 }}>
+          {t("models.netFailHint")}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function EndpointRow({ result }: { result: EndpointResult }) {
+  const { t } = useLang();
+  const stages = result.error
+    ? null
+    : [
+        t("models.netStageDns", { ms: result.dns_ms ?? 0 }),
+        t("models.netStageConnect", { ms: result.connect_ms ?? 0 }),
+        ...(result.tunnel_ms === null ? [] : [t("models.netStageTunnel", { ms: result.tunnel_ms })]),
+        t("models.netStageTls", { ms: result.tls_ms ?? 0 }),
+        t("models.netStageHttp", { ms: result.http_ms ?? 0 }),
+      ];
+  return (
+    <div className="model-item">
+      <div className="model-item-head" style={{ cursor: "default" }}>
+        <span className="mi-main">
+          <span className="mi-label">{result.host}</span>
+          <span className="mono mi-id">
+            {result.current ? t("models.netCurrent") : null}
+            {result.current ? " · " : null}
+            {result.error ? t(`models.netFail_${result.error.kind}`) : t("models.netOk")}
+          </span>
+        </span>
+        <span className="mi-badges">
+          {result.error ? (
+            <span className="badge badge-danger">{result.error.message}</span>
+          ) : (
+            <>
+              <span className="badge badge-neutral">{stages?.join(" · ")}</span>
+              <span className="badge badge-running">{result.total_ms} ms</span>
+            </>
+          )}
+        </span>
+      </div>
+    </div>
   );
 }
 

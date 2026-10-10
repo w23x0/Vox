@@ -18,7 +18,8 @@ use vox_core::latency::LatencySnapshot;
 use vox_core::ports::{AudioApp, DeviceInfo};
 use vox_core::runtime::Snapshot as CoreSnapshot;
 use vox_core::settings::{
-    AliyunRegion, ControlSettings, ListenSettings, Settings, SpeakSettings, SubtitleSettings,
+    AliyunRegion, ControlSettings, ListenSettings, NetworkMode, NetworkSettings, Settings,
+    SpeakSettings, SubtitleSettings,
 };
 use vox_core::usage::UsageLedger;
 
@@ -44,10 +45,58 @@ pub struct SettingsDto {
     /// 自定义接入点；空串 = 按地区缺省。前端 `types.ts` 的同名字段（那里是可选的，
     /// 因为浏览器 mock 未必有这一格）。
     pub aliyun_endpoint: String,
+    /// 按服务商的网络出口。**已脱敏**：`proxy` 是去掉账号密码后的地址，账号密码本身
+    /// 只以 `proxy_auth` 这一位的形态出芯（见 `vox-core::settings::NetworkSetting`）。
+    pub network: NetworkSettingsDto,
 }
 
+/// 一家服务商的网络设置（`vox-core::settings::NetworkSetting` 的脱敏镜像）。
+#[derive(Debug, Clone, Serialize)]
+pub struct NetworkSettingDto {
+    pub mode: NetworkMode,
+    /// 去掉 `user:pass@` 之后的地址；没填 = 空串。
+    pub proxy: String,
+    /// 地址里带过账号密码吗（只给这一位，密码永不出芯）。
+    pub proxy_auth: bool,
+}
+
+/// `NetworkSettingsDto`：键名与服务商 id 一致（前端按 provider 索引）。
+#[derive(Debug, Clone, Serialize)]
+pub struct NetworkSettingsDto {
+    pub aliyun: NetworkSettingDto,
+    pub gpt: NetworkSettingDto,
+    pub gemini: NetworkSettingDto,
+}
+
+impl From<NetworkSettings> for NetworkSettingsDto {
+    fn from(s: NetworkSettings) -> Self {
+        Self {
+            aliyun: s.aliyun.into(),
+            gpt: s.gpt.into(),
+            gemini: s.gemini.into(),
+        }
+    }
+}
+
+impl From<vox_core::settings::NetworkSetting> for NetworkSettingDto {
+    fn from(s: vox_core::settings::NetworkSetting) -> Self {
+        Self {
+            mode: s.mode,
+            proxy: s.proxy_display(),
+            proxy_auth: s.proxy_has_auth(),
+        }
+    }
+}
+
+/// `From<Settings>` 一律走 [`Settings::without_secrets`]：这条路上不许带着账号密码出去
+/// （快照、`update_settings` 的返回值都经过它）。
+///
+/// 网络那三格是例外中的例外：`proxy_auth`（"设过账号吗"）只有原值答得出来——`without_secrets`
+/// 已经把账号从地址里摘掉了，再问就是"没有"。所以地址取脱敏副本、这一位取原值。
 impl From<Settings> for SettingsDto {
     fn from(s: Settings) -> Self {
+        let network = NetworkSettingsDto::from(s.network.clone());
+        let s = s.without_secrets();
         Self {
             version: s.version,
             speak: s.speak,
@@ -59,6 +108,7 @@ impl From<Settings> for SettingsDto {
             control: s.control,
             aliyun_region: s.aliyun_region,
             aliyun_endpoint: s.aliyun_endpoint,
+            network,
         }
     }
 }
@@ -382,6 +432,32 @@ mod tests {
         // 没填时是显式空串，不是字段消失。
         let empty = serde_json::to_value(make_dto(true, None)).unwrap();
         assert_eq!(empty["settings"]["aliyun_endpoint"], "");
+    }
+
+    /// 按服务商的网络设置要整块进快照（前端模型页「网络」卡读它）。
+    #[test]
+    fn snapshot_settings_carries_the_per_provider_network() {
+        let mut settings = Settings::default();
+        settings.network.gpt = vox_core::settings::NetworkSetting {
+            mode: vox_core::settings::NetworkMode::Custom,
+            proxy: "socks5h://alice:hunter2@127.0.0.1:1080".into(),
+        };
+        let dto: SettingsDto = settings.into();
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(!json.contains("hunter2"), "{json}");
+        assert!(!json.contains("alice"), "{json}");
+        assert!(json.contains("socks5h://127.0.0.1:1080"), "{json}");
+        assert_eq!(
+            dto.network.gpt.mode,
+            vox_core::settings::NetworkMode::Custom
+        );
+        assert!(dto.network.gpt.proxy_auth, "只给「设过账号」这一位");
+        assert!(!dto.network.aliyun.proxy_auth);
+        assert_eq!(
+            dto.network.aliyun.mode,
+            vox_core::settings::NetworkMode::Direct,
+            "阿里云缺省直连"
+        );
     }
 
     #[test]

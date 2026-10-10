@@ -492,7 +492,13 @@ fn date_helpers() {
 #[ignore = "needs a stored Aliyun key (Secret Service or DASHSCOPE_API_KEY) and network"]
 fn live_aliyun_list() {
     let key = live_key().expect("no key in Secret Service nor DASHSCOPE_API_KEY");
-    let list = list_models(ModelProvider::Aliyun, Some(&key), AliyunRegion::Cn, true);
+    let list = list_models(
+        ModelProvider::Aliyun,
+        Some(&key),
+        AliyunRegion::Cn,
+        &NetworkSetting::default(),
+        true,
+    );
     assert!(list.error.is_none(), "{:?}", list.error);
     for m in &list.models {
         println!(
@@ -517,4 +523,22 @@ fn live_key() -> Option<String> {
 #[cfg(not(all(target_os = "linux", feature = "secret-service")))]
 fn live_key() -> Option<String> {
     std::env::var("DASHSCOPE_API_KEY").ok()
+}
+
+/// 主机名不许带端口：`agent_for` 拿它去问"要不要走系统代理"，而 `NO_PROXY` /
+/// `ProxyOverride` 按主机名匹配、回环地址恒直连按 IP 解析——带着 `:443` 时
+/// `api.openai.com` 会匹配不上名单里的 `openai.com`，`127.0.0.1:8080` 也不再算回环。
+#[test]
+fn host_of_drops_the_port_and_the_brackets() {
+    assert_eq!(
+        host_of("https://api.openai.com/v1/models"),
+        "api.openai.com"
+    );
+    assert_eq!(
+        host_of("https://api.openai.com:443/v1/models"),
+        "api.openai.com"
+    );
+    assert_eq!(host_of("http://127.0.0.1:8080/x"), "127.0.0.1");
+    assert_eq!(host_of("wss://[::1]:9000/socket"), "::1");
+    assert_eq!(host_of("socks5h://h.example"), "h.example");
 }

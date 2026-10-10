@@ -40,6 +40,7 @@ import {
 } from "./data";
 import { mergePatch, normalizeSettings } from "./merge";
 import { mockModelList, parseMockErrors } from "./models";
+import { mockNetworkFlags, mockNetworkReport, mockTakeoverReport } from "./network";
 import { FakeGate, FakeVoice } from "./signal";
 import { FakeTyper } from "./typer";
 
@@ -91,6 +92,8 @@ export function createMockApi(): VoxApi {
   /** 每家「官方列表」最近一次拉取的时间（毫秒）。首次给个几分钟前，好让「3 分钟前」点得通。 */
   const modelFetchedAt: Partial<Record<ModelProvider, number>> = {};
   const modelFailures = parseMockErrors(window.location.search);
+  /** 网络体检的演示档位（`?mockTun=1` / `?mockNetFail=1`，见 `mock/network.ts`）。 */
+  const netFlags = mockNetworkFlags(window.location.search);
   /**
    * 控制面起不来的那一档（`?control=busy`）：真后端里这是 `serve()` 的 `EADDRINUSE`，
    * 假后端造一句同样意思的话，好让"起不来时界面怎么显示"这条路点得通。
@@ -586,6 +589,14 @@ export function createMockApi(): VoxApi {
         fetchedAt: modelFetchedAt[provider] ?? now,
         errors: modelFailures.errors,
       });
+    },
+    async testNetwork(provider) {
+      await wait(600);
+      return mockNetworkReport(provider, settings.network[provider], netFlags);
+    },
+    async detectTakeover(provider) {
+      await wait(250);
+      return mockTakeoverReport(provider, netFlags);
     },
     // 假后端没有真实网络/磁盘：覆盖版永远为空，检查/应用给一段占位结果。
     async readCatalogOverride() {

@@ -10,6 +10,7 @@
 //! - 密钥只放请求头，**不进 URL、不进错误信息、不进日志**。
 //! - 阿里云列表按地区走（接入点 `aliyun_endpoint` 只影响 WebSocket）。
 //! - 阻塞式 HTTP（`ureq` + rustls/ring），不引 tokio；调用方放到工作线程里跑。
+//! - 出口按服务商的网络设置走（直连 / 系统代理 / 自定义代理），见 `crate::http`。
 
 use std::collections::{BTreeMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -20,10 +21,9 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use vox_core::catalog;
-use vox_core::settings::{AliyunRegion, ModelProvider};
+use vox_core::settings::{AliyunRegion, ModelProvider, NetworkSetting};
 
 const CACHE_TTL: Duration = Duration::from_secs(600);
-const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 /// 翻页硬上限：官方列表远小于此，防服务端回环。
 const MAX_PAGES: usize = 20;
 
@@ -98,15 +98,14 @@ pub trait HttpGet {
     fn get(&self, url: &str, headers: &[(&str, &str)]) -> Result<(u16, String), String>;
 }
 
-struct UreqHttp;
+/// 生产用：ureq，拨号走 `crate::http`（与 WebSocket 同一份直连 / 代理实现）。
+struct UreqHttp<'a> {
+    network: &'a NetworkSetting,
+}
 
-impl HttpGet for UreqHttp {
+impl HttpGet for UreqHttp<'_> {
     fn get(&self, url: &str, headers: &[(&str, &str)]) -> Result<(u16, String), String> {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_global(Some(HTTP_TIMEOUT))
-            .http_status_as_error(false)
-            .build()
-            .into();
+        let agent = crate::http::agent_for(self.network, &host_of(url))?;
         let mut req = agent.get(url);
         for (k, v) in headers {
             req = req.header(*k, *v);
@@ -136,10 +135,11 @@ pub fn list_models(
     provider: ModelProvider,
     key: Option<&str>,
     region: AliyunRegion,
+    network: &NetworkSetting,
     refresh: bool,
 ) -> ModelList {
     list_models_with(
-        &UreqHttp,
+        &UreqHttp { network },
         cache(),
         provider,
         key,
@@ -210,14 +210,32 @@ fn unix_ms() -> u64 {
         .map_or(0, |d| d.as_millis() as u64)
 }
 
+/// URL 的**主机名**（去掉 scheme、路径、端口；`[v6]` 的方括号也去掉）。
+///
+/// 端口必须去掉：这个值只喂给"要不要走代理"的判断（系统代理的 `NO_PROXY` /
+/// `ProxyOverride` 按主机名匹配，回环地址恒直连也按 IP 解析）。带着 `:443`
+/// 会让不走代理名单和回环判定双双失效。
 fn host_of(url: &str) -> String {
-    url.split("://")
+    let authority = url
+        .split("://")
         .nth(1)
         .unwrap_or(url)
         .split(['/', '?'])
         .next()
-        .unwrap_or("")
-        .to_string()
+        .unwrap_or("");
+    if let Some(v6) = authority.strip_prefix('[') {
+        return v6.split(']').next().unwrap_or(v6).to_string();
+    }
+    match authority.rsplit_once(':') {
+        Some((host, port))
+            if !host.contains(':')
+                && !port.is_empty()
+                && port.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            host.to_string()
+        }
+        _ => authority.to_string(),
+    }
 }
 
 // --- 拉取 -------------------------------------------------------------------

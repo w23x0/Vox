@@ -696,7 +696,8 @@ impl Worker {
             config.api_key.clone(),
             plan.params.clone(),
             config.aliyun_endpoint.clone(),
-        );
+        )
+        .with_network(config.network.clone());
         let input_sample_rate = session.input_sample_rate();
         Self {
             runtime,
@@ -2130,6 +2131,7 @@ pub(crate) mod tests {
             denoise: true,
             source_language: None,
             aliyun_endpoint: crate::cloud::AliyunEndpoint::default(),
+            network: crate::settings::NetworkSetting::default(),
         }
     }
 
@@ -2158,6 +2160,7 @@ pub(crate) mod tests {
             denoise: false,
             source_language: None,
             aliyun_endpoint: crate::cloud::AliyunEndpoint::default(),
+            network: crate::settings::NetworkSetting::default(),
         }
     }
 

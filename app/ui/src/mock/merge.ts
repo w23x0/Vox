@@ -18,6 +18,7 @@ import {
 import * as catalog from "../catalog";
 import { UI_LANG_ORDER, type UiLang } from "../i18n/types";
 import type { Settings } from "../types";
+import { splitProxyCredentials } from "./network";
 import { isAdaptedModel } from "./models";
 
 /** 整块替换而不是递归合并的键：语义上是「这一份就是全部」。 */
@@ -75,6 +76,14 @@ export function normalizeSettings(settings: Settings): Settings {
   // 自定义接入点只认 ws(s):// 开头，别的清成空（= 按地区缺省）。
   const endpoint = (s.aliyun_endpoint ?? "").trim();
   s.aliyun_endpoint = /^wss?:\/\//i.test(endpoint) ? endpoint : "";
+  // 网络设置：Rust 只给 proxy 裁空白；而**给前端的副本要脱敏**（真后端
+  // `SettingsDto` 走 `without_secrets`）——账号密码不进界面，只留 proxy_auth 这一位。
+  for (const key of ["aliyun", "gpt", "gemini"] as const) {
+    const entry = s.network[key];
+    const [address, had] = splitProxyCredentials(entry.proxy.trim());
+    entry.proxy = address;
+    entry.proxy_auth = entry.proxy_auth || had;
+  }
   if (!catalog.supportsVoiceClone(s.speak.provider)) s.speak.voice_clone_frequency = null;
   if (!catalog.supportsSourceLanguage(s.listen.provider)) s.listen.source_language = null;
   // 语言只认当前模型的方言支持的那些（与 Rust `Settings::normalize` 同口径）：

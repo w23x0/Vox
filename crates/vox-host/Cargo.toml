@@ -21,6 +21,10 @@ license.workspace = true
 vox-core.workspace = true
 vox-mcp = { path = "../vox-mcp" }
 vox-dsp.workspace = true
+vox-proxy.workspace = true
+# 测速（`netcheck`）自己做 TLS 握手好分段计时；这两个包本来就在树里（ureq 的 TLS）。
+rustls.workspace = true
+webpki-roots = "1"
 serde.workspace = true
 serde_json.workspace = true
 ureq = { version = "3", default-features = false, features = ["rustls"] }
@@ -33,6 +37,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 # 只有搬过来的那条日志用例用（`events.rs::subtitle_text_never_reaches_the_log` 要一个真的
 # subscriber 抓一遍输出）。运行期不引。
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+# 测速测试用的本地 TLS 服务端（自签证书）与本机假代理。
+rcgen = "0.13"
+vox-proxy = { workspace = true, features = ["testing"] }
 
 [features]
 # Secret Service（gnome-keyring / KWallet，走 D-Bus 会话总线）。**默认关**，理由见文件头第 3 条。

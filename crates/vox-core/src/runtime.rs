@@ -65,6 +65,8 @@ pub struct SessionConfig {
     /// 阿里云接入点（地区 + 自定义）。只有阿里云会读它；`VOX_ALIYUN_ENDPOINT`
     /// 环境变量的优先级更高，但那层在建连处才看。
     pub aliyun_endpoint: crate::cloud::AliyunEndpoint,
+    /// 本服务商的网络出口（`Settings::network` 里挑出来的那一家）。
+    pub network: crate::settings::NetworkSetting,
 }
 
 /// 发给流水线的命令。
@@ -912,6 +914,7 @@ impl Runtime {
                 denoise: settings.speak.denoise,
                 source_language: None,
                 aliyun_endpoint: aliyun_endpoint.clone(),
+                network: settings.network.of(settings.speak.provider).clone(),
             },
             Pipeline::Listen => SessionConfig {
                 session_id,
@@ -942,6 +945,7 @@ impl Runtime {
                 // 源语言；None = 服务端自动识别。
                 source_language: settings.listen.source_language.clone(),
                 aliyun_endpoint,
+                network: settings.network.of(settings.listen.provider).clone(),
             },
         }
     }

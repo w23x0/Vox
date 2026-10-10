@@ -21,6 +21,7 @@
 ```
 crates/vox-core/        芯：设置、协议、状态机、账本(Runtime)、端口 trait(ports.rs)、字幕、用量
 crates/vox-net/         WebSocket 传输（tokio + tungstenite）
+crates/vox-proxy/       出站代理（纯 std 同步）：地址解析 / 系统代理探测 / HTTP CONNECT + SOCKS5 隧道，WebSocket 与 HTTP 列表共用
 crates/vox-dsp/         降噪(nnnoiseless/RNNoise)、重采样(rubato sinc)、切块、环形缓冲
 crates/vox-osc/         VRChat OSC 发包（跨平台）
 crates/vox-overlay-core/ 字幕渲染（画布/布局/合成），平台无关

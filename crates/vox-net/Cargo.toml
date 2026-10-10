@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 vox-core.workspace = true
+vox-proxy.workspace = true
 tracing.workspace = true
 # `net` 是媒体面自己要的（TcpListener / TcpStream）。此前靠 tokio-tungstenite 的
 # feature 合并带进来——别继续靠它。
@@ -43,6 +44,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 
 # 本地 TLS WebSocket 服务端测试用的自签证书。
 rcgen = "0.13"
+# 本机假代理（HTTP CONNECT / SOCKS5）。
+vox-proxy = { workspace = true, features = ["testing"] }
 
 [features]
 default = []

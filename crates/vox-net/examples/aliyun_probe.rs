@@ -571,6 +571,8 @@ fn run(
     let request = ConnectRequest {
         url: url.to_string(),
         auth_header: protocol::auth_header_value(api_key),
+        // 探针一直是直连；要走代理的话在命令行外设好再用 App 验证。
+        network: vox_core::settings::NetworkSetting::default(),
     };
     if let Err(e) = transport.connect(&request) {
         // 握手失败的原话（HTTP 状态码等）比"连不上"三个字有用，直接摊开。

@@ -68,6 +68,136 @@ pub enum AliyunRegion {
     Intl,
 }
 
+/// 一家服务商的网络出口选择。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkMode {
+    /// 不经任何代理，直接连。
+    #[default]
+    Direct,
+    /// 跟随系统代理（Linux：`HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY`；Windows：注册表）。
+    /// 读不到就直连。
+    System,
+    /// 用 `proxy` 里填的地址。
+    Custom,
+}
+
+/// 一家服务商的网络设置。
+///
+/// `proxy` 可以带 `user:pass@`，所以**密码只存在这一个字段里**：`Debug` 不打印它，
+/// 对外快照只给脱敏后的地址与"是否带账号"（见 `app/src-tauri/src/dto.rs`）。
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+#[serde(default)]
+pub struct NetworkSetting {
+    pub mode: NetworkMode,
+    /// `mode = custom` 时用：`http://host:port`、`socks5://…`、`socks5h://…`（远端解析 DNS），
+    /// 可带 `user:pass@`。其它模式下忽略但保留，切回来不用重填。
+    pub proxy: String,
+}
+
+impl NetworkSetting {
+    pub fn new(mode: NetworkMode) -> Self {
+        Self {
+            mode,
+            proxy: String::new(),
+        }
+    }
+
+    /// 去掉 `user:pass@` 之后的代理地址——唯一允许离开设置账本的形态。
+    pub fn proxy_display(&self) -> String {
+        split_proxy_credentials(&self.proxy).0
+    }
+
+    /// 代理地址里是否带了账号（给界面显示"已设置账号密码"）。
+    pub fn proxy_has_auth(&self) -> bool {
+        split_proxy_credentials(&self.proxy).1
+    }
+}
+
+/// 把 `scheme://user:pass@host:port` 拆成（去掉 userinfo 的地址，是否带过 userinfo）。
+/// 不带 scheme 的 `user:pass@host:port` 同样处理。
+pub fn split_proxy_credentials(url: &str) -> (String, bool) {
+    let (scheme, rest) = match url.split_once("://") {
+        Some((scheme, rest)) => (Some(scheme), rest),
+        None => (None, url),
+    };
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(authority_end);
+    let (host, had) = match authority.rfind('@') {
+        Some(at) => (&authority[at + 1..], true),
+        None => (authority, false),
+    };
+    let stripped = match scheme {
+        Some(scheme) => format!("{scheme}://{host}{tail}"),
+        None => format!("{host}{tail}"),
+    };
+    (stripped, had)
+}
+
+impl std::fmt::Debug for NetworkSetting {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NetworkSetting")
+            .field("mode", &self.mode)
+            .field(
+                "proxy",
+                &if self.proxy.is_empty() {
+                    "unset"
+                } else {
+                    "redacted"
+                },
+            )
+            .finish()
+    }
+}
+
+/// 按服务商分开的网络设置。缺省：阿里云直连（国内站不该绕代理），
+/// OpenAI / Gemini 跟随系统代理（国内多数人要靠代理才连得上）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+#[serde(default)]
+pub struct NetworkSettings {
+    pub aliyun: NetworkSetting,
+    pub gpt: NetworkSetting,
+    pub gemini: NetworkSetting,
+}
+
+impl Default for NetworkSettings {
+    fn default() -> Self {
+        Self {
+            aliyun: NetworkSetting::new(NetworkMode::Direct),
+            gpt: NetworkSetting::new(NetworkMode::System),
+            gemini: NetworkSetting::new(NetworkMode::System),
+        }
+    }
+}
+
+impl NetworkSettings {
+    pub fn of(&self, provider: ModelProvider) -> &NetworkSetting {
+        match provider {
+            ModelProvider::Aliyun => &self.aliyun,
+            ModelProvider::Gpt => &self.gpt,
+            ModelProvider::Gemini => &self.gemini,
+        }
+    }
+
+    pub fn entries_mut(&mut self) -> [&mut NetworkSetting; 3] {
+        [&mut self.aliyun, &mut self.gpt, &mut self.gemini]
+    }
+}
+
+impl Settings {
+    /// 能交给界面/事件通道的副本：代理地址里的账号密码去掉。落盘用原值，对外用这个。
+    pub fn without_secrets(&self) -> Settings {
+        let mut shown = self.clone();
+        for entry in shown.network.entries_mut() {
+            entry.proxy = entry.proxy_display();
+        }
+        shown
+    }
+}
+
 /// 全部设置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -96,6 +226,9 @@ pub struct Settings {
     /// **只在下次启动流水线（重新开始翻译）时生效**：运行中的会话不热更新接入点。
     #[serde(default)]
     pub aliyun_endpoint: String,
+    /// 每家服务商的网络出口（直连 / 系统代理 / 自定义代理）。
+    /// **只在下次启动流水线时生效**，与 `aliyun_endpoint` 一致。
+    pub network: NetworkSettings,
 }
 
 impl Default for Settings {
@@ -112,6 +245,7 @@ impl Default for Settings {
             control: ControlSettings::default(),
             aliyun_region: AliyunRegion::default(),
             aliyun_endpoint: String::new(),
+            network: NetworkSettings::default(),
         }
     }
 }
@@ -445,6 +579,10 @@ impl Settings {
         // 接入点只裁空白：合法性交给建连处（那里认不出 ws(s):// 就退回地区缺省），
         // 设置这边不替用户改地址，只是不让纯空白被当成"用户填过"。
         self.aliyun_endpoint = self.aliyun_endpoint.trim().to_string();
+        // 代理地址同理只裁空白；格式合法性由建连处与界面校验。
+        for entry in self.network.entries_mut() {
+            entry.proxy = entry.proxy.trim().to_string();
+        }
 
         // 对外说话
         let speak = &mut self.speak;
@@ -878,6 +1016,60 @@ mod tests {
         s.aliyun_endpoint = "   ".into();
         s.normalize();
         assert_eq!(s.aliyun_endpoint, "", "纯空白当没填");
+    }
+
+    #[test]
+    fn network_defaults_are_per_provider_and_the_password_never_prints() {
+        let s = Settings::default();
+        assert_eq!(
+            s.network.of(ModelProvider::Aliyun).mode,
+            NetworkMode::Direct
+        );
+        assert_eq!(s.network.of(ModelProvider::Gpt).mode, NetworkMode::System);
+        assert_eq!(
+            s.network.of(ModelProvider::Gemini).mode,
+            NetworkMode::System
+        );
+        let legacy = Settings::from_json(r#"{"version":2}"#);
+        assert_eq!(legacy.network, NetworkSettings::default(), "老配置按缺省");
+
+        let mut s = Settings::default();
+        s.network.gpt = NetworkSetting {
+            mode: NetworkMode::Custom,
+            proxy: "  socks5h://alice:hunter2@127.0.0.1:1080 ".into(),
+        };
+        s.normalize();
+        assert_eq!(
+            s.network.gpt.proxy,
+            "socks5h://alice:hunter2@127.0.0.1:1080"
+        );
+        assert_eq!(Settings::from_json(&s.to_json()).network, s.network);
+        let printed = format!("{s:?}");
+        assert!(!printed.contains("hunter2"), "Debug 不许带密码：{printed}");
+
+        let shown = s.without_secrets();
+        assert_eq!(shown.network.gpt.proxy, "socks5h://127.0.0.1:1080");
+        assert!(!serde_json::to_string(&shown).unwrap().contains("hunter2"));
+        assert!(s.network.gpt.proxy_has_auth());
+        assert!(!shown.network.gpt.proxy_has_auth());
+    }
+
+    #[test]
+    fn credentials_are_split_off_whatever_the_shape() {
+        for (input, want, had) in [
+            ("http://u:p@h:8080", "http://h:8080", true),
+            ("socks5://u:p@h:1080/", "socks5://h:1080/", true),
+            ("u:p@h:8080", "h:8080", true),
+            ("http://u:p@w@h:8080", "http://h:8080", true),
+            ("http://h:8080", "http://h:8080", false),
+            ("", "", false),
+        ] {
+            assert_eq!(
+                split_proxy_credentials(input),
+                (want.to_string(), had),
+                "{input}"
+            );
+        }
     }
 
     #[test]

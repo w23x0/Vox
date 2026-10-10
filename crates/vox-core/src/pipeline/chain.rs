@@ -773,6 +773,7 @@ mod tests {
             denoise: true,
             source_language: None,
             aliyun_endpoint: crate::cloud::AliyunEndpoint::default(),
+            network: crate::settings::NetworkSetting::default(),
         }
     }
 

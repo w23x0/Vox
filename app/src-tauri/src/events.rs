@@ -31,10 +31,25 @@ struct FrontendSink(tauri::AppHandle);
 
 impl vox_host::EventSink for FrontendSink {
     fn emit(&self, event: &Event) {
-        // v2 起前后端设置字段名一致，所有事件都能直接走克隆快路径。
-        if let Err(e) = self.0.emit(EVENT_CHANNEL, event.clone()) {
+        // v2 起前后端设置字段名一致，所有事件都能直接走克隆快路径——**除了一条**：
+        // `SettingsChanged` 带的是设置账本原值，代理地址里的账号密码只许住在账本与
+        // 落盘那一侧，所以出前端之前换成 `without_secrets()` 的脱敏副本（快照那条路
+        // 走 `dto::snapshot`，同样脱敏）。
+        if let Err(e) = self.0.emit(EVENT_CHANNEL, for_frontend(event)) {
             tracing::warn!("转发事件到前端失败：{e}");
         }
+    }
+}
+
+/// 转发给前端之前的事件整形（见 [`FrontendSink::emit`]）。
+///
+/// 抽成自由函数只为一条：不建 `AppHandle` 也能单测"密码不出芯"。
+fn for_frontend(event: &Event) -> Event {
+    match event {
+        Event::SettingsChanged { settings } => Event::SettingsChanged {
+            settings: Box::new(settings.without_secrets()),
+        },
+        other => other.clone(),
     }
 }
 
@@ -575,5 +590,23 @@ mod tests {
         });
         assert_eq!(json["kind"], "subtitle_cleared");
         assert_eq!(json["track"], "speak");
+    }
+
+    /// 代理密码只许住在设置账本与落盘那一侧：转发给前端的 `SettingsChanged`
+    /// 必须换成脱敏副本（快照那条路在 `dto.rs` 的用例里盯）。
+    #[test]
+    fn settings_changed_forwarded_to_the_frontend_is_redacted() {
+        let mut settings = vox_core::settings::Settings::default();
+        settings.network.gpt = vox_core::settings::NetworkSetting {
+            mode: vox_core::settings::NetworkMode::Custom,
+            proxy: "socks5h://alice:hunter2@127.0.0.1:1080".into(),
+        };
+        let forwarded = for_frontend(&Event::SettingsChanged {
+            settings: Box::new(settings),
+        });
+        let json = serde_json::to_string(&forwarded).unwrap();
+        assert!(!json.contains("hunter2"), "{json}");
+        assert!(!json.contains("alice"), "{json}");
+        assert!(json.contains("socks5h://127.0.0.1:1080"), "{json}");
     }
 }

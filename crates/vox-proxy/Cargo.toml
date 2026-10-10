@@ -1,0 +1,16 @@
+[package]
+name = "vox-proxy"
+description = "出站代理：地址解析、系统代理探测、HTTP CONNECT / SOCKS5 隧道（纯 std，同步）。WebSocket 传输与 HTTP 列表/测速共用这一份实现"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# 只依赖 vox-core 的设置类型与 base64（Proxy-Authorization）；不引 tokio、不引任何 HTTP/TLS 库。
+# `cargo tree -p vox-headless` 因此只多这一个本地 crate。
+[dependencies]
+vox-core.workspace = true
+base64.workspace = true
+
+[features]
+# 本机假代理（HTTP CONNECT / SOCKS5），给依赖方的测试用。
+testing = []

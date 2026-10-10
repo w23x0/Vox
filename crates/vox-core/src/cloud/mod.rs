@@ -19,7 +19,7 @@ pub use protocol::{
 };
 
 use crate::ports::{PortError, PortResult};
-use crate::settings::ModelProvider;
+use crate::settings::{ModelProvider, NetworkSetting};
 
 /// 连接一条 socket 需要的东西。
 #[derive(Clone, PartialEq, Eq)]
@@ -27,6 +27,8 @@ pub struct ConnectRequest {
     pub url: String,
     /// `Authorization` 头的值。
     pub auth_header: String,
+    /// 这条连接走哪个网络出口（直连 / 系统代理 / 自定义代理）。由传输层解析成具体代理。
+    pub network: NetworkSetting,
 }
 
 impl std::fmt::Debug for ConnectRequest {
@@ -42,6 +44,7 @@ impl std::fmt::Debug for ConnectRequest {
                     "redacted"
                 },
             )
+            .field("network", &self.network)
             .finish()
     }
 }
@@ -107,6 +110,8 @@ pub struct Session {
     api_key: String,
     /// 阿里云接入点（地区 + 自定义）。只有阿里云会读它，另外两家原样带着。
     aliyun_endpoint: AliyunEndpoint,
+    /// 本服务商的网络出口。
+    network: NetworkSetting,
     decoder: SessionDecoder,
     seq: u64,
     /// 握手发出去了没。没握手就不该上传音频。
@@ -159,6 +164,7 @@ impl Session {
             params,
             api_key: api_key.into(),
             aliyun_endpoint,
+            network: NetworkSetting::default(),
             decoder: match provider {
                 ModelProvider::Aliyun => SessionDecoder::Aliyun(Decoder::new()),
                 ModelProvider::Gemini => SessionDecoder::Gemini(gemini::Decoder::new()),
@@ -167,6 +173,12 @@ impl Session {
             seq: 0,
             handshaken: false,
         }
+    }
+
+    /// 指定网络出口（缺省直连）。
+    pub fn with_network(mut self, network: NetworkSetting) -> Self {
+        self.network = network;
+        self
     }
 
     pub fn params(&self) -> &SessionParams {
@@ -191,14 +203,17 @@ impl Session {
             ModelProvider::Aliyun => ConnectRequest {
                 url: protocol::endpoint_url(&self.params.model_name, &self.aliyun_endpoint),
                 auth_header: protocol::auth_header_value(&self.api_key),
+                network: self.network.clone(),
             },
             ModelProvider::Gemini => ConnectRequest {
                 url: gemini::endpoint_url(&self.api_key),
                 auth_header: String::new(),
+                network: self.network.clone(),
             },
             ModelProvider::Gpt => ConnectRequest {
                 url: gpt::endpoint_url(),
                 auth_header: protocol::auth_header_value(&self.api_key),
+                network: self.network.clone(),
             },
         }
     }

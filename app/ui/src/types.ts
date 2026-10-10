@@ -160,9 +160,97 @@ export interface Settings {
    * 待 Rust 侧「接入点配置」落地后进快照；在那之前真后端的设置里没有这个键，所以是可选的。
    */
   aliyun_endpoint?: string;
+  /** 按服务商的网络出口。Rust: `vox_core::settings::NetworkSettings`。 */
+  network: NetworkSettings;
 }
 
 export type AliyunRegion = "cn" | "intl";
+
+/* ---- 每服务商网络设置（Rust: `vox_core::settings::Network*`，字段名逐字一致）---- */
+
+/** 出口模式：直连 / 跟随系统 / 自定义代理。 */
+export type NetworkMode = "direct" | "system" | "custom";
+
+/**
+ * 一家服务商的网络设置。
+ *
+ * `proxy` 可带 `user:pass@`，而**密码只住在 Rust 的设置账本里**：快照与事件给的是
+ * 去掉账号的地址，账号的存在只以 `proxy_auth` 这一位透出。所以前端永远拿不到密码，
+ * 也不该把它写回去——只补丁真正改过的那一格（`{ network: { gpt: { mode } } }`）。
+ */
+export interface NetworkSetting {
+  mode: NetworkMode;
+  /** `mode = custom` 时用：`http://host:port`、`socks5://…`、`socks5h://…`（可带账号）。 */
+  proxy: string;
+  /** 地址里带过账号密码吗（只给这一位）。 */
+  proxy_auth: boolean;
+}
+
+export interface NetworkSettings {
+  aliyun: NetworkSetting;
+  gpt: NetworkSetting;
+  gemini: NetworkSetting;
+}
+
+/* ---- 测速 / 接管检测（Rust: `vox_host::netcheck::*`，字段名逐字一致）---- */
+
+/** 一段失败在哪：域名解析 / 连接（含代理隧道）/ TLS / HTTPS 应答 / 超时。 */
+export type NetworkFailureKind = "dns" | "connect" | "tls" | "http" | "timeout";
+
+export interface NetworkFailure {
+  kind: NetworkFailureKind;
+  /** 给人看的那句；代理错误里不含账号密码。 */
+  message: string;
+}
+
+/** 一个候选接入点的体检结果。耗时单位毫秒；没测到的段是 null。 */
+export interface EndpointResult {
+  /** 稳定 id：阿里云 `cn` / `intl` / `hk`，其余 `default`。 */
+  id: string;
+  host: string;
+  /** 是否就是当前设置正在用的那个接入点。 */
+  current: boolean;
+  dns_ms: number | null;
+  connect_ms: number | null;
+  /** 代理握手（经代理时才有）。 */
+  tunnel_ms: number | null;
+  tls_ms: number | null;
+  http_ms: number | null;
+  /** 一次不带密钥的 HTTPS GET 拿到的状态码（401/403 就算通）。 */
+  http_status: number | null;
+  total_ms: number | null;
+  error: NetworkFailure | null;
+}
+
+/** 阿里云换地区建议：另一地区明显更近时才有。 */
+export interface NetworkSuggestion {
+  id: string;
+  host: string;
+  current_ms: number;
+  nearest_ms: number;
+}
+
+/** `test_network` 的回报（Rust: `NetworkReport`）。 */
+export interface NetworkReport {
+  provider: ModelProvider;
+  mode: NetworkMode;
+  /** 实际使用的代理（不含账号密码）；直连 = null。 */
+  via: string | null;
+  results: EndpointResult[];
+  suggestion: NetworkSuggestion | null;
+}
+
+/** `detect_takeover` 的回报（Rust: `TakeoverReport`）：只检测，绝不尝试绕过。 */
+export interface TakeoverReport {
+  /** 假 IP 或代理软件网卡，任一命中。 */
+  detected: boolean;
+  fake_ip: boolean;
+  fake_ip_hosts: string[];
+  /** 像代理软件的网卡名。 */
+  interfaces: string[];
+  /** 本平台列过网卡吗（列不了时只有假 IP 判定可信）。 */
+  interfaces_scanned: boolean;
+}
 
 /* ---- list_models（Rust: `vox_host::models::ModelList`，字段名逐字一致）---- */
 

@@ -30,7 +30,7 @@ pub fn snapshot(state: State<'_>) -> SnapshotDto {
 // ─── 官方模型列表 ──────────────────────────────────────────────────────────────
 
 /// 向服务商官方接口要模型清单（没密钥 / 拉失败回内置列表，见 `vox_host::models`）。
-/// 阻塞式 HTTP 放到工作线程，不占命令线程。
+/// 阻塞式 HTTP 放到工作线程，不占命令线程。出口按这家服务商的网络设置走。
 #[tauri::command]
 pub async fn list_models(
     state: State<'_>,
@@ -40,11 +40,45 @@ pub async fn list_models(
     let provider = parse_provider(&provider)?;
     let key = state.runtime.api_key_of(provider);
     let region = state.runtime.settings().aliyun_region;
+    let network = state.runtime.settings().network.of(provider).clone();
     tauri::async_runtime::spawn_blocking(move || {
-        vox_host::models::list_models(provider, key.as_deref(), region, refresh)
+        vox_host::models::list_models(provider, key.as_deref(), region, &network, refresh)
     })
     .await
     .map_err(|e| format!("模型列表任务失败：{e}"))
+}
+
+// ─── 网络体检 ──────────────────────────────────────────────────────────────────
+
+/// 测速：对这家服务商的候选接入点按当前网络设置量各段耗时（`docs/plans/NET.md` N3）。
+/// 阻塞式（DNS / TLS 都要等），放工作线程；测速不带密钥。
+#[tauri::command]
+pub async fn test_network(
+    state: State<'_>,
+    provider: String,
+) -> Result<vox_host::netcheck::NetworkReport, String> {
+    let provider = parse_provider(&provider)?;
+    let settings = state.runtime.settings();
+    let network = settings.network.of(provider).clone();
+    let region = settings.aliyun_region;
+    tauri::async_runtime::spawn_blocking(move || {
+        vox_host::netcheck::test_network(provider, &network, region)
+    })
+    .await
+    .map_err(|e| format!("测速任务失败：{e}"))
+}
+
+/// 代理软件接管检测（只检测 + 引导，绝不尝试绕过，`docs/plans/NET.md` N4）：
+/// 服务商域名解析进 `198.18.0.0/15` = 假 IP 模式；网卡名像 Clash/Meta/Wintun/TAP。
+/// 检测的是"这家服务商的域名的解析结果"，与当前设置无关，所以不需要 state。
+#[tauri::command]
+pub async fn detect_takeover(
+    provider: String,
+) -> Result<vox_host::netcheck::TakeoverReport, String> {
+    let provider = parse_provider(&provider)?;
+    tauri::async_runtime::spawn_blocking(move || vox_host::netcheck::detect_takeover(provider))
+        .await
+        .map_err(|e| format!("接管检测任务失败：{e}"))
 }
 
 // ─── 设置 ──────────────────────────────────────────────────────────────────────

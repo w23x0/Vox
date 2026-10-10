@@ -24,6 +24,7 @@ use tracing::debug;
 
 use vox_core::cloud::{ConnectRequest, Incoming, Transport};
 use vox_core::ports::{PortError, PortResult};
+use vox_core::settings::NetworkSetting;
 
 /// 套在 **TLS 之上**（明文一侧）、tungstenite 之下的那层：只读方向拦超长 close 帧
 /// （见 [`CloseCatcher`]）。放在 TLS 之下看到的是密文，会把握手字节当 WS 帧去改。
@@ -35,6 +36,8 @@ type WsReader = SplitStream<WsStream>;
 /// 让无界队列一直吃内存。满了时读任务自然向 TCP 施加背压。
 const READER_QUEUE_SIZE: usize = 512;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+/// TCP 拨号（含代理握手）的预算。
+const DIAL_BUDGET: Duration = Duration::from_secs(25);
 
 /// 一次读进旁路的字节数上限。服务端的音频/文字帧远小于它，close 帧也就 100 多字节。
 const SPY_BUFFER: usize = 16 * 1024;
@@ -158,7 +161,13 @@ impl Transport for WsTransport {
         // 在 runtime 上执行握手，阻塞当前线程等结果。
         // 30 秒连接超时——DNS 解析 + TCP 三次握手 + TLS 协商 + HTTP 升级。
         let stream: WsStream = block_on_timeout(&self.handle, Duration::from_secs(30), async {
-            connect_with_close_catcher(req, caught.clone(), self.tls.clone()).await
+            connect_with_close_catcher(
+                req,
+                caught.clone(),
+                self.tls.clone(),
+                request.network.clone(),
+            )
+            .await
         })
         .ok_or_else(|| PortError::new("连接超时（30 秒内未完成握手）"))?
         .map_err(map_connect_error)?
@@ -257,6 +266,7 @@ async fn connect_with_close_catcher(
     request: tungstenite::handshake::client::Request,
     caught: CaughtCloseSlot,
     tls: Arc<rustls::ClientConfig>,
+    network: NetworkSetting,
 ) -> Result<(WsStream, tungstenite::handshake::client::Response), tungstenite::Error> {
     use tungstenite::error::UrlError;
 
@@ -272,7 +282,7 @@ async fn connect_with_close_catcher(
     };
     let port = uri.port_u16().unwrap_or(if secure { 443 } else { 80 });
 
-    let socket = tokio::net::TcpStream::connect((host.as_str(), port))
+    let socket = dial_tcp(&network, host.clone(), port)
         .await
         .map_err(tungstenite::Error::Io)?;
     let wire = if secure {
@@ -288,6 +298,38 @@ async fn connect_with_close_catcher(
     };
     tokio_tungstenite::client_async_with_config(request, CloseCatcher::new(wire, caught), None)
         .await
+}
+
+/// TCP 拨号：按网络设置直连或经代理隧道（HTTP CONNECT / SOCKS5），TLS 由调用方在其上套。
+///
+/// 拨号本身是同步的（`vox-proxy` 与测速、HTTP 列表共用一份实现），放进 `spawn_blocking`，
+/// 握手完成后把已连好的流交给 tokio。整个连接另有 30 秒总超时，这里的预算略小一点，
+/// 让"哪一段慢"的错误先于总超时出来。
+async fn dial_tcp(
+    network: &NetworkSetting,
+    host: String,
+    port: u16,
+) -> std::io::Result<tokio::net::TcpStream> {
+    let proxy = vox_proxy::resolve(network, &host)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?;
+    if let Some(proxy) = &proxy {
+        debug!(proxy = %proxy.display(), "经代理连接");
+    }
+    let dialed = tokio::task::spawn_blocking(move || {
+        vox_proxy::dial(proxy.as_ref(), &host, port, DIAL_BUDGET)
+    })
+    .await
+    .map_err(std::io::Error::other)?
+    .map_err(|e| {
+        let kind = if e.timed_out {
+            std::io::ErrorKind::TimedOut
+        } else {
+            std::io::ErrorKind::Other
+        };
+        std::io::Error::new(kind, e.message)
+    })?;
+    dialed.stream.set_nonblocking(true)?;
+    tokio::net::TcpStream::from_std(dialed.stream)
 }
 
 /// 生产用的 TLS 信任配置：webpki 内置根证书。
@@ -742,7 +784,8 @@ fn map_connect_error(err: tungstenite::Error) -> PortError {
         tungstenite::Error::Io(io_err) => {
             let kind = io_err.kind();
             // 区分 DNS / TCP 连接失败。
-            if format!("{err}").contains("dns")
+            if format!("{err}").contains("域名解析失败")
+                || format!("{err}").contains("dns")
                 || format!("{err}").contains("resolve")
                 || format!("{err}").contains("getaddrinfo")
             {
@@ -935,6 +978,7 @@ mod tests {
         ConnectRequest {
             url: format!("ws://127.0.0.1:{}", addr.port()),
             auth_header: "Bearer sk-test-key".to_owned(),
+            network: NetworkSetting::default(),
         }
     }
 
@@ -1075,8 +1119,18 @@ mod tests {
         tokio_rustls::TlsAcceptor,
         rustls::pki_types::CertificateDer<'static>,
     ) {
+        tls_fixture_for("localhost")
+    }
+
+    /// 同上，证书签给 `name`（走代理远端解析时，连接的主机名不是 localhost）。
+    fn tls_fixture_for(
+        name: &str,
+    ) -> (
+        tokio_rustls::TlsAcceptor,
+        rustls::pki_types::CertificateDer<'static>,
+    ) {
         use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
-        let certified = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
+        let certified = rcgen::generate_simple_self_signed(vec![name.to_owned()]).unwrap();
         let cert = certified.cert.der().clone();
         let key =
             PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(certified.key_pair.serialize_der()));
@@ -1131,6 +1185,7 @@ mod tests {
         ConnectRequest {
             url: format!("wss://localhost:{}", addr.port()),
             auth_header: "Bearer sk-test-key".to_owned(),
+            network: NetworkSetting::default(),
         }
     }
 
@@ -1379,5 +1434,146 @@ mod tests {
             "攒过上限就要放行，让 tungstenite 去报错，而不是继续攒"
         );
         assert_eq!(out.len(), junk.len() + 10, "连那个假头一起放行");
+    }
+
+    // --- 经代理 ------------------------------------------------------------
+
+    use vox_core::settings::NetworkMode;
+    use vox_proxy::testing::{http_connect_proxy, socks5_proxy};
+
+    const REMOTE_ONLY: &str = "remote-only.invalid";
+
+    fn via(proxy: &str) -> NetworkSetting {
+        NetworkSetting {
+            mode: NetworkMode::Custom,
+            proxy: proxy.to_owned(),
+        }
+    }
+
+    /// 服务端证书签给一个**只有代理那一侧能解析**的名字；TLS、CloseCatcher、WS 全在隧道之后。
+    fn remote_only_wss() -> (Runtime, ConnectRequest, WsTransport, SocketAddr) {
+        let rt = test_runtime();
+        let (acceptor, cert) = tls_fixture_for(REMOTE_ONLY);
+        let addr = rt.block_on(start_tls_server(acceptor, |ws| {
+            text_then_oversized_close(ws, QUOTA_REASON)
+        }));
+        let transport =
+            WsTransport::new(rt.handle().clone()).with_tls_config(client_trusting(cert));
+        let request = ConnectRequest {
+            url: format!("wss://{REMOTE_ONLY}:{}", addr.port()),
+            auth_header: String::new(),
+            network: NetworkSetting::default(),
+        };
+        (rt, request, transport, addr)
+    }
+
+    fn assert_frames_survived_the_tunnel(transport: &mut WsTransport) {
+        assert_eq!(
+            transport.recv(2000).unwrap(),
+            Some(Incoming::Text("hello over tls".to_owned()))
+        );
+        match transport.recv(2000).unwrap() {
+            Some(Incoming::Closed(reason)) => assert_eq!(
+                reason.matches(QUOTA_REASON).count(),
+                1,
+                "隧道里也要拿到完整的超长 close 原文：{reason}"
+            ),
+            other => panic!("应该是 Closed，实际是 {other:?}"),
+        }
+    }
+
+    #[test]
+    fn wss_goes_through_an_http_connect_tunnel() {
+        let (rt, mut request, mut transport, addr) = remote_only_wss();
+        let proxy = http_connect_proxy(
+            Some(("alice", "hunter2")),
+            vec![(REMOTE_ONLY.to_owned(), addr)],
+        );
+        request.network = via(&format!("http://alice:hunter2@{}", proxy.addr));
+        transport.connect(&request).unwrap();
+        assert_frames_survived_the_tunnel(&mut transport);
+        assert_eq!(
+            proxy.requests(),
+            vec![format!("CONNECT {REMOTE_ONLY}:{} HTTP/1.1", addr.port())],
+            "流量必须真的走了代理"
+        );
+        drop(rt);
+    }
+
+    #[test]
+    fn wss_goes_through_socks5h_and_the_proxy_resolves_the_name() {
+        let (rt, mut request, mut transport, addr) = remote_only_wss();
+        let proxy = socks5_proxy(
+            Some(("alice", "hunter2")),
+            vec![(REMOTE_ONLY.to_owned(), addr)],
+        );
+        request.network = via(&format!("socks5h://alice:hunter2@{}", proxy.addr));
+        transport.connect(&request).unwrap();
+        assert_frames_survived_the_tunnel(&mut transport);
+        assert_eq!(
+            proxy.requests(),
+            vec![format!("domain:{REMOTE_ONLY}:{}", addr.port())],
+            "socks5h 要把域名原样交给代理，而不是本地解析成 IP"
+        );
+        drop(rt);
+    }
+
+    /// 本地解析 `.invalid` 必然失败：不走 socks5h 就连不上，证明上面那条不是碰巧本地解析成功。
+    #[test]
+    fn plain_socks5_cannot_reach_a_name_only_the_proxy_knows() {
+        let (rt, mut request, mut transport, addr) = remote_only_wss();
+        let proxy = socks5_proxy(None, vec![(REMOTE_ONLY.to_owned(), addr)]);
+        request.network = via(&format!("socks5://{}", proxy.addr));
+        let err = transport.connect(&request).unwrap_err();
+        assert!(err.to_string().contains("域名解析失败"), "{err}");
+        assert!(proxy.requests().is_empty());
+        drop(rt);
+    }
+
+    /// 代理挂了就是挂了：绝不悄悄改成直连（那会让用户以为在走代理）。
+    #[test]
+    fn a_dead_proxy_does_not_fall_back_to_a_direct_connection() {
+        let rt = test_runtime();
+        let addr = rt.block_on(start_echo_server());
+        let dead = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let mut request = make_request(addr);
+        request.network = via(&format!("http://u:secret-pass@127.0.0.1:{dead}"));
+        let mut transport = WsTransport::new(rt.handle().clone());
+        let err = transport.connect(&request).unwrap_err().to_string();
+        assert!(err.contains("连接代理"), "{err}");
+        assert!(!err.contains("secret-pass"), "错误里不许有代理密码：{err}");
+    }
+
+    #[test]
+    fn a_malformed_custom_proxy_is_an_error_not_a_direct_connection() {
+        let rt = test_runtime();
+        let addr = rt.block_on(start_echo_server());
+        let mut request = make_request(addr);
+        request.network = via("ftp://nope:1");
+        let mut transport = WsTransport::new(rt.handle().clone());
+        let err = transport.connect(&request).unwrap_err().to_string();
+        assert!(err.contains("ftp"), "{err}");
+        request.network = via("");
+        assert!(transport.connect(&request).is_err(), "自定义但没填 = 错误");
+    }
+
+    #[test]
+    fn plain_ws_also_tunnels() {
+        let rt = test_runtime();
+        let addr = rt.block_on(start_echo_server());
+        let proxy = http_connect_proxy(None, vec![]);
+        let mut request = make_request(addr);
+        request.network = via(&format!("http://{}", proxy.addr));
+        let mut transport = WsTransport::new(rt.handle().clone());
+        transport.connect(&request).unwrap();
+        transport.send("hi").unwrap();
+        assert_eq!(
+            transport.recv(2000).unwrap(),
+            Some(Incoming::Text("hi".to_owned()))
+        );
+        assert_eq!(proxy.requests().len(), 1);
     }
 }

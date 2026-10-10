@@ -84,6 +84,13 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   aliyun_region: "cn",
   aliyun_endpoint: "",
+  // 缺省与 Rust `NetworkSettings::default()` 一致：阿里云直连（国内站不该绕代理），
+  // OpenAI / Gemini 跟随系统代理（国内多数人要靠代理才连得上）。
+  network: {
+    aliyun: { mode: "direct", proxy: "", proxy_auth: false },
+    gpt: { mode: "system", proxy: "", proxy_auth: false },
+    gemini: { mode: "system", proxy: "", proxy_auth: false },
+  },
 };
 
 export function clamp(value: number, min: number, max: number): number {

@@ -228,3 +228,15 @@ export const IconUpload = (p: IconProps) => (
     <line x1="12" y1="3" x2="12" y2="15" />
   </Svg>
 );
+
+/* ---- 测速 -------------------------------------------------------- */
+
+/** 秒表：测速按钮用。 */
+export const IconSpeed = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="13" r="8" />
+    <polyline points="12 9 12 13 15 15" />
+    <line x1="9" y1="2" x2="15" y2="2" />
+    <line x1="12" y1="2" x2="12" y2="5" />
+  </Svg>
+);

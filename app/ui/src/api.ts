@@ -9,7 +9,14 @@
  */
 
 import { createMockApi } from "./mock/backend";
-import type { ModelList, ModelProvider, PipelineName, Settings } from "./types";
+import type {
+  ModelList,
+  ModelProvider,
+  NetworkReport,
+  PipelineName,
+  Settings,
+  TakeoverReport,
+} from "./types";
 import type {
   AudioApp,
   Snapshot,
@@ -74,6 +81,16 @@ export interface VoxApi {
    * 拉取失败时**不抛错**，而是返回 `error` 非空 + 内置列表。
    */
   listModels(provider: ModelProvider, opts?: { refresh?: boolean }): Promise<ModelList>;
+  /**
+   * 网络体检（`docs/plans/NET.md` N3）：按当前网络设置测这家服务商各接入点的
+   * DNS / TCP / 隧道 / TLS / HTTPS 耗时。**不带密钥**（预期 401/403，收到即算通）。
+   */
+  testNetwork(provider: ModelProvider): Promise<NetworkReport>;
+  /**
+   * 代理软件接管检测（N4）：只检测 + 引导。假 IP（`198.18.0.0/15`）或
+   * 代理软件虚拟网卡命中时 `detected` 为真；界面据此给引导，**绝不尝试绕过**。
+   */
+  detectTakeover(provider: ModelProvider): Promise<TakeoverReport>;
   /** 读某个服务商落盘的覆盖版目录；没覆盖时返回 null。 */
   readCatalogOverride(provider: ModelProvider): Promise<string | null>;
   /** 检查某服务商目录有没有线上更新（只查不写）。 */
@@ -131,6 +148,8 @@ function createTauriApi(): VoxApi {
       void (await call<unknown>("open_provider_console", { provider })),
     listModels: (provider, opts) =>
       call<ModelList>("list_models", { provider, refresh: opts?.refresh ?? false }),
+    testNetwork: (provider) => call<NetworkReport>("test_network", { provider }),
+    detectTakeover: (provider) => call<TakeoverReport>("detect_takeover", { provider }),
     readCatalogOverride: (provider) =>
       call<string | null>("read_catalog_override", { provider }),
     checkCatalogUpdate: (provider) =>
