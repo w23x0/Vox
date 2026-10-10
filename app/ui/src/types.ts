@@ -162,6 +162,8 @@ export interface Settings {
   aliyun_endpoint?: string;
   /** 按服务商的网络出口。Rust: `vox_core::settings::NetworkSettings`。 */
   network: NetworkSettings;
+  /** 首次启动引导走完或跳过了。老配置缺省 false；已有密钥的老用户由界面补写成 true。 */
+  onboarding_done: boolean;
 }
 
 export type AliyunRegion = "cn" | "intl";

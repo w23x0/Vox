@@ -54,6 +54,12 @@ export async function fetchModels(
   }
 }
 
+/** 把一次已经拿到的清单直接落缓存（引导里验证密钥时用，免得再问一遍）。 */
+export function storeModelList(list: ModelList): void {
+  cache.set(list.provider, list);
+  emit();
+}
+
 /** 前端兜底：只有目录里登记的那一条，不假装知道官方列表。 */
 function builtinModelList(provider: ModelProvider, uiLang: UiLang): ModelList {
   return {

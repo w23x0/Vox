@@ -12,6 +12,7 @@ import { Dropdown, SettingsItem, Toggle } from "../ui/controls";
 import { HotkeyEditor } from "../ui/hotkey";
 import { getThemeMode, setThemeMode, type ThemeMode } from "../ui/theme";
 import { CableManager } from "./CableManager";
+import { ONBOARDING_OPEN_EVENT } from "./Onboarding";
 
 const DEFAULT_LISTEN_HOTKEY: Hotkey = { ctrl: true, alt: false, shift: false, key: "L" };
 
@@ -46,6 +47,21 @@ export function SettingsPage() {
               options={UI_LANG_ORDER.map((lang) => ({ value: lang, label: UI_LANG_NAMES[lang] }))}
               onChange={(lang) => patch({ ui_language: toUiLang(lang) })}
             />
+          }
+        />
+        <SettingsItem
+          title={t("settings.rerunOnboarding")}
+          desc={t("settings.rerunOnboardingDesc")}
+          control={
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={loading}
+              data-focus-item
+              onClick={() => window.dispatchEvent(new Event(ONBOARDING_OPEN_EVENT))}
+            >
+              {t("settings.rerunOnboardingBtn")}
+            </button>
           }
         />
         <SettingsItem

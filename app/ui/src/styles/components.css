@@ -1504,3 +1504,72 @@
   font-weight: 700;
   color: var(--text);
 }
+
+/* ---- 首次启动引导 ---------------------------------------------------- */
+
+.ob-card {
+  width: min(560px, 100%);
+  max-height: min(600px, calc(100vh - 60px));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ob-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ob-head h2 {
+  margin: 0 0 2px;
+}
+
+.ob-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 280px;
+}
+
+.ob-step-title {
+  margin: 0;
+  font-size: 15px;
+}
+
+.dialog-card .ob-desc {
+  margin: 0;
+}
+
+.ob-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ob-choices .provider-item {
+  flex: 1 1 140px;
+  width: auto;
+}
+
+.ob-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ob-region-dd {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.ob-results {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-inner);
+  padding: 4px 12px;
+}
+
+.ob-ok {
+  color: var(--accent);
+}

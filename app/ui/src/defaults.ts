@@ -91,6 +91,7 @@ export const DEFAULT_SETTINGS: Settings = {
     gpt: { mode: "system", proxy: "", proxy_auth: false },
     gemini: { mode: "system", proxy: "", proxy_auth: false },
   },
+  onboarding_done: false,
 };
 
 export function clamp(value: number, min: number, max: number): number {

@@ -34,6 +34,7 @@ import { ABOUT_NAV, DEFAULT_PAGE, PAGE_NAV } from "./nav";
 import { AboutPage } from "./sections/About";
 import { AgentControlPage } from "./sections/AgentControl";
 import { ModelsPage } from "./sections/Models";
+import { Onboarding } from "./sections/Onboarding";
 import { HomePage } from "./sections/Home";
 import { SettingsPage } from "./sections/Settings";
 import { SubtitlePage } from "./sections/Subtitle";
@@ -269,6 +270,7 @@ export function App() {
   return (
     <NavigateContext.Provider value={selectPage}>
       <Titlebar />
+      <Onboarding />
       <Sidebar page={page} onNavigate={selectPage} />
       <div className="app-layout">
         <div className="app-content">

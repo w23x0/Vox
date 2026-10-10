@@ -229,6 +229,10 @@ pub struct Settings {
     /// 每家服务商的网络出口（直连 / 系统代理 / 自定义代理）。
     /// **只在下次启动流水线时生效**，与 `aliyun_endpoint` 一致。
     pub network: NetworkSettings,
+    /// 首次启动引导走完或跳过了。老配置没有这一格，读出来是 `false`；
+    /// 界面据此决定要不要弹引导（已有任一密钥的老用户由界面补写成 `true`，
+    /// 密钥不在设置里，核心不知道）。
+    pub onboarding_done: bool,
 }
 
 impl Default for Settings {
@@ -246,6 +250,7 @@ impl Default for Settings {
             aliyun_region: AliyunRegion::default(),
             aliyun_endpoint: String::new(),
             network: NetworkSettings::default(),
+            onboarding_done: false,
         }
     }
 }
@@ -924,6 +929,14 @@ mod tests {
         s.ui_language = "ja-JP".into();
         s.normalize();
         assert_eq!(s.ui_language, "ja-JP", "白名单内的语言码保留");
+    }
+
+    #[test]
+    fn old_configs_without_onboarding_flag_read_as_not_done() {
+        let s: Settings = serde_json::from_str(r#"{"version":3,"ui_language":"en"}"#).unwrap();
+        assert!(!s.onboarding_done);
+        let s: Settings = serde_json::from_str(r#"{"onboarding_done":true}"#).unwrap();
+        assert!(s.onboarding_done);
     }
 
     #[test]

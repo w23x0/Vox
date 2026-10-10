@@ -48,6 +48,8 @@ pub struct SettingsDto {
     /// 按服务商的网络出口。**已脱敏**：`proxy` 是去掉账号密码后的地址，账号密码本身
     /// 只以 `proxy_auth` 这一位的形态出芯（见 `vox-core::settings::NetworkSetting`）。
     pub network: NetworkSettingsDto,
+    /// 首次启动引导走完或跳过了。
+    pub onboarding_done: bool,
 }
 
 /// 一家服务商的网络设置（`vox-core::settings::NetworkSetting` 的脱敏镜像）。
@@ -109,6 +111,7 @@ impl From<Settings> for SettingsDto {
             aliyun_region: s.aliyun_region,
             aliyun_endpoint: s.aliyun_endpoint,
             network,
+            onboarding_done: s.onboarding_done,
         }
     }
 }

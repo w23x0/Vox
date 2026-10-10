@@ -459,7 +459,10 @@ export function createMockApi(): VoxApi {
     }
     // 控制面起不来那一档：给设置页一条"起不来"的路走（`?control=busy`）。
     controlFail = params.get("control") === "busy";
-    if (params.get("cold") === "1") return;
+    // `?mockFresh=1`：模拟首次启动——没有任何密钥、引导没走过（其余档位一律视为已走过）。
+    const fresh = params.get("mockFresh") === "1";
+    settings = { ...settings, onboarding_done: !fresh };
+    if (params.get("cold") === "1" || fresh) return;
     for (const provider of catalog.providerIds()) {
       apiKeys[provider] = true;
       apiKeyTails[provider] = "a1b2";
