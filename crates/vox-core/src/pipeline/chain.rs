@@ -8,10 +8,14 @@
 //! * **C1** 单声道 `f32` 进、单声道 `f32` 出（混音在 `ChainScratch::begin` 里做一次）。
 //! * **C2** 长度不守恒：输入任意长 `N`，出货 `0..M` 块，块长任意。
 //! * **C3** 块边界有意义，**不许合并**——链尾的消费者逐块处理，合并会改上行帧的切分。
-//! * **C4** 只有 `Resample` 改采样率，其余三节进出口同率。
+//! * **C4** 只有 `Resample` 改采样率，其余四节进出口同率。
 //! * **C5** 只有 `Gate` 被外部驱动、只有 `Gate` 报状态。
-//! * **C6** 只有 `Denoise` / `Resample` 有流状态，断线重来要清；**门不清**
+//! * **C6** 只有 `Denoise` / `Aec` / `Resample` 有流状态，断线重来要清；**门不清**
 //!   （`ActivationGate::reset` 会把门关掉，见 `Chain::on_disconnect`）。
+//!
+//! `Aec` 与别的节有一处形状不同：它多一条**外部输入**（播放汇刚拿到的那段译音，
+//! 也就是回声的参考信号），走 [`Chain::push_playback_reference`]。那不在
+//! `ChainStage::process` 的调用约定里——参考与上行是两条独立的时间线。
 //!
 //! 零分配：热路径上只有两块乒乓缓冲的 `len` 归零与一次异或，各节的块从
 //! `ports` / `gate` 的现成返回值**按值搬**进 [`BlockOut`]，不拷贝、不 `clone()`、
@@ -22,13 +26,13 @@ use std::time::Instant;
 use crate::cloud::protocol::OUTPUT_SAMPLE_RATE;
 use crate::composition::{Composition, Op, RateRef};
 use crate::gate::{ActivationGate, GateConfig, GateStatus};
-use crate::ports::{AudioChunk, CaptureFormat, Denoise, PortError, PortResult, Resample};
+use crate::ports::{Aec, AudioChunk, CaptureFormat, Denoise, PortError, PortResult, Resample};
 
-use super::{Deps, DENOISE_RATE};
+use super::{Deps, AEC_RATES, DENOISE_RATE};
 
-/// 链上最多几节。`Composition::OP_ORDER` 今天 4 项，S4-C 加 `Op::Aec` 是 5 项，
-/// 留一格。**这是定长数组的长度**，不是上限策略：清单超过它直接建不出链
-/// （`Chain::build` 里有那道检查），不做"动态扩容"——计量要在热路径上零分配。
+/// 链上最多几节。`Composition::OP_ORDER` 今天 5 项（`mono` / `denoise` / `aec` /
+/// `gate` / `resample`），留一格。**这是定长数组的长度**，不是上限策略：清单超过它
+/// 直接建不出链（`Chain::build` 里有那道检查），不做"动态扩容"——计量要在热路径上零分配。
 pub const MAX_OPS: usize = 6;
 
 /// 一节算子的累计计量。**全是定长字段**（一个 `&'static str` + 四个整数），
@@ -167,7 +171,21 @@ pub(crate) enum DenoiseSkip {
     Factory(PortError),
 }
 
-/// 算子链的一节。**四种，全列出来**；`Composition::ops` 决定装哪几种、什么顺序。
+/// 回声消除没装上的两种原因。**两态的可观察行为不一样，别合并**（R10 定的口径：
+/// 逐字照抄 [`DenoiseSkip`]，不发明新的）。
+#[derive(Debug, Clone)]
+pub(crate) enum AecSkip {
+    /// 采集率不在 `AEC_RATES` 里（`sonora-aec3` 的公开块级面只驱得动 16 k 单频带与
+    /// 48 k 三频带）。今天：**只有** `tracing::warn!`，不发 `Notice`。
+    Rate(u32),
+    /// 回声消除器工厂起不来（分配失败、配置非法）。今天：`tracing::warn!` **加**
+    /// `Notice::warning(AEC_DISABLED).on(pipeline)`。
+    ///
+    /// 带原始错误消息（同 [`DenoiseSkip::Factory`]）。
+    Factory(PortError),
+}
+
+/// 算子链的一节。**五种，全列出来**；`Composition::ops` 决定装哪几种、什么顺序。
 pub(crate) enum ChainStage {
     /// `Op::Mono`。交织 → 单声道。**混音在 [`ChainScratch::begin`] 里做**（今天的
     /// `chunk.to_mono()` 就在那儿），这一节在链上只负责"清单说有这一节"这件事：
@@ -179,6 +197,13 @@ pub(crate) enum ChainStage {
         rate: u32,
         /// `None` = 降噪器真的装上了；`Some(why)` = 装这一节但不降噪，原因是它。
         skip: Option<DenoiseSkip>,
+    },
+    /// `Op::Aec`。参考信号另走 [`Chain::push_playback_reference`]（不在 `process` 里）。
+    Aec {
+        port: Option<Box<dyn Aec>>,
+        rate: u32,
+        /// `None` = 回声消除器真的装上了；`Some(why)` = 装这一节但不消回声，原因是它。
+        skip: Option<AecSkip>,
     },
     /// `Op::Gate`。带一份"本拍的状态"槽位，`Chain::take_gate_status` 从这里取。
     Gate {
@@ -215,6 +240,14 @@ impl ChainStage {
                 }
                 None => out.take_all_from(input),
             },
+            Self::Aec { port, .. } => match port {
+                Some(port) => {
+                    for block in input.blocks() {
+                        out.push_owned(port.process(block));
+                    }
+                }
+                None => out.take_all_from(input),
+            },
             Self::Gate { gate, status, .. } => {
                 for block in input.blocks() {
                     let (accepted, this) = gate.process(block);
@@ -235,7 +268,10 @@ impl ChainStage {
     /// 本节的**出口**采样率（契约 C4）。只有 `Resample` 与入口不同。
     pub(crate) fn out_rate(&self) -> u32 {
         match self {
-            Self::Mono { rate } | Self::Denoise { rate, .. } | Self::Gate { rate, .. } => *rate,
+            Self::Mono { rate }
+            | Self::Denoise { rate, .. }
+            | Self::Aec { rate, .. }
+            | Self::Gate { rate, .. } => *rate,
             Self::Resample { out_rate, .. } => *out_rate,
         }
     }
@@ -377,6 +413,20 @@ impl Chain {
                     };
                     stages.push(ChainStage::Denoise { port, rate, skip });
                 }
+                Op::Aec => {
+                    // 回声消除只吃采集率的 16000 / 48000。降级有两种原因，
+                    // 报什么不一样，别合并（R10：`Rate` 只 `warn!`）。
+                    let (port, skip) = if !AEC_RATES.contains(&rate) {
+                        (None, Some(AecSkip::Rate(rate)))
+                    } else {
+                        match (deps.aec)(rate) {
+                            Ok(port) => (Some(port), None),
+                            // 造不出来只是少一层处理，别把整条流水线拖死。
+                            Err(err) => (None, Some(AecSkip::Factory(err))),
+                        }
+                    };
+                    stages.push(ChainStage::Aec { port, rate, skip });
+                }
                 Op::Gate { config } => {
                     // 门建在**采集率**上，不是会话率——尾巴和 preroll 的时长按率算。
                     stages.push(ChainStage::Gate {
@@ -499,6 +549,7 @@ impl Chain {
     /// | 节 | 动作 | 为什么 |
     /// | --- | --- | --- |
     /// | `Denoise` | `port.reset()` | 半句作废：480 帧的分帧缓冲与 RNNoise 内部状态都丢掉 |
+    /// | `Aec` | `port.reset()` | 声学路径的估计对下一条会话无效（§5.6）；它与门是**分开的两节**，清它不会碰门的 `external_active` |
     /// | `Resample` | `port.reset()` | 缓冲里的零头别带到下一条连接 |
     /// | `Mono` | 无状态可清 | — |
     /// | `Gate` | **不动** | `ActivationGate::reset` 会把 `external_active` 清成 `false`——门会被**关掉**。接线前 `Worker::reconnect` 也不碰门，行为是"重连后按键仍按着"，所以这里不许调 |
@@ -506,6 +557,9 @@ impl Chain {
         for stage in &mut self.stages {
             match stage {
                 ChainStage::Denoise {
+                    port: Some(port), ..
+                } => port.reset(),
+                ChainStage::Aec {
                     port: Some(port), ..
                 } => port.reset(),
                 ChainStage::Resample { port, .. } => port.reset(),
@@ -534,6 +588,32 @@ impl Chain {
             ChainStage::Denoise { skip, .. } => skip.as_ref(),
             _ => None,
         })
+    }
+
+    /// 回声消除降级的原因。`None` = 链里没有 AEC 节**或** AEC 节真的装上了。
+    pub(crate) fn aec_skip(&self) -> Option<&AecSkip> {
+        self.stages.iter().find_map(|stage| match stage {
+            ChainStage::Aec { skip, .. } => skip.as_ref(),
+            _ => None,
+        })
+    }
+
+    /// 播放汇刚拿到一段要外放的译音。**必须在 `sink.push()` 之前调**。
+    ///
+    /// 这段译音就是要外放的参考信号，也就是回路的输入；AEC 节拿它去对齐上行
+    /// （S4-C 稿 §5.1 / `ports::Aec::push_reference`）。
+    ///
+    /// 链里没有 AEC 节（或它降级了）时走空 `match`：**什么都不做**——`samples`
+    /// 是借用，不复制、不分配。50 Hz 一次 `match`，成本可忽略。
+    pub(crate) fn push_playback_reference(&mut self, samples: &[f32]) {
+        for stage in &mut self.stages {
+            if let ChainStage::Aec {
+                port: Some(port), ..
+            } = stage
+            {
+                port.push_reference(samples);
+            }
+        }
     }
 
     /// 控制面推门。**链里没有门就是静默忽略**（今天 `Worker::handle_note` 也是
@@ -592,7 +672,8 @@ impl Chain {
 mod tests {
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::cell::Cell;
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -662,6 +743,16 @@ mod tests {
         resample_flushes: AtomicU32,
         /// 重采样工厂被叫到过的 (进率, 出率)——验 `Op::Resample` 的两个字段真被读了。
         resample_rates: Mutex<Vec<(u32, u32)>>,
+        /// 回声消除工厂被叫到过的次数与**最后一次**拿到的采集率——验 `Op::Aec`
+        /// 拿的是采集率（契约 C4），且链上只建一次。
+        aec_rate: AtomicU32,
+        aec_builds: AtomicU32,
+        aec_resets: AtomicU32,
+        aec_references: AtomicU32,
+        /// `Aec::push_reference` 收到过的参考样本数——验参考真的流到了这一节。
+        aec_reference_samples: AtomicU32,
+        /// 工厂返 `Err` 的开关（照 `fail_denoise` 那条路）。
+        fail_aec: AtomicBool,
     }
 
     struct DenoiseHandle(Arc<Dsp>);
@@ -718,11 +809,70 @@ mod tests {
         }
     }
 
-    /// 算子链只用到降噪与重采样两个工厂；采集 / 传输 / 播放都不该被碰到，
+    /// 合成回声装置的参数（S4-C 稿 §7.1）：回声 = `0.4 × 参考[n − 30 ms]`。
+    const ECHO_GAIN: f32 = 0.4;
+    const ECHO_DELAY_MS: usize = 30;
+
+    /// 假回声消除器：把"参考延迟 `ECHO_DELAY_MS` 拍、乘 `ECHO_GAIN`"从采集里减掉
+    /// ——**正好是 §7.1 的合成装置**，于是"链上这一节真在消回声"是可断言的事。
+    ///
+    /// 它不做自适应、不分频带（那是真实现的事，T1–T4/T7/T13/T14 在 `vox-dsp` 那边
+    /// 测真实现）。它在这儿的意义是让**三条链上约定可观察**：
+    /// 参考真的送进来了、工厂拿到的是采集率、断线重连真的清了状态。
+    struct AecHandle {
+        dsp: Arc<Dsp>,
+        /// 还没被"播出去"的参考。
+        reference: VecDeque<f32>,
+        /// 延迟线：每拍从参考取一个，`ECHO_DELAY_MS` 拍之后才当回声减掉。
+        line: VecDeque<f32>,
+    }
+
+    impl AecHandle {
+        fn new(dsp: Arc<Dsp>, rate: u32) -> Self {
+            dsp.aec_builds.fetch_add(1, Ordering::SeqCst);
+            dsp.aec_rate.store(rate, Ordering::SeqCst);
+            let delay = rate as usize * ECHO_DELAY_MS / 1000;
+            Self {
+                dsp,
+                reference: VecDeque::new(),
+                line: VecDeque::from(vec![0.0; delay]),
+            }
+        }
+    }
+
+    impl Aec for AecHandle {
+        fn process(&mut self, capture: &[f32]) -> Vec<f32> {
+            let mut out = Vec::with_capacity(capture.len());
+            for &x in capture {
+                let played = self.reference.pop_front().unwrap_or(0.0);
+                self.line.push_back(played);
+                let echo = self.line.pop_front().unwrap_or(0.0);
+                out.push(x - ECHO_GAIN * echo);
+            }
+            out
+        }
+
+        fn push_reference(&mut self, samples: &[f32]) {
+            self.dsp.aec_references.fetch_add(1, Ordering::SeqCst);
+            self.dsp
+                .aec_reference_samples
+                .fetch_add(samples.len() as u32, Ordering::SeqCst);
+            self.reference.extend(samples.iter().copied());
+        }
+
+        fn reset(&mut self) {
+            self.dsp.aec_resets.fetch_add(1, Ordering::SeqCst);
+            self.reference.clear();
+            self.line.clear();
+        }
+    }
+
+    /// 算子链只用到降噪 / 回声消除 / 重采样三个工厂；采集 / 传输 / 播放都不该被碰到，
     /// 碰到了就是链越界（直接炸，不静默通过）。
     fn deps(dsp: &Arc<Dsp>, fail_denoise: bool) -> Deps {
         let denoise_dsp = Arc::clone(dsp);
         let resample_dsp = Arc::clone(dsp);
+        let aec_dsp = Arc::clone(dsp);
         Deps {
             transport: Box::new(|| -> Box<dyn Transport> { unreachable!("链不碰传输层") }),
             capture: Box::new(|| -> Box<dyn CaptureSource> { unreachable!("链不碰采集层") }),
@@ -732,6 +882,12 @@ mod tests {
                     return Err(PortError::new("降噪模型加载失败"));
                 }
                 Ok(Box::new(DenoiseHandle(Arc::clone(&denoise_dsp))) as Box<dyn Denoise>)
+            }),
+            aec: Box::new(move |rate| {
+                if aec_dsp.fail_aec.load(Ordering::SeqCst) {
+                    return Err(PortError::new("回声消除器起不来"));
+                }
+                Ok(Box::new(AecHandle::new(Arc::clone(&aec_dsp), rate)) as Box<dyn Aec>)
             }),
             resample: Box::new(move |in_rate, out_rate| {
                 resample_dsp
@@ -1571,5 +1727,284 @@ mod tests {
         let (blocks, status) = drive(&mut chain, &mut scratch, &chunk(CAPTURE_RATE, loud(960)));
         assert_eq!(status.unwrap().state, GateState::Manual);
         assert_eq!(blocks.len(), 1, "压制结束后应当恢复上行");
+    }
+
+    // --- 回声消除（`Op::Aec`）----------------------------------------------
+
+    /// §7.1 的合成回声：`echo[n] = 0.4 × reference[n − 30 ms]`。
+    fn echo_of(reference: &[f32]) -> Vec<f32> {
+        let delay = CAPTURE_RATE as usize * ECHO_DELAY_MS / 1000;
+        (0..reference.len())
+            .map(|i| {
+                if i >= delay {
+                    ECHO_GAIN * reference[i - delay]
+                } else {
+                    0.0
+                }
+            })
+            .collect()
+    }
+
+    /// 清单里没有 `Op::Aec` 时，链上就没有这一节，`push_playback_reference` 是**空操作**。
+    /// （T5）
+    #[test]
+    fn without_the_op_the_stage_is_simply_absent() {
+        let dsp = Arc::new(Dsp::default());
+        let deps = deps(&dsp, false);
+        let gate = || Op::Gate {
+            config: GateConfig::MANUAL,
+        };
+
+        let mut with = Chain::build(
+            &[Op::Mono, Op::Aec, gate()],
+            &deps,
+            mono_capture(),
+            SESSION_RATE,
+        )
+        .unwrap();
+        let mut without =
+            Chain::build(&[Op::Mono, gate()], &deps, mono_capture(), SESSION_RATE).unwrap();
+
+        assert!(with.stage_names().any(|name| name == "aec"));
+        assert!(
+            !without.stage_names().any(|name| name == "aec"),
+            "清单里没有这一节就不该有这一节：{:?}",
+            without.stage_names().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            dsp.aec_builds.load(Ordering::SeqCst),
+            1,
+            "只有装了那一节的链才会问工厂"
+        );
+
+        // 装了的那条链：参考整段**按值**送到那一节，一个样本不少。
+        let reference = loud(240);
+        with.push_playback_reference(&reference);
+        assert_eq!(dsp.aec_references.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            dsp.aec_reference_samples.load(Ordering::SeqCst),
+            240,
+            "整段送过去，不截断、不补零"
+        );
+
+        // 没装的那条链：同一个口走空 match —— 不碰工厂、不 panic、链照跑。
+        without.push_playback_reference(&reference);
+        assert_eq!(
+            dsp.aec_references.load(Ordering::SeqCst),
+            1,
+            "没有 AEC 节，这一次调用不该留下任何痕迹"
+        );
+        without.set_gate_active(true);
+        let mut scratch = ChainScratch::default();
+        let input = loud(960);
+        let (blocks, _) = drive(
+            &mut without,
+            &mut scratch,
+            &chunk(CAPTURE_RATE, input.clone()),
+        );
+        assert_eq!(blocks, vec![input], "没有 AEC 节时链尾就是入口那一块");
+    }
+
+    /// 工厂拿到的率是**采集率**，节本身不改率。采集率是 16 k 时也照装（T8）。
+    #[test]
+    fn the_chain_aec_stage_sees_the_capture_rate() {
+        let dsp = Arc::new(Dsp::default());
+        let deps = deps(&dsp, false);
+
+        let chain =
+            Chain::build(&[Op::Mono, Op::Aec], &deps, mono_capture(), SESSION_RATE).unwrap();
+        assert_eq!(
+            dsp.aec_rate.load(Ordering::SeqCst),
+            CAPTURE_RATE,
+            "工厂拿到的是采集率，不是会话率"
+        );
+        assert!(chain.aec_skip().is_none(), "这个率装得上");
+        assert_eq!(chain.out_rate(), CAPTURE_RATE, "AEC 不改率（契约 C4）");
+
+        // 采集率 16 k（另一个受支持的档）：还是采集率。
+        let chain16 = Chain::build(
+            &[Op::Mono, Op::Aec],
+            &deps,
+            CaptureFormat {
+                sample_rate: 16_000,
+                channels: 1,
+            },
+            SESSION_RATE,
+        )
+        .unwrap();
+        assert_eq!(dsp.aec_rate.load(Ordering::SeqCst), 16_000);
+        assert!(chain16.aec_skip().is_none(), "16 k 也是受支持的档");
+        assert_eq!(chain16.out_rate(), 16_000);
+    }
+
+    /// 采集率不在受支持集里 → `AecSkip::Rate`，那一节**直通**（与 `DenoiseSkip::Rate`
+    /// 同样两态、同样只记日志的口径）。44.1 kHz 是驱动真会协商出来的率。（T9）
+    #[test]
+    fn a_capture_rate_outside_the_supported_set_degrades() {
+        let dsp = Arc::new(Dsp::default());
+        let deps = deps(&dsp, false);
+        let mut chain = Chain::build(
+            &[Op::Mono, Op::Aec],
+            &deps,
+            CaptureFormat {
+                sample_rate: 44_100,
+                channels: 1,
+            },
+            SESSION_RATE,
+        )
+        .unwrap();
+        assert!(
+            matches!(chain.aec_skip(), Some(AecSkip::Rate(44_100))),
+            "率不对要给 `Rate`，不是 `Factory`"
+        );
+        assert_eq!(
+            dsp.aec_builds.load(Ordering::SeqCst),
+            0,
+            "率不对就不该去问工厂"
+        );
+
+        // 直通：进出逐样本相等，一个样本不多一个不少。
+        let mut scratch = ChainScratch::default();
+        let input = loud(960);
+        let (blocks, _) = drive(&mut chain, &mut scratch, &chunk(44_100, input.clone()));
+        assert_eq!(blocks, vec![input]);
+    }
+
+    /// 工厂返 `Err` → `AecSkip::Factory`，带原始消息，链照跑。（T10）
+    #[test]
+    fn a_broken_factory_degrades_but_does_not_kill_the_pipeline() {
+        let dsp = Arc::new(Dsp::default());
+        dsp.fail_aec.store(true, Ordering::SeqCst);
+        let deps = deps(&dsp, false);
+        let mut chain = Chain::build(
+            &[
+                Op::Mono,
+                Op::Aec,
+                Op::Resample {
+                    from: RateRef::Capture,
+                    to: RateRef::Session,
+                },
+            ],
+            &deps,
+            mono_capture(),
+            SESSION_RATE,
+        )
+        .unwrap();
+
+        match chain.aec_skip() {
+            Some(AecSkip::Factory(err)) => assert!(
+                err.message.contains("回声消除器起不来"),
+                "原始消息要留住：{}",
+                err.message
+            ),
+            other => panic!("该报 Factory，实得 {other:?}"),
+        }
+
+        // 降级只是少一层处理：头条链照跑，链尾率照旧是会话率。
+        assert_eq!(chain.out_rate(), SESSION_RATE);
+        let mut scratch = ChainScratch::default();
+        let (blocks, _) = drive(&mut chain, &mut scratch, &chunk(CAPTURE_RATE, loud(960)));
+        assert_eq!(blocks.len(), 1, "链照跑");
+    }
+
+    /// **§3.1 的钉子**：只播参考、不给近端（`near_end = 0`）时，门**不许**被自己的回声
+    /// 推开（T11）。
+    ///
+    /// 两边都跑：装 `Op::Aec`（落在门**之前**）时门不开；把它从清单里去掉、回声直接进
+    /// 门时门会开——后者就是"我们翻译自己"那个 bug 的形状，也是 AEC 被装进来的理由。
+    #[test]
+    fn the_gate_still_sees_a_clean_mic() {
+        /// 门的开合判据：RMS ≥ 0.02。残余是 0 时判不开、回声是 0.2 量级时判开。
+        const THRESHOLD: f32 = 0.02;
+        let dsp = Arc::new(Dsp::default());
+        let deps = deps(&dsp, false);
+        let reference = loud(960 * 8);
+        let echo = echo_of(&reference);
+
+        // 跑一遍：参考整段推进去，然后只喂"回声"这一路（没有近端）。
+        let run = |ops: &[Op]| -> (usize, bool) {
+            let mut chain = Chain::build(ops, &deps, mono_capture(), SESSION_RATE).unwrap();
+            chain.push_playback_reference(&reference);
+            let mut scratch = ChainScratch::default();
+            let mut produced = 0usize;
+            let mut opened = false;
+            for at in 0..8 {
+                let block = echo[at * 960..(at + 1) * 960].to_vec();
+                let (blocks, status) = drive(&mut chain, &mut scratch, &chunk(CAPTURE_RATE, block));
+                produced += blocks.iter().map(|block| block.len()).sum::<usize>();
+                opened |= status.is_some_and(|status| status.active);
+            }
+            (produced, opened)
+        };
+
+        // ① 门之前有 AEC：回声被减掉，门看到的是静音。
+        let (produced, opened) = run(&[
+            Op::Mono,
+            Op::Aec,
+            Op::Gate {
+                config: GateConfig::level(THRESHOLD),
+            },
+        ]);
+        assert!(
+            !opened,
+            "AEC 在门之前，门不许被自己的回声推开（这正是 §3.1 推翻 S4-B 落点的理由）"
+        );
+        assert_eq!(produced, 0, "门没开就不该有上行");
+
+        // ② 没有 AEC：同一个回声直接进门，门被推开——bug 的形状。
+        let (produced, opened) = run(&[
+            Op::Mono,
+            Op::Gate {
+                config: GateConfig::level(THRESHOLD),
+            },
+        ]);
+        assert!(opened, "没有 AEC 时回声会把门推开——这就是这一节存在的理由");
+        assert!(produced > 0, "门开了就该有上行");
+    }
+
+    /// 断线重来：AEC 要清（声学路径的估计对下一条会话无效），门**不许**动（T12）。
+    #[test]
+    fn the_aec_resets_but_the_gate_does_not() {
+        let dsp = Arc::new(Dsp::default());
+        let deps = deps(&dsp, false);
+        let mut chain = Chain::build(
+            &[
+                Op::Mono,
+                Op::Denoise,
+                Op::Aec,
+                Op::Gate {
+                    config: GateConfig::MANUAL,
+                },
+                Op::Resample {
+                    from: RateRef::Capture,
+                    to: RateRef::Session,
+                },
+            ],
+            &deps,
+            mono_capture(),
+            SESSION_RATE,
+        )
+        .unwrap();
+        let mut scratch = ChainScratch::default();
+        chain.set_gate_active(true);
+        chain.push_playback_reference(&loud(960));
+
+        let (blocks, status) = drive(&mut chain, &mut scratch, &chunk(CAPTURE_RATE, loud(960)));
+        assert_eq!(blocks.len(), 1, "门开着就放行当前块");
+        assert!(status.unwrap().active);
+
+        chain.on_disconnect();
+
+        assert_eq!(dsp.aec_resets.load(Ordering::SeqCst), 1, "AEC 的状态要清");
+        assert_eq!(dsp.denoise_resets.load(Ordering::SeqCst), 1);
+        assert_eq!(dsp.resample_resets.load(Ordering::SeqCst), 1);
+
+        // 若门也被清了，这里会掉进 preroll、一块都不出。
+        let (blocks, status) = drive(&mut chain, &mut scratch, &chunk(CAPTURE_RATE, loud(960)));
+        assert_eq!(blocks.len(), 1, "断线后门必须仍然开着");
+        assert!(
+            status.unwrap().active,
+            "断线后门必须仍然开着（状态也要照报）"
+        );
     }
 }

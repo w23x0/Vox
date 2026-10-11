@@ -9,3 +9,9 @@ license.workspace = true
 vox-core.workspace = true
 rubato.workspace = true
 nnnoiseless = "0.5.2"
+# 回声消除（WebRTC AEC3 的纯 Rust 移植）。`sonora` 只要它的
+# `three_band_filter_bank`（48 kHz 的 0–8k / 8–16k / 16–24k 三路带通抽取与重组），
+# `sonora-aec3` 是算法本体。两个都是纯 Rust、无 C 工具链、无 `[patch]`、无 `vendor/`
+# （S4-C 稿 §2.2 / §6.1；选型理由与实测见 §2.3 / §6）。
+sonora = "0.2"
+sonora-aec3 = "=0.2.0"

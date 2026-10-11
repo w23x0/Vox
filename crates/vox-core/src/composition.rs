@@ -172,6 +172,10 @@ pub enum Op {
     Mono,
     /// 降噪。`Listen` 现状不装（数字源本来就干净）。
     Denoise,
+    /// 回声消除。**无字段**：开关是"能力位 + 设置"两项（`soft_aec` 位 + `speak.aec`），
+    /// 别在清单里再放第三份；可调参数（时延基线 D0、滤波器档）等有板子、
+    /// 知道哪几个参数真有用再加，加在设置里，不动清单（S4-C 稿 §8.1 / R11）。
+    Aec,
     /// 音量阀门。字段就是 `GateConfig`。
     ///
     /// 配置放在 `config` 子对象下：`GateConfig` 自己有一个叫 `kind` 的字段，内联会和 tag 撞名。
@@ -189,6 +193,7 @@ impl Op {
         match self {
             Self::Mono => "mono",
             Self::Denoise => "denoise",
+            Self::Aec => "aec",
             Self::Gate { .. } => "gate",
             Self::Resample { .. } => "resample",
         }
@@ -411,8 +416,21 @@ impl Serialize for CompositionError {
 }
 
 impl Composition {
-    /// 规定顺序：`mono` → `denoise` → `gate` → `resample`。**缺项合法，换序不合法**。
-    pub const OP_ORDER: [&'static str; 4] = ["mono", "denoise", "gate", "resample"];
+    /// 规定顺序：`mono` → `denoise` → `aec` → `gate` → `resample`。**缺项合法，换序不合法**。
+    ///
+    /// **`aec` 为什么在 `gate` 之前**：`ActivationGate` 判开合看的是能量 / RMS。
+    /// AEC 若在门之后，残留的回声能量会**把门推开**——"没人说话时门被自己的回声打开"
+    /// → 上行发回去一整轮回声 → 云端把我们的译音又转回中文 → **我们翻译自己**。
+    /// 那正是 AEC 被装进来要消灭的 bug，放在门后面等于没装。反过来，AEC 在门之前
+    /// 可能吃掉开头几十毫秒的近端语音，但那段正好落在门的 `preroll_ms` 里、
+    /// 开门时会原样补回来：门后是**灾难性**的失效，门前是**可恢复**的。
+    /// （S4-C 稿 §3.1 推翻 S4-B §2.7 的落点，回归钉是 `chain.rs` 的
+    /// `the_gate_still_sees_a_clean_mic`。）
+    ///
+    /// 另外两条：AEC 在 `denoise` 之后（RNNoise 削掉噪声底之后回声是个更干净的信号，
+    /// 自适应滤波器收敛更快），在 `resample` 之前（它必须在**采集率**上做，换到
+    /// 16 k 会话率之后 48 k 宽带的声学尾就看不见了）。
+    pub const OP_ORDER: [&'static str; 5] = ["mono", "denoise", "aec", "gate", "resample"];
 
     /// 本机派生（§2.5.3 上下文①）：`SessionConfig` + **这台机器的事实** → 清单。
     ///
@@ -726,7 +744,7 @@ mod tests {
                 "Input",
                 vec!["mic", "process_loopback", "net_in", "host_feed"],
             ),
-            ("Op", vec!["mono", "denoise", "gate", "resample"]),
+            ("Op", vec!["mono", "denoise", "aec", "gate", "resample"]),
             (
                 "Output",
                 vec!["playback", "captions", "net_out", "host_sink"],
@@ -982,7 +1000,9 @@ mod tests {
         let ops: Vec<&str> = composition.ops.iter().map(Op::kind).collect();
         assert_eq!(
             ops,
-            Composition::OP_ORDER.to_vec(),
+            // `aec` 这一节要等 W5（`soft_aec` 位 + `settings.speak.aec`）才会进 Speak 的
+            // 清单；规定顺序里它排在 `denoise` 与 `gate` 之间（`Composition::OP_ORDER`）。
+            vec!["mono", "denoise", "gate", "resample"],
             "采集 → mono → denoise → gate → resample"
         );
 

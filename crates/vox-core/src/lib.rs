@@ -39,10 +39,10 @@ pub use hotkey::Hotkey;
 pub use latency::{LatencySnapshot, MetricSummary};
 pub use notice::Msg;
 pub use pipeline::{
-    CaptureFactory, DenoiseFactory, Deps, PipelineEngine, PlaybackFactory, ResampleFactory,
-    TransportFactory,
+    AecFactory, CaptureFactory, DenoiseFactory, Deps, PipelineEngine, PlaybackFactory,
+    ResampleFactory, TransportFactory,
 };
-pub use ports::{Denoise, HotkeyEvent, PortError, PortResult, Resample};
+pub use ports::{Aec, Denoise, HotkeyEvent, PortError, PortResult, Resample};
 pub use runtime::{PipelineCommand, PipelineControl, Runtime, SessionConfig, Snapshot};
 pub use settings::Settings;
 pub use subtitle::{Subtitles, Track};

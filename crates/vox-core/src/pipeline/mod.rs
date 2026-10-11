@@ -45,12 +45,12 @@ use crate::gate::{GateConfig, GateState};
 use crate::latency::LatencyTracker;
 use crate::notice::{key, Msg};
 use crate::ports::{
-    AudioChunk, CaptureSource, CaptureTarget, Denoise, PlaybackSink, PortError, PortResult,
+    Aec, AudioChunk, CaptureSource, CaptureTarget, Denoise, PlaybackSink, PortError, PortResult,
     Resample,
 };
 use crate::runtime::{PipelineCommand, PipelineControl, Runtime, SessionConfig, SubtitleUpdate};
 
-use chain::{Chain, ChainScratch, DenoiseSkip};
+use chain::{AecSkip, Chain, ChainScratch, DenoiseSkip};
 
 // 计量那一行是**公共 API 的一部分**（`Runtime::op_timings` 把它交给控制面），
 // 所以要从这里再往上抬一层，别逼调用方去摸私有的 `chain` 模块。
@@ -71,6 +71,12 @@ const GATE_THROTTLE_MS: u64 = 200;
 /// 降噪只在这个采样率下有效（RNNoise 的原生率）。对不上就不降噪。
 /// 判据在 `chain.rs::Chain::build` 里，报什么在 `Worker::report_denoise_degrade`。
 const DENOISE_RATE: u32 = 48_000;
+/// 软件回声消除支持的采集率。`sonora-aec3` 的公开块级面只驱得动 16 k 单频带与
+/// 48 k 三频带（2 频带的 QMF 分频器在父 crate 里是 `pub(crate)`，S4-C 稿 §6.1-S3）。
+///
+/// 判据在 `chain.rs::Chain::build`（不在这几个率里就 `AecSkip::Rate`），
+/// 实现自检用的是**同一份**常量（`vox_dsp::aec::SonoraAec::new`）——两份就会漂。
+pub const AEC_RATES: [u32; 2] = [16_000, 48_000];
 /// 一拍最多吃几条服务端消息，别让消息把音频处理饿死。
 const MAX_MESSAGES_PER_TICK: usize = 32;
 /// 一拍最多处理 4 个输入块，然后必须给下行消息机会，防止上行过载饿死字幕/译音。
@@ -91,6 +97,9 @@ pub type PlaybackFactory = Box<dyn Fn() -> Box<dyn PlaybackSink> + Send + Sync>;
 pub type DenoiseFactory = Box<dyn Fn() -> PortResult<Box<dyn Denoise>> + Send + Sync>;
 /// 重采样器工厂，参数是 (输入率, 输出率)。两个率相等时实现方应该给个直通的。
 pub type ResampleFactory = Box<dyn Fn(u32, u32) -> Box<dyn Resample> + Send + Sync>;
+/// 回声消除器工厂，参数是**采集率**。造不出来（采集率不在 `AEC_RATES` 里、分配失败）
+/// 就返回 `Err`，此时**降级为不消回声**，不让整条流水线挂掉。
+pub type AecFactory = Box<dyn Fn(u32) -> PortResult<Box<dyn Aec>> + Send + Sync>;
 
 /// 流水线要用的一整套平台能力。外壳启动时装好，之后只读。
 pub struct Deps {
@@ -98,6 +107,7 @@ pub struct Deps {
     pub capture: CaptureFactory,
     pub playback: PlaybackFactory,
     pub denoise: DenoiseFactory,
+    pub aec: AecFactory,
     pub resample: ResampleFactory,
 }
 
@@ -885,6 +895,8 @@ impl Worker {
         self.chain.set_gate_active(self.config.gate_active);
         // 降噪降级的那两句日志与那条通知由变体决定（两支路的可观察行为不一样）。
         self.report_denoise_degrade();
+        // 回声消除同理，两态的可观察行为也不一样（R10：口径逐字照抄降噪）。
+        self.report_aec_degrade();
 
         // 直通模式：把原声推给播放汇，源率就是采集率（外壳自己再换到设备率）。
         if self.plan.passthrough {
@@ -948,6 +960,34 @@ impl Worker {
                 tracing::warn!(error = %err, "降噪器起不来，这次先不降噪");
                 self.runtime
                     .notify(Notice::warning(Msg::new(key::DENOISE_DISABLED)).on(pipeline));
+            }
+        }
+    }
+
+    /// 回声消除没装上时把原因报出去。**口径逐字照抄 [`Self::report_denoise_degrade`]**
+    /// （S4-C 稿 R10：两态的区别只照抄，不发明第一套）：采集率不是 AEC 支持的
+    /// 16000 / 48000 只记一笔日志；工厂起不来要额外通知用户一句。
+    ///
+    /// 采集率那一支在产品上**走不到**：链上那个率由驱动协商（要 48 k），
+    /// 32 k / 44.1 k 是别的板子的事。留着它是为了让"这一档在这台机器上不存在"
+    /// 也有一句可查的话，而不是静默不消回声。
+    fn report_aec_degrade(&mut self) {
+        let pipeline = self.pipeline();
+        match self.chain.aec_skip() {
+            // 清单里压根没有 AEC 节，或者 AEC 节真的装上了：什么都不用说。
+            None => {}
+            Some(AecSkip::Rate(rate)) => {
+                tracing::warn!(
+                    rate = *rate,
+                    supported = ?AEC_RATES,
+                    "采集率不在回声消除支持的档位里，跳过回声消除"
+                );
+            }
+            // 造不出来只是少一层处理，别把整条流水线拖死。
+            Some(AecSkip::Factory(err)) => {
+                tracing::warn!(error = %err, "回声消除器起不来，这次先不消回声");
+                self.runtime
+                    .notify(Notice::warning(Msg::new(key::AEC_DISABLED)).on(pipeline));
             }
         }
     }
@@ -1415,6 +1455,10 @@ impl Worker {
             }
             ServerEvent::AudioDelta { pcm } => {
                 let samples = pcm16_to_float(&pcm);
+                // 外放的译音就是 AEC 的参考信号：在进播放汇**之前**抄一份给它
+                // （S4-C 稿 §5.1）。回听那一路（`monitor_sink`）**不抄**：它的输出
+                // 不进本机麦克风，不构成回声路径，抄它只会往参考里掺一段假的回声。
+                self.chain.push_playback_reference(&samples);
                 if let Some(sink) = self.sink.as_mut() {
                     sink.push(&samples);
                 }
@@ -1422,9 +1466,7 @@ impl Worker {
                     sink.push(&samples);
                 }
                 // 半双工：译音刚进播放汇 → 按"还要播多久"重新装满门的压制窗口。
-                // 紧跟两次 `push` 之后**量**才对得上"这一刻起还要播多久"。这一行也是
-                // S4-B §2.7 给 AEC 预留的参考信号口的同一个位置（AEC 落在两行 push
-                // 之前，见 S4-C 稿 §6 的最后一条）。
+                // 紧跟两次 `push` 之后**量**才对得上"这一刻起还要播多久"。
                 self.mark_playing();
                 let now = self.now();
                 if let Some(started) = self
@@ -2026,6 +2068,18 @@ pub(crate) mod tests {
         }
     }
 
+    /// 假回声消除：直通。夹具里的清单今天装不上 `Op::Aec`（W5 才接），
+    /// 所以它不会被叫到；真实现的验收在 `vox-dsp` 那边（T1–T4/T7/T13/T14）。
+    pub(crate) struct AecPassThrough;
+
+    impl Aec for AecPassThrough {
+        fn process(&mut self, capture: &[f32]) -> Vec<f32> {
+            capture.to_vec()
+        }
+        fn push_reference(&mut self, _samples: &[f32]) {}
+        fn reset(&mut self) {}
+    }
+
     /// 假重采样：按整数比抽点，长度确实会变，好验调用方没假设长度守恒。
     pub(crate) struct Decimate {
         step: usize,
@@ -2160,6 +2214,9 @@ pub(crate) mod tests {
                         Ok(Box::new(ProbeDenoise(Arc::clone(&builds), which)) as Box<dyn Denoise>)
                     })
                 },
+                // 这一档的清单今天装不上 `Op::Aec`（W5 才接），所以这个工厂不会
+                // 被叫到；探针也就没必要给它多加一格。
+                aec: Box::new(|_rate| Ok(Box::new(AecPassThrough) as Box<dyn Aec>)),
                 resample: {
                     let builds = Arc::clone(&builds);
                     Box::new(move |input, output| {
@@ -2378,6 +2435,10 @@ pub(crate) mod tests {
                         Ok(Box::new(DenoiseHandle(Arc::clone(&dsp))) as Box<dyn Denoise>)
                     })
                 },
+                // 回声消除：夹具里给一台**直通**的假件。今天没有任何现网清单会装上
+                // `Op::Aec`（那是 W5 的 `soft_aec` 位 + `settings.speak.aec`），
+                // 所以这个工厂不会被叫到——留着是为了把 `Deps` 补齐（RULES #5）。
+                aec: Box::new(|_rate| Ok(Box::new(AecPassThrough) as Box<dyn Aec>)),
                 // 48k → 16k 是三抽一，正好对上真实比例。
                 resample: Box::new(|input, output| {
                     let step = (input / output).max(1) as usize;
@@ -3140,6 +3201,166 @@ pub(crate) mod tests {
         );
         assert!((played[1] + 0.5).abs() < 0.01);
         rig.engine.shutdown();
+    }
+
+    /// F5：**产品路径上唯一那行接线**——`AudioDelta` 臂里
+    /// `self.chain.push_playback_reference(&samples);`——的两条约定：
+    /// ① AEC 节收到的参考就是 `pcm16_to_float(&pcm)` 那一段；② 它**早于** `sink.push`。
+    ///
+    /// 走**真路径**（不是直接调 chain）：手搭一份带 `Op::Aec` 的清单（W5 之后这一格
+    /// 由 `speak.rs` 自己装，今天测试手插、位置照 `Composition::OP_ORDER`）→
+    /// `Worker::new` + `boot()` → 从**传输层**灌一条 `AudioDelta` → `drain_messages`
+    /// （= `Worker::handle_server_event` 那条路）。
+    ///
+    /// 两条断言都靠**记录桩**（假 AEC 与假播放汇共用一份序号表）：AEC 收到参考时领一个
+    /// 号、播放汇被 push 时领一个号，比大小就是比先后。样本那一条不用锁：假 AEC 记
+    /// 「长度 + int16 量纲的整数校验和」，测试自己按同一条公式算一遍 `pcm16_to_float`。
+    #[test]
+    fn the_playback_reference_reaches_the_aec_stage_before_the_sink() {
+        /// 共用的事件表。**只用原子量**，省掉一把锁。
+        #[derive(Default)]
+        struct RefLog {
+            next: AtomicU64,
+            /// AEC 节收到参考的序号 / 样本数 / int16 量纲校验和。
+            aec_at: AtomicU64,
+            aec_len: AtomicU64,
+            aec_sum: std::sync::atomic::AtomicI64,
+            /// 播放汇被 `push` 的序号。
+            sink_at: AtomicU64,
+        }
+
+        impl RefLog {
+            fn new() -> Self {
+                Self {
+                    aec_at: AtomicU64::new(u64::MAX),
+                    sink_at: AtomicU64::new(u64::MAX),
+                    ..Self::default()
+                }
+            }
+
+            /// 领一个序号（谁先动手谁拿到小号）。
+            fn stamp(&self) -> u64 {
+                self.next.fetch_add(1, Ordering::SeqCst)
+            }
+        }
+
+        /// 假回声消除：记下"收到参考"这件事与那一段样本，本身直通。
+        struct LogAec(Arc<RefLog>);
+
+        impl Aec for LogAec {
+            fn process(&mut self, capture: &[f32]) -> Vec<f32> {
+                capture.to_vec()
+            }
+
+            fn push_reference(&mut self, samples: &[f32]) {
+                let at = self.0.stamp();
+                let sum: i64 = samples.iter().map(|x| (x * 32768.0).round() as i64).sum();
+                self.0.aec_at.store(at, Ordering::SeqCst);
+                self.0.aec_len.store(samples.len() as u64, Ordering::SeqCst);
+                self.0.aec_sum.store(sum, Ordering::SeqCst);
+            }
+
+            fn reset(&mut self) {}
+        }
+
+        /// 假播放汇：记下"被 push"这件事。
+        struct LogSink(Arc<RefLog>);
+
+        impl PlaybackSink for LogSink {
+            fn open(&mut self, _device: Option<&str>, _source_rate: u32) -> PortResult<u32> {
+                Ok(48_000)
+            }
+
+            fn push(&mut self, _samples: &[f32]) {
+                let at = self.0.stamp();
+                self.0.sink_at.store(at, Ordering::SeqCst);
+            }
+
+            fn flush(&mut self) {}
+            fn close(&mut self) {}
+        }
+
+        let log = Arc::new(RefLog::new());
+        let clock = Arc::new(TestClock::new());
+        let runtime = Runtime::new(Settings::default(), Arc::clone(&clock) as Arc<dyn Clock>);
+        runtime.set_host_facts(HostFacts::all_wired(HostKind::Windows));
+        runtime.set_secret_store(Arc::new(MemoryStore::default()));
+        runtime.set_api_key("sk-test");
+
+        let wire = Arc::new(Wire::default());
+        let mic = Arc::new(Mic::new(48_000));
+        let dsp = Arc::new(Dsp::default());
+        let deps = Deps {
+            transport: {
+                let wire = Arc::clone(&wire);
+                Box::new(move || {
+                    let inbox = wire.open_inbox();
+                    Box::new(WireHandle(Arc::clone(&wire), inbox)) as Box<dyn Transport>
+                })
+            },
+            capture: {
+                let mic = Arc::clone(&mic);
+                Box::new(move || Box::new(MicHandle(Arc::clone(&mic))) as Box<dyn CaptureSource>)
+            },
+            playback: {
+                let log = Arc::clone(&log);
+                Box::new(move || Box::new(LogSink(Arc::clone(&log))) as Box<dyn PlaybackSink>)
+            },
+            denoise: {
+                let dsp = Arc::clone(&dsp);
+                Box::new(move || Ok(Box::new(DenoiseHandle(Arc::clone(&dsp))) as Box<dyn Denoise>))
+            },
+            aec: {
+                let log = Arc::clone(&log);
+                Box::new(move |_rate| Ok(Box::new(LogAec(Arc::clone(&log))) as Box<dyn Aec>))
+            },
+            resample: Box::new(|input, output| {
+                Box::new(Decimate {
+                    step: (input / output).max(1) as usize,
+                }) as Box<dyn Resample>
+            }),
+        };
+
+        let config = speak_config();
+        let mut composition =
+            Composition::of(&config, &HostFacts::all_wired(HostKind::Windows)).unwrap();
+        // `aec` 在 `denoise` 之后、`gate` 之前（`Composition::OP_ORDER` 的第 3 格）。
+        composition.ops.insert(2, Op::Aec);
+        composition.validate().expect("插了这一格仍然合法");
+        let plan = Plan::from(&composition).expect("清单该派得出作业单");
+
+        let inbox = Arc::new(Inbox::default());
+        let mut worker = Worker::new(runtime, Arc::new(deps), inbox, config, plan);
+        worker.boot().expect("这一档该能建起来");
+
+        // 灌一条 AudioDelta（走传输层 → `drain_messages` → `handle_server_event`）。
+        let pcm: Vec<i16> = (0..480).map(|i| ((i * 37) % 2000) as i16 - 1000).collect();
+        wire.push_message(audio_delta(&pcm));
+        assert!(worker.drain_messages(0), "这一拍该收到那条消息");
+
+        let aec_at = log.aec_at.load(Ordering::SeqCst);
+        let sink_at = log.sink_at.load(Ordering::SeqCst);
+        assert_ne!(
+            aec_at,
+            u64::MAX,
+            "AEC 节必须收到参考——`AudioDelta` 那一行接线就是它唯一的来源"
+        );
+        assert_ne!(sink_at, u64::MAX, "播放汇该收到这段译音");
+        assert!(
+            aec_at < sink_at,
+            "参考必须在 `sink.push` **之前**送（§5.1）：aec={aec_at} sink={sink_at}"
+        );
+
+        // ① 送的就是 `pcm16_to_float(&pcm)` 那一段：长度 + int16 量纲校验和都要对。
+        let bytes: Vec<u8> = pcm.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let samples = pcm16_to_float(&bytes);
+        assert_eq!(log.aec_len.load(Ordering::SeqCst) as usize, samples.len());
+        let want: i64 = samples.iter().map(|x| (x * 32768.0).round() as i64).sum();
+        assert_eq!(
+            log.aec_sum.load(Ordering::SeqCst),
+            want,
+            "送进 AEC 的参考必须逐样本等于 `pcm16_to_float(&pcm)`"
+        );
     }
 
     #[test]

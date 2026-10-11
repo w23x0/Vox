@@ -652,7 +652,7 @@ fn the_composition_cell_is_generated_from_the_manifest_type() {
             "Input",
             vec!["mic", "process_loopback", "net_in", "host_feed"],
         ),
-        ("Op", vec!["mono", "denoise", "gate", "resample"]),
+        ("Op", vec!["mono", "denoise", "aec", "gate", "resample"]),
         (
             "Output",
             vec!["playback", "captions", "net_out", "host_sink"],

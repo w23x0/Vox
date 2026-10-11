@@ -181,6 +181,7 @@ declare_keys! {
     MONITOR_FAILED = "notice.monitorFailed",
     TRANSLATION_OUTPUT_FAILED = "notice.translationOutputFailed",
     DENOISE_DISABLED = "notice.denoiseDisabled",
+    AEC_DISABLED = "notice.aecDisabled",
     SERVER_RATE_LIMITED = "notice.server.rateLimited",
     SERVER_QUOTA_EXHAUSTED = "notice.server.quotaExhausted",
     SERVER_MODEL_UNAVAILABLE = "notice.server.modelUnavailable",

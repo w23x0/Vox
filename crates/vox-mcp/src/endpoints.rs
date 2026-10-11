@@ -1096,6 +1096,7 @@ fn has_op(composition: &Composition, wanted: &str) -> bool {
     composition.ops.iter().any(|op| match op {
         Op::Mono => wanted == "mono",
         Op::Denoise => wanted == "denoise",
+        Op::Aec => wanted == "aec",
         Op::Gate { .. } => wanted == "gate",
         Op::Resample { .. } => wanted == "resample",
     })

@@ -71,6 +71,9 @@ impl HostPorts {
             capture: self.capture,
             playback: self.playback,
             denoise: vox_dsp::ports::denoise_factory(),
+            // 回声消除与降噪一样来自 `vox-dsp`（`sonora-aec3` 的那一层在那边），
+            // 入口对它没有发言权。
+            aec: vox_dsp::ports::aec_factory(),
             resample: self.resample,
         }
     }

@@ -111,6 +111,11 @@
       "en": "Noise suppression failed to start and is off for this session",
       "ja": "ノイズ抑制を開始できなかったため、今回は無効にしました"
     },
+    "notice.aecDisabled": {
+      "zh": "回声消除启动失败，本次已关闭",
+      "en": "Echo cancellation failed to start and is off for this session",
+      "ja": "エコーキャンセルを開始できなかったため、今回は無効にしました"
+    },
     "notice.server.rateLimited": {
       "zh": "模型服务请求过快或项目额度暂时耗尽，请稍后再试",
       "en": "The model service is rate-limited or the project quota is temporarily used up. Try again later",

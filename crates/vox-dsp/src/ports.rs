@@ -7,9 +7,10 @@
 //! 两个工厂因此也不在装配层里了：桌面（`app/src-tauri`）与无屏（`crates/vox-headless`）
 //! 以前各留一份同形的适配器，现在共用本文件这一份。
 
-use vox_core::pipeline::{DenoiseFactory, ResampleFactory};
-use vox_core::ports::{Denoise, PortResult, Resample};
+use vox_core::pipeline::{AecFactory, DenoiseFactory, ResampleFactory};
+use vox_core::ports::{Aec, Denoise, PortResult, Resample};
 
+use crate::aec::SonoraAec;
 use crate::{Denoiser, Resampler};
 
 impl Denoise for Denoiser {
@@ -44,6 +45,15 @@ pub fn denoise_factory() -> DenoiseFactory {
 /// 重采样工厂。同率时 `Resampler` 内部零开销透传。
 pub fn resample_factory() -> ResampleFactory {
     Box::new(|from, to| Box::new(Resampler::new(from, to)))
+}
+
+/// 回声消除工厂，参数是**采集率**。造不出来（采集率不是 16000 / 48000、
+/// 或者分配失败）返回 `Err`，此时链上只是**不消回声**，不让整条流水线挂掉。
+///
+/// 与降噪同一条：这一节由 `vox-dsp` 直接提供，入口对它没有发言权
+/// （`vox_host::entry::HostPorts::deps` 里与 `denoise_factory()` 并排）。
+pub fn aec_factory() -> AecFactory {
+    Box::new(|rate| -> PortResult<Box<dyn Aec>> { Ok(Box::new(SonoraAec::new(rate)?)) })
 }
 
 /// 便宜档工厂：**只在升采样方向**给线性插值，其余情况给 sinc。
@@ -88,5 +98,27 @@ mod tests {
     fn resample_same_rate_passes_through() {
         let mut r = resample_factory()(16_000, 16_000);
         assert_eq!(r.process(&vec![0.5f32; 320]).len(), 320);
+    }
+
+    /// 回声消除工厂：支持的采集率建得出来、20 ms 一拍的输入出满 20 ms；
+    /// 不支持的率**直接报错**（链上那一档由 `Chain::build` 降级成 `AecSkip::Rate`，
+    /// 两条判据用的是同一份 `AEC_RATES`）。
+    #[test]
+    fn aec_adapter_builds_and_forwards() {
+        let mut aec = aec_factory()(48_000).expect("48 kHz 要能建起来");
+        aec.push_reference(&vec![0.0f32; 20 * 24]);
+        let out = aec.process(&vec![0.0f32; 20 * 48]);
+        assert_eq!(out.len(), 20 * 48, "20 ms 一拍的输入该出满 20 ms");
+        aec.reset();
+
+        let err = match aec_factory()(44_100) {
+            Ok(_) => panic!("44.1 kHz 不该建得出来"),
+            Err(err) => err,
+        };
+        assert!(
+            err.message.contains("16000") && err.message.contains("44"),
+            "错误要说清支持的档与收到的率：{}",
+            err.message
+        );
     }
 }
