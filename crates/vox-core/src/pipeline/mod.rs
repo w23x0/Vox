@@ -1909,6 +1909,18 @@ pub(crate) mod tests {
         }
     }
 
+    /// 传输层的收件箱是不是都被掏空了。围栏（[`Rig::feed`] / [`ProbeRig::feed`]）
+    /// 拿它当"排给这条会话的服务端消息已经进了 `handle_message`"的一半判据。
+    ///
+    /// 看的是**每一条**登记过的连接，不是只看最新那条：问的是"排出去的消息还有没有
+    /// 没被处理的"，重连前那条连接上剩下的消息同样算数。
+    fn wire_is_quiet(wire: &Wire) -> bool {
+        wire.inboxes
+            .lock()
+            .iter()
+            .all(|inbox| inbox.lock().is_empty())
+    }
+
     /// `Wire` 的一个把手。工厂每次给一个新的把手：账是共享的，收件箱是自己的。
     pub(crate) struct WireHandle(Arc<Wire>, WireInbox);
 
@@ -2268,8 +2280,8 @@ pub(crate) mod tests {
             panic!("等超时了");
         }
 
-        /// 灌一块音频并等它**走完全程**（与 `Rig::feed` 同一条围栏：先等命令被
-        /// 消化掉，再等处理计数涨）。
+        /// 灌一块音频并等它**走完全程**（与 [`Rig::feed`] 同一条围栏：先等命令被
+        /// 消化掉，再等传输层静默，最后等处理计数涨）。
         fn feed(&self, samples: Vec<f32>) {
             let inbox = self
                 .engine
@@ -2280,6 +2292,7 @@ pub(crate) mod tests {
                 .map(|handle| Arc::clone(&handle.inbox))
                 .expect("得先起会话");
             self.wait_until(|| inbox.state.lock().notes.is_empty());
+            self.wait_until(|| wire_is_quiet(&self.wire));
             let before = inbox.counters();
             self.mic.emit(samples);
             self.wait_until(|| {
@@ -2514,10 +2527,26 @@ pub(crate) mod tests {
             panic!("等超时了");
         }
 
-        /// 灌一块音频并等它**走完全程**。
+        /// 灌一块音频并等它**走完全程**——上行（这块音频被处理完）与下行（排给
+        /// 这条会话的服务端消息被 `handle_message` 吃完）都盖住。
         ///
-        /// 等的是"处理计数涨了"，不是"队列空了"——队列空只说明块被取走了，
+        /// 上行等的是"处理计数涨了"，不是"输入队列空了"——队列空只说明块被取走了，
         /// 处理可能还没跑完，那样断言会抢在结果前面。
+        ///
+        /// 下行必须**两步**才盖得住，少一步都是骰子：
+        ///
+        /// 1. 先等 `Wire` 的收件箱全空。只等处理计数的话，下行的路根本不在围栏里：
+        ///    一拍的顺序是 `take_audio`（涨计数）**在前**、`drain_messages` 在后，
+        ///    等计数的那一方可以在 drain 之前就返回，于是服务端那批消息
+        ///    （`audio_delta` → `sink.push`、字幕、用量）整批还躺在收件箱里，
+        ///    `snapshot_play` 就把轨迹定型了；`shutdown` 的停止旗一竖，剩下的
+        ///    消息连 `handle_message` 都进不去。平时这个窗口是微秒级、几乎撞不上，
+        ///    负载一起来就会被真撞上（48 个 `yes` 连跑：22 次里红 2 次，~9%；
+        ///    签名一律是 `play pushed 0 cbf29ce484222325`——FNV-1a 空串，
+        ///    播放汇一个样本都没收到）。
+        /// 2. 收件箱空之后**再灌这块音频**、等计数涨。空是在 `recv` 弹出最后一条
+        ///    那一刻出现的，弹出与处理之间还能被抢占；而这次计数上涨只能来自
+        ///    "收件箱空之后的那一拍"，也就是那一拍的 `drain_messages` 一定跑完了。
         pub(crate) fn feed(&self, samples: Vec<f32>) {
             let inbox = self.inbox().expect("得先起会话");
             // 先等命令被消化掉再灌音频。
@@ -2526,6 +2555,8 @@ pub(crate) mod tests {
             // take_notes 正在啃音频，刚投的命令就得等下一拍——这块音频会抢在
             // 命令生效前被处理掉。等到命令队列空了，说明它已经被取走并当场生效了。
             self.wait_until(|| inbox.state.lock().notes.is_empty());
+            // 再等传输层静默（见上），然后才灌这块音频。
+            self.wait_until(|| wire_is_quiet(&self.wire));
             let before = inbox.counters();
             self.mic.emit(samples);
             self.wait_until(|| {
