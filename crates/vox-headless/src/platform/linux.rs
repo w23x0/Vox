@@ -21,19 +21,26 @@ pub fn host_kind() -> HostKind {
     HostKind::LinuxHeadless
 }
 
-/// 音频三件套。**连接本身不在这儿探**：`PipeWire 在不在`是运行期事实（[`pipewire_available`]），
-/// 起流那一刻才知道采不采得到声；这里只把三个工厂装好——跟桌面 Linux 侧同口径
+/// 音频几件套。**连接本身不在这儿探**：`PipeWire 在不在`是运行期事实（[`pipewire_available`]），
+/// 起流那一刻才知道采不采得到声；这里只把几个工厂装好——跟桌面 Linux 侧同口径
 /// （那边也只在 `startup_notes` 里记一条提示，不把应用拦住）。
+///
+/// **重采样档在这儿定下来**：读一次 `VOX_RESAMPLE_QUALITY`（缺省便宜档），
+/// 播放侧内部那一份与上行那一份用同一档；非法值在这里就报错退出，不静默回落。
 pub fn platform() -> PortResult<Platform> {
+    let quality = super::resample_quality_from_env()?;
     Ok(Platform {
         // 采集：麦克风（无屏档没有"抓某个程序的声音"这一格，`program_tap` 在上限之外）。
         capture: Box::new(|| Box::new(vox_audio_linux::LinuxCapture::new())),
         // 播放：请求设备率交给 PipeWire 在图里转，重采样器用芯那一份；
-        // 与桌面 Linux 侧 `platform/linux/audio.rs` 逐行同形。
-        playback: Box::new(|| {
-            let resample = vox_dsp::ports::resample_factory();
+        // 与桌面 Linux 侧 `platform/linux/audio.rs` 逐行同形，差别只有档位。
+        playback: Box::new(move || {
+            let resample = super::resample_factory_for(quality);
             Box::new(vox_audio_linux::LinuxPlayback::new(resample))
         }),
+        // 上行重采样：与上面播放侧同一档（同一个决定，不读第二遍环境变量）。
+        resample: super::resample_factory_for(quality),
+        quality,
         // 设备目录：PipeWire 图里数节点。无状态，全进程共用一个。
         registry: Arc::new(vox_audio_linux::LinuxDeviceRegistry::new()),
     })

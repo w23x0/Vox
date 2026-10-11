@@ -241,6 +241,8 @@ fn assemble(
         secret: secret_backend(paths.dir.join(DESKTOP_SECRET_FILE)),
         capture: platform::capture_factory(),
         playback: platform::playback_factory(),
+        // 上行重采样：桌面档**按 sinc 出厂校验**，不看 `VOX_RESAMPLE_QUALITY`（那是无屏档的口子）。
+        resample: vox_dsp::ports::resample_factory(),
         registry: platform::registry(),
         startup_notes: platform::startup_notes,
     };

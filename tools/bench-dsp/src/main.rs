@@ -5,12 +5,17 @@
 //!
 //! 口径：合成 30 秒确定性"语音样噪声"，按真实路径的块大小流式喂进去，
 //! 用 std::time::Instant 计时，重复 5 次取中位数。报告 "ms每1秒音频" 与 "占单核百分比"。
+//!
+//! 末尾还有一段**越界守卫自检**：对两条降采样路径（48k→16k、44.1k→16k）扫块长，
+//! 确认对照 `Linear` 的收尾搬运不会越界（S4-C 稿 §3.2.2）。炸了就以退出码 1 收场——
+//! 这一段的用处是把"越界条件是 step > 2 而不是非整数步长"这句话钉成可执行的事实。
 
 use std::hint::black_box;
 use std::time::Instant;
 
 use vox_core::ports::AudioChunk;
 use vox_dsp::chunk::Blocker;
+use vox_dsp::ports::cheap_resample_factory;
 use vox_dsp::ring::DropRing;
 use vox_dsp::{Denoiser, Resampler};
 
@@ -131,7 +136,11 @@ impl Linear {
             out.push(a + (b - a) * frac);
             self.pos += self.step;
         }
-        let done = self.pos as usize;
+        // 收尾：`step > 2` 时一步就能把 `pos` 跨出缓冲之外（`pos >= len + 1`），
+        // 那样 `done > buf.len()`，`copy_within(done.., 0)` 直接越界 panic。
+        // 夹到长度再搬——`done == len` 是合法的空区间。降采样倍数 > 2 的路径才会有这一步；
+        // 48k→24k / 24k→48k / 16k→48k 这些 `step <= 2` 的路径结构上碰不到。
+        let done = (self.pos as usize).min(self.buf.len());
         self.buf.copy_within(done.., 0);
         self.buf.truncate(self.buf.len() - done);
         self.pos -= done as f64;
@@ -153,6 +162,45 @@ fn chunks(interleaved: &[f32], ch: u16, per_block: usize, rate: u32) -> Vec<Audi
         .collect()
 }
 
+/// 越界守卫的**可执行证据**：把 S4-C 稿 §3.2.2 那次 `/tmp` 实验钉进仓库。
+///
+/// 对照 `Linear::process` 的收尾搬运在 `step > 2` 且 `pos` 落进 `[len+1-step, len-1)`
+/// 时会越界（修守卫之前 `48k→16k` 的 320 块长必炸）。这里对两条降采样路径扫一遍块长，
+/// 每个块长连喂 128 块；**一个 panic 都不许有**。返回炸过的块长数量。
+///
+/// 扫的这两条正是 §3.2.2 表里炸得最多的两条（48k→16k 的 467/701、44.1k→16k 的 693/701）。
+fn linear_guard_sweep() -> usize {
+    // 炸的时候把 panic 原文吞掉：这里要的是"炸没炸"，不是 1400 行 backtrace。
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let mut panicked = 0usize;
+    for (in_rate, out_rate) in [(48_000u32, 16_000u32), (44_100, 16_000)] {
+        let step = in_rate as f64 / out_rate as f64;
+        let mut bad = 0usize;
+        for len in 300..=1000usize {
+            let block: Vec<f32> = (0..len).map(|i| ((i as f32) * 0.01).sin()).collect();
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut lin = Linear::new(in_rate, out_rate);
+                for _ in 0..128 {
+                    black_box(lin.process(&block));
+                }
+            }))
+            .is_err();
+            if caught {
+                bad += 1;
+            }
+        }
+        println!(
+            "越界守卫自检 {:.1}k→{:.1}k：step = {step:.5}，扫块长 300..=1000（701 个，每个喂 128 块）→ panic {bad} 次",
+            in_rate as f64 / 1000.0,
+            out_rate as f64 / 1000.0
+        );
+        panicked += bad;
+    }
+    std::panic::set_hook(previous_hook);
+    panicked
+}
+
 fn main() {
     let t_start = Instant::now();
 
@@ -161,6 +209,7 @@ fn main() {
     let mono48 = synth(48_000, AUDIO_SECS); // 降噪 / 48k→16k 的输入
     let mono16 = synth(16_000, AUDIO_SECS); // 16k→48k 的输入
     let mono24 = synth(24_000, AUDIO_SECS); // 播放侧真路径：TTS 24k→设备 48k
+    let mono44 = synth(44_100, AUDIO_SECS); // 44.1k→16k：越界守卫的可执行证据（§3.2.2）
 
     let c48_stereo = chunks(&stereo48, 2, 1920, 48_000); // 20 ms @48k 立体声
     let c48_mono: Vec<AudioChunk> = mono48
@@ -174,6 +223,7 @@ fn main() {
     let b48: Vec<&[f32]> = mono48.chunks(960).collect(); // 20 ms @48k 单声道
     let b16: Vec<&[f32]> = mono16.chunks(320).collect(); // 20 ms @16k 单声道
     let b24: Vec<&[f32]> = mono24.chunks(480).collect(); // 20 ms @24k 单声道
+    let b44: Vec<&[f32]> = mono44.chunks(441).collect(); // 10 ms @44.1k 单声道
 
     let mut rows: Vec<Row> = Vec::new();
 
@@ -260,6 +310,38 @@ fn main() {
             black_box(n);
         }));
 
+    // 4b) 44.1k→16k 的对照：`step = 2.75625 > 2`，是越界守卫（§3.2.2）的可执行证据。
+    //     修守卫之前 701 个块长里 693 个会炸；今天这一行必须跑得出来。
+    rows.push(measure("线性插值 44.1k→16k（对照）", AUDIO_SECS as f64,
+        || Linear::new(44_100, 16_000), |r| {
+            let mut n = 0usize;
+            for b in &b44 {
+                n += black_box(r.process(b)).len();
+            }
+            black_box(n);
+        }));
+
+    // 4c) 便宜档：**芯里真的那一档**（`vox_dsp::ports::cheap_resample_factory`），不是这里的对照实现。
+    //     升采样方向它给线性插值，所以与上面两行同量级；降采样方向它会落回 sinc（见 §3.3）。
+    rows.push(measure("线性插值 24k→48k（便宜档）", AUDIO_SECS as f64,
+        || cheap_resample_factory()(24_000, 48_000), |r| {
+            let mut n = 0usize;
+            for b in &b24 {
+                n += black_box(r.process(b)).len();
+            }
+            n += black_box(r.flush()).len();
+            black_box(n);
+        }));
+    rows.push(measure("线性插值 16k→48k（便宜档）", AUDIO_SECS as f64,
+        || cheap_resample_factory()(16_000, 48_000), |r| {
+            let mut n = 0usize;
+            for b in &b16 {
+                n += black_box(r.process(b)).len();
+            }
+            n += black_box(r.flush()).len();
+            black_box(n);
+        }));
+
     // 5) chunker：Blocker(48k, 2ch, 20ms) 吃 PipeWire 1024 帧（2048 样本）的量子
     rows.push(measure("Blocker 切块 (48k/2ch/20ms, 喂 2048 样本)", AUDIO_SECS as f64,
         || Blocker::new(48_000, 2, 20), |blk| {
@@ -319,10 +401,18 @@ fn main() {
         let m1: usize = b48.iter().map(|b| l1.process(b).len()).sum();
         let mut l2 = Linear::new(16_000, 48_000);
         let m2: usize = b16.iter().map(|b| l2.process(b).len()).sum();
+        let mut l3 = Linear::new(44_100, 16_000);
+        let m3: usize = b44.iter().map(|b| l3.process(b).len()).sum();
+        let mut c1 = cheap_resample_factory()(24_000, 48_000);
+        let n3: usize = b24.iter().map(|b| c1.process(b).len()).sum::<usize>() + c1.flush().len();
+        let mut c2 = cheap_resample_factory()(16_000, 48_000);
+        let n4: usize = b16.iter().map(|b| c2.process(b).len()).sum::<usize>() + c2.flush().len();
         println!(
-            "自检 产出样本数（30 s 输入）：rubato 48k→16k = {n1}（期望 ~{}），线性 48k→16k = {m1}；rubato 16k→48k = {n2}（期望 ~{}），线性 16k→48k = {m2}\n",
+            "自检 产出样本数（30 s 输入）：rubato 48k→16k = {n1}（期望 ~{}），线性 48k→16k = {m1}；rubato 16k→48k = {n2}（期望 ~{}），线性 16k→48k = {m2}；线性 44.1k→16k = {m3}（期望 ~{}）；便宜档 24k→48k = {n3}、16k→48k = {n4}（两条都该 ~{}）\n",
             16_000 * AUDIO_SECS,
-            48_000 * AUDIO_SECS
+            48_000 * AUDIO_SECS,
+            16_000 * AUDIO_SECS,
+            48_000 * AUDIO_SECS,
         );
 
         // 工作量核对：确认每个算子真的处理了预期样本数（防"空跑得低分"）。
@@ -396,5 +486,18 @@ fn main() {
     let playback = pick("rubato sinc 24k→48k") + pick("duplicate_mono") + pick("DropRing");
     println!("\n采集路径（下混 + 降噪 + 48k→16k + 切块）合计: {capture:.3} ms / 1s 音频 = 单核 {:.3}%", capture / 10.0);
     println!("播放路径（24k→48k + 铺声道 + 环缓冲读写）合计: {playback:.3} ms / 1s 音频 = 单核 {:.3}%", playback / 10.0);
+
+    // --- 越界守卫自检（S4-C R3：把 §3.2.2 那次 /tmp 实验钉成可执行的回归钉子）---
+    println!("\n## 越界守卫自检（§3.2.2）\n");
+    let panicked = linear_guard_sweep();
+    if panicked > 0 {
+        eprintln!(
+            "\n越界守卫自检失败：{panicked} 个块长在 `Linear::process` 的收尾搬运上炸了 —— \
+             `done` 没有夹到缓冲长度（step > 2 时会越界）。"
+        );
+        std::process::exit(1);
+    }
+    println!("越界守卫自检通过：两条降采样路径的全部块长都跑得出来，一个 panic 都没有。");
+
     println!("\n总耗时 {:.2} s（含合成输入与预热）", t_start.elapsed().as_secs_f64());
 }

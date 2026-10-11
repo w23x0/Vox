@@ -46,6 +46,18 @@ pub fn resample_factory() -> ResampleFactory {
     Box::new(|from, to| Box::new(Resampler::new(from, to)))
 }
 
+/// 便宜档工厂：**只在升采样方向**给线性插值，其余情况给 sinc。
+///
+/// 落回 sinc **不是降级**，是"这一档在这条路上不存在"（降采样需要抗混叠，见 S4-C 稿 §3.3）。
+/// 到底是哪一档，由装这个工厂的入口在启动时记一行日志说清楚（vox-dsp 不依赖 tracing，
+/// 所以日志在 `vox-headless` / `app/src-tauri` 那一头打）。
+pub fn cheap_resample_factory() -> ResampleFactory {
+    Box::new(|from, to| match Resampler::cheap_upsampler(from, to) {
+        Some(resampler) => Box::new(resampler) as Box<dyn Resample>,
+        None => Box::new(Resampler::new(from, to)) as Box<dyn Resample>,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

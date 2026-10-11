@@ -14,7 +14,9 @@ use std::sync::Arc;
 
 use vox_core::capability::HostFacts;
 use vox_core::composition::HostKind;
-use vox_core::pipeline::{CaptureFactory, Deps, PipelineEngine, PlaybackFactory, TransportFactory};
+use vox_core::pipeline::{
+    CaptureFactory, Deps, PipelineEngine, PlaybackFactory, ResampleFactory, TransportFactory,
+};
 use vox_core::ports::{Clock, DeviceRegistry};
 use vox_core::runtime::{PipelineControl, Runtime};
 
@@ -37,19 +39,29 @@ pub struct HostPorts {
     pub clock: Arc<dyn Clock>,
     /// 密钥后端。见 [`SecretBackend`]。
     pub secret: SecretBackend,
-    /// 采集 / 播放 / 设备目录三个工厂。**由入口建好后按值交进来**
+    /// 采集 / 播放 / **重采样** / 设备目录四样。**由入口建好后按值交进来**
     /// （`CaptureFactory` 等是 `Box<dyn Fn…>`，不是 `Clone`）。
     pub capture: CaptureFactory,
     pub playback: PlaybackFactory,
+    /// **上行重采样工厂**。桌面传 `vox_dsp::ports::resample_factory()`（逐字等于引入这一格之前），
+    /// 无屏传便宜档（`cheap_resample_factory()`，或按 `VOX_RESAMPLE_QUALITY` 选出来的那一档）。
+    ///
+    /// 为什么是字段而不是 [`HostPorts::deps`] 的一个参数：`deps(self, transport)` **消费掉**
+    /// `self`，而 `Core::assemble(&ports, …)` 之后还要拿同一份 `ports` 装引擎。加参数就得把
+    /// `assemble` 的签名一路改下去——那是**两份装配点都要动**的形状。做成字段则是
+    /// **每个装配点自己决定**，与 `capture` / `playback` 两个工厂同一个形状
+    /// （`docs/plans/S4-C-GATE-RESAMPLE.md` §3.4）。
+    pub resample: ResampleFactory,
     pub registry: Arc<dyn DeviceRegistry>,
     /// 启动期要告诉用户的话（进 `Notice` / journal，不弹窗）。
     pub startup_notes: fn() -> Vec<vox_core::Msg>,
 }
 
 impl HostPorts {
-    /// 引擎要的五个工厂。**降噪 / 重采样两个不来自入口**：它们在 S4-A 之后由 `vox-dsp`
-    /// 直接提供（`vox_dsp::ports::{denoise_factory, resample_factory}`），入口对这两节
-    /// 没有发言权——两份同形的 `dsp.rs` 抽走之后，链上这两节只剩这一个出处。
+    /// 引擎要的五个工厂。**降噪不来自入口**：它在 S4-A 之后由 `vox-dsp` 直接提供
+    /// （`vox_dsp::ports::denoise_factory`），入口对那一节没有发言权。
+    /// **重采样来自入口**（[`HostPorts::resample`]）：它的档位是"这一档构建"的事实，
+    /// 只有装端口的人知道。
     ///
     /// 消费掉 `self`（四个工厂是 `Box<dyn Fn…>`，不是 `Clone`），所以这一份**建一次、
     /// 用一次**：[`Core::assemble`](crate::Core::assemble) 只读它，装引擎才是把它吃掉的那一步。
@@ -59,7 +71,7 @@ impl HostPorts {
             capture: self.capture,
             playback: self.playback,
             denoise: vox_dsp::ports::denoise_factory(),
-            resample: vox_dsp::ports::resample_factory(),
+            resample: self.resample,
         }
     }
 

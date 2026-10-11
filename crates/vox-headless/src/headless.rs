@@ -91,11 +91,21 @@ pub struct Assembly {
 
 /// 这一档的"本机有什么"，一次列清。
 ///
-/// 装配读它建账本、装引擎读它拿三个音频工厂——**入口参数只有这一处**（S4-A W5）。
-/// 音频三件套来自 [`platform::platform`]：**连接本身不在这儿探**（`PipeWire 在不在`是运行期
-/// 事实，见 [`Probe`]），起流那一刻才知道采不采得到声，这里只把三个工厂装好。
+/// 装配读它建账本、装引擎读它拿那几个音频工厂——**入口参数只有这一处**（S4-A W5）。
+/// 音频几件套来自 [`platform::platform`]：**连接本身不在这儿探**（`PipeWire 在不在`是运行期
+/// 事实，见 [`Probe`]），起流那一刻才知道采不采得到声，这里只把几个工厂装好。
+///
+/// **重采样的档位就定在这里**：`platform()` 读一次 [`platform::RESAMPLE_QUALITY_ENV`]
+/// （缺省便宜档），上行这一半取同一个决定，并把实际档打进启动日志。
 fn host_ports(paths: &Paths) -> Result<HostPorts> {
     let platform = platform::platform()?;
+    // 缺省/实际档都记一行：现场 A/B 时看日志就知道这一次跑的是哪一档（§3.4）。
+    // 正文**中性**：实际档在 `quality` 字段里；正文按档分支写两套文案 = 第二份真源。
+    tracing::info!(
+        env = platform::RESAMPLE_QUALITY_ENV,
+        quality = ?platform.quality,
+        "重采样档已选定（由这个环境变量决定，不设就是缺省档）"
+    );
     Ok(HostPorts {
         kind: platform::host_kind,
         facts: platform::host_facts,
@@ -108,6 +118,7 @@ fn host_ports(paths: &Paths) -> Result<HostPorts> {
         },
         capture: platform.capture,
         playback: platform.playback,
+        resample: platform.resample,
         registry: platform.registry,
         startup_notes: platform::startup_notes,
     })
