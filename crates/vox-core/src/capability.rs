@@ -15,7 +15,7 @@
 //! 1. **上限是硬的**：事实只能在档位上限**里面**关。`off` 里出现上限之外的位 = 外壳 bug
 //!    （[`HostFacts::excess_off_bits`]），不是"新能力"——这样"谎报能力"在结构上就被封住。
 //! 2. **位为 `true` 必须有定义者**：由"真的把这条路打开的那段代码"负责（§2.5.4）。没有定义者的位
-//!    一律恒假（`net_in` / `net_out` / `file_config`，以及 4 个只占名的 provider 位）。
+//!    一律恒假（`net_in` / `net_out` / `file_config` / `hw_aec` / `soft_aec`，以及 4 个只占名的 provider 位）。
 //! 3. **芯只给 `(位, reason)`，句子不在芯里**（§2.6 R3）：文案在 `app/ui/src/i18n/*`。
 //!
 //! 平台 API 一个都不出现：`HostKind` 是**档位名字**这张数据表，`HostFacts` 是外壳填进来的数据。
@@ -75,10 +75,18 @@ pub enum Capability {
     TurnEnd = 17,
     /// 回报源文。**占名**。
     SourceTranscript = 18,
+
+    // --- 宿主 / 设备位（2 个；判别式只许往后加，所以排在全部 provider 位之后）---
+    /// 设备自带回声消除（会议全向麦、XMOS 类阵列）。**今天没有定义者 ⇒ 恒假**：
+    /// 没有任何手段探测一块会议麦的 AEC 芯片在不在、开了没（udev / ALSA 都不报）。
+    HwAec = 19,
+    /// 本机能做软件回声消除。**今天没有定义者 ⇒ 恒假**：判据（这个构建编没编进去 / 采集与播放
+    /// 是不是同一声卡 / 采集率在支持集内 / 工厂起不起得来）全部由外壳报上来，位先进表、上限后补。
+    SoftAec = 20,
 }
 
 impl Capability {
-    /// 全部 19 个位。顺序 = 位图下标顺序（= 判别式顺序）。
+    /// 全部 21 个位。顺序 = 位图下标顺序（= 判别式顺序）。
     pub const ALL: &'static [Capability] = &[
         Self::Mic,
         Self::ProgramTap,
@@ -99,6 +107,8 @@ impl Capability {
         Self::SpeechActivity,
         Self::TurnEnd,
         Self::SourceTranscript,
+        Self::HwAec,
+        Self::SoftAec,
     ];
 
     /// 宿主 / 设备位：查 [`host_ceiling`] 与 `HostFacts` 的那几位。
@@ -114,6 +124,8 @@ impl Capability {
         Self::NetIn,
         Self::NetOut,
         Self::FileConfig,
+        Self::HwAec,
+        Self::SoftAec,
     ];
 
     /// provider 位：查 `catalog::supports` 的那几位。
@@ -134,8 +146,12 @@ impl Capability {
     }
 
     /// 这位属于宿主还是 provider。查询 API 按它分派。
+    ///
+    /// **按 [`Capability::HOST`] 这张表反查，不按判别式比大小**：判别式只保证"往后加"，
+    /// 不保证"host 位都排在 provider 位之前"——`HwAec` / `SoftAec` 就排在 19 / 20，
+    /// 比大小会把它们错判成 provider 位。
     pub fn scope(self) -> CapabilityScope {
-        if (self as u32) <= Self::FileConfig as u32 {
+        if Self::HOST.contains(&self) {
             CapabilityScope::Host
         } else {
             CapabilityScope::Provider
@@ -166,6 +182,8 @@ impl Capability {
             Self::SpeechActivity => "speech_activity",
             Self::TurnEnd => "turn_end",
             Self::SourceTranscript => "source_transcript",
+            Self::HwAec => "hw_aec",
+            Self::SoftAec => "soft_aec",
         }
     }
 }
@@ -178,7 +196,7 @@ pub enum CapabilityScope {
     Provider,
 }
 
-/// 位集：u64 位图。19 个位，留够余量。
+/// 位集：u64 位图。21 个位，留够余量。
 ///
 /// 序列化成"开着的位"数组（读起来就是 §2.5.1 的表），构造入口只有 [`CapabilitySet::of`] /
 /// [`CapabilitySet::single`] 这几个常量函数，写上限表时不用分配。
@@ -383,6 +401,9 @@ impl HostFacts {
 ///
 /// - 表里是**结构上限**：这一档"有没有这一位"。今天有没有，由外壳的 [`HostFacts::off`] 决定。
 /// - 不在表里的位，外壳就算报了也打不开（`false(unsupported)` 的含义）。
+///   `hw_aec` / `soft_aec` 今天**四档都不在表里**：前者没有探测手段，后者的判据（这个构建
+///   编没编进去 / 采集与播放同声卡 / 采样率 / 工厂起得来）要等外壳报上来。它们进这张表的那一天
+///   = 有外壳真的在定义它们（模块头纪律 2）。
 /// - Windows 独有的 `vr_captions` 是"这个构建编没编进去"——它在 Windows 上限里，由外壳用
 ///   [`UnavailableReason::NotBuilt`] 关掉。
 pub fn host_ceiling(host: HostKind) -> CapabilitySet {
@@ -549,7 +570,7 @@ mod tests {
                 "{bit:?} 的 id 与 serde 名字漂了"
             );
         }
-        assert_eq!(Capability::ALL.len(), 19);
+        assert_eq!(Capability::ALL.len(), 21);
     }
 
     #[test]
@@ -721,6 +742,57 @@ mod tests {
             CapabilityStatus::off(UnavailableReason::Unsupported),
         );
         assert!(report.host.values().all(|status| status.is_consistent()));
+    }
+
+    /// 两个 AEC 位（`hw_aec` / `soft_aec`）：进 `HOST` 表、`scope()` 认它们是宿主位，
+    /// 但**四档上限都不含**——今天没有定义者（会议麦的 AEC 芯片探不到；软件 AEC 的判据要外壳
+    /// 报上来）。于是报告恒 `off(unsupported)`，外壳往 `off` 里塞它们只会被报成外壳 bug。
+    #[test]
+    fn the_aec_bits_have_no_ceiling_on_any_tier() {
+        for bit in [Capability::HwAec, Capability::SoftAec] {
+            // 判别式排在 provider 位之后（19 / 20）：`scope()` 必须按表反查，不许比大小。
+            assert_eq!(bit.scope(), CapabilityScope::Host, "{bit:?} 错桶了");
+            assert!(Capability::HOST.contains(&bit), "{bit:?} 不在 HOST 表里");
+            for host in HostKind::ALL {
+                assert!(
+                    !host_ceiling(host).contains(bit),
+                    "{host:?} 的上限里不该有 {bit:?}：没有定义者，算成开就是冒认",
+                );
+            }
+        }
+
+        // 外壳把所有位都报成"接好了"也一样：上限里根本没有 ⇒ 恒 `unsupported`，不看外壳说什么。
+        for host in HostKind::ALL {
+            let report = CapabilityReport::of(
+                &HostFacts::all_wired(host),
+                ModelProvider::Aliyun,
+                ModelProvider::Aliyun,
+            );
+            for bit in [Capability::HwAec, Capability::SoftAec] {
+                assert_eq!(
+                    report.host[&bit],
+                    CapabilityStatus::off(UnavailableReason::Unsupported),
+                    "{host:?} 的 {bit:?} 只能报 unsupported",
+                );
+            }
+        }
+
+        // 外壳谎报 `hw_aec`（例如自称认得会议麦的 AEC 芯片）：打不开，且会被报成外壳 bug。
+        let lying = HostFacts {
+            host: HostKind::Windows,
+            off: BTreeMap::from([(Capability::HwAec, UnavailableReason::NotInstalled)]),
+            virtual_mic_device: None,
+        };
+        assert_eq!(
+            lying.excess_off_bits(),
+            CapabilitySet::single(Capability::HwAec)
+        );
+        let report = CapabilityReport::of(&lying, ModelProvider::Aliyun, ModelProvider::Aliyun);
+        assert_eq!(
+            report.host[&Capability::HwAec],
+            CapabilityStatus::off(UnavailableReason::Unsupported),
+            "外壳说'没装'也不算数：这一位结构上就不存在",
+        );
     }
 
     #[test]
