@@ -9,9 +9,10 @@
 use crate::capability::{effective, Capability, HostFacts};
 use crate::cloud::{protocol::CloneFrequency, SessionParams};
 use crate::composition::{
-    Composition, EdgeSource, Input, Op, Output, PlaybackRole, RateRef, SessionSpec,
+    Composition, EdgeSource, HostKind, Input, Op, Output, PlaybackRole, RateRef, SessionSpec,
     COMPOSITION_SCHEMA_VERSION,
 };
+use crate::gate::HalfDuplex;
 use crate::pipeline::INPUT_BLOCK_MS;
 use crate::runtime::SessionConfig;
 use crate::subtitle::Track;
@@ -37,21 +38,6 @@ pub(crate) fn composition(config: &SessionConfig, facts: &HostFacts) -> Composit
             // `None` = 系统默认麦克风。
             device: config.input_device.clone(),
             block_ms: INPUT_BLOCK_MS,
-        });
-    }
-
-    let mut ops = vec![Op::Mono];
-    // 麦克风收的是真实空气声，空调、键盘、风扇都在里面，得降。
-    if config.denoise {
-        ops.push(Op::Denoise);
-    }
-    ops.push(Op::Gate {
-        config: config.gate,
-    });
-    if !passthrough {
-        ops.push(Op::Resample {
-            from: RateRef::Capture,
-            to: RateRef::Session,
         });
     }
 
@@ -95,6 +81,49 @@ pub(crate) fn composition(config: &SessionConfig, facts: &HostFacts) -> Composit
         out.push(Output::Captions {
             track: Track::Speak,
             source: EdgeSource::Session,
+        });
+    }
+
+    // —— 半双工的判据要看 `out` 里有没有"会出声的播放出口"，所以 `ops` 这一段挪到这儿。
+    //    这是**纯位移**：`ops` 只看 `passthrough` / `config.denoise` / `config.gate`，
+    //    与 `out` 互不依赖；`OP_ORDER` 只管 `ops` 数组的顺序，与 `out` 在清单里的
+    //    相对位置无关。判据**直接读 `out`**，不另写一份推导（另写一份就是第二份真源）。
+    //
+    //    `&& !passthrough` **不许省**：直通模式下 `out` 里照样有一个 `Output::Playback`
+    //    （role 是 Speaker/Monitor，`source` 是 `EdgeSource::Chain`），`audible` 会为真；
+    //    但那时推的是**麦克风原声**，不是译音，把上行关掉就是自噬。`composition` 里的
+    //    `session` 字段正是 `(!passthrough).then(...)`，所以 `!passthrough` ⟺ 有会话。
+    let audible = !passthrough
+        && out.iter().any(|output| {
+            matches!(
+                output,
+                Output::Playback {
+                    role: PlaybackRole::Speaker | PlaybackRole::Monitor,
+                    ..
+                }
+            )
+        });
+
+    let mut gate = config.gate;
+    // 半双工门（保底档）：只在"译音真的会从房间里放出来"**且**"无屏档"两条同时成立时开。
+    // （"采集是麦克风"这一条**不用写成判据**：这里是 `speak::composition`，采集天生是
+    //  `Input::Mic`；抓进程环回的那条腿在 `listen::composition`。）
+    // 桌面档为什么不开：桌面 Linux 用户若没装虚拟麦，角色会退成 `Speaker`，此时开了
+    // 半双工就是**在用户没要求的情况下切断他说话**。无屏盒子是本轮目标，桌面保持逐字不变。
+    if audible && facts.host == HostKind::LinuxHeadless {
+        gate.half_duplex = Some(HalfDuplex::DEFAULT);
+    }
+
+    let mut ops = vec![Op::Mono];
+    // 麦克风收的是真实空气声，空调、键盘、风扇都在里面，得降。
+    if config.denoise {
+        ops.push(Op::Denoise);
+    }
+    ops.push(Op::Gate { config: gate });
+    if !passthrough {
+        ops.push(Op::Resample {
+            from: RateRef::Capture,
+            to: RateRef::Session,
         });
     }
 
@@ -146,6 +175,8 @@ pub(crate) fn plan(config: &SessionConfig) -> Plan {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::capability::UnavailableReason;
+    use crate::gate::GateConfig;
     use crate::pipeline::tests::speak_config;
 
     #[test]
@@ -213,5 +244,117 @@ mod tests {
     fn opened_translate_always_keeps_translate_mode() {
         let config = speak_config();
         assert!(!plan(&config).passthrough, "开着翻译就是正常对外说话");
+    }
+
+    /// 半双工的判据全部落在清单里已有的两格上（有出声的播放出口 + 无屏档）。
+    ///
+    /// 四条各自钉一件事，缺一条那两条机制就会被后人"顺手删掉"。
+    #[test]
+    fn speak_opens_a_half_duplex_gate_only_on_the_headless_tier_with_a_speaker() {
+        let mut config = speak_config();
+        config.output_device = Some("hw:0,0".to_string());
+
+        // ① 桌面（Windows）+ 虚拟麦：译音在线缆里，麦克风听不到，不开。
+        let headless_gate = gate_of(&composition(
+            &config,
+            &HostFacts::all_wired(HostKind::Windows),
+        ));
+        assert!(
+            headless_gate.half_duplex.is_none(),
+            "译音进虚拟麦不是外放，不该开半双工"
+        );
+
+        // ② 桌面（Windows）+ 普通出声口：**桌面档一律不开**（没要求就别切用户的话）。
+        let mut desktop_speaker = HostFacts::all_wired(HostKind::Windows);
+        desktop_speaker
+            .off
+            .insert(Capability::VirtualMic, UnavailableReason::NotWired);
+        let gate = gate_of(&composition(&config, &desktop_speaker));
+        assert!(
+            gate.half_duplex.is_none(),
+            "桌面档即使退成普通出声也不许自动切话"
+        );
+
+        // ③ 无屏档 + 普通出声口：这才是这一档存在的场景，自动开。
+        let gate = gate_of(&composition(
+            &config,
+            &HostFacts::all_wired(HostKind::LinuxHeadless),
+        ));
+        assert_eq!(
+            gate.half_duplex,
+            Some(HalfDuplex::DEFAULT),
+            "无屏盒子外放译音 → 麦克风会录到回声，必须开半双工"
+        );
+
+        // ④ 直通（关翻译）：`out` 里照样有 `Output::Playback`，但推的是**麦克风原声**
+        //    ——把上行关掉就是自噬。这条钉 `&& !passthrough`。
+        config.translate = false;
+        let gate = gate_of(&composition(
+            &config,
+            &HostFacts::all_wired(HostKind::LinuxHeadless),
+        ));
+        assert!(
+            gate.half_duplex.is_none(),
+            "直通推的是原声，关掉上行等于自噬"
+        );
+    }
+
+    /// 清单的线上形状：`half_duplex` 为假时**不写这个键**（`skip_serializing_if`），
+    /// 为真时写出来。键名与取值照 `composition.rs::tests::the_manifests_match_the_design_documents_instances`
+    /// 里那两份期望值的写法（`gate.config` 是一个扁平对象）。
+    #[test]
+    fn the_headless_manifest_keeps_its_json_shape_when_the_gate_is_unset() {
+        let facts = HostFacts::all_wired(HostKind::LinuxHeadless);
+        let mut config = speak_config();
+        config.output_device = Some("hw:0,0".to_string());
+
+        // ① 有出声出口 → 这一格写出来，且只多这一格。
+        let gate = serde_json::to_value(gate_of(&composition(&config, &facts))).unwrap();
+        assert_eq!(gate["tail_ms"], GateConfig::MANUAL.tail_ms);
+        assert_eq!(gate["preroll_ms"], GateConfig::MANUAL.preroll_ms);
+        assert_eq!(
+            gate["half_duplex"],
+            serde_json::json!({ "tail_ms": HalfDuplex::DEFAULT_TAIL_MS }),
+            "装上就该写出回声尾巴"
+        );
+        assert_eq!(
+            sorted_keys(&gate),
+            ["half_duplex", "kind", "preroll_ms", "tail_ms", "threshold"]
+        );
+
+        // ② 没有出声出口（没音色 → 不开播放汇）→ 判据为假 → **不写**这个键。
+        config.voice = None;
+        let gate = serde_json::to_value(gate_of(&composition(&config, &facts))).unwrap();
+        assert!(
+            gate.get("half_duplex").is_none(),
+            "为假时不许写这个键，否则设计稿那两份实例当场红：{gate}"
+        );
+        assert_eq!(
+            sorted_keys(&gate),
+            ["kind", "preroll_ms", "tail_ms", "threshold"]
+        );
+    }
+
+    /// 清单里门这一格的配置。Speak 的清单恒有门（`speak::composition` 无条件 push）。
+    fn gate_of(composition: &Composition) -> GateConfig {
+        composition
+            .ops
+            .iter()
+            .find_map(|op| match op {
+                Op::Gate { config } => Some(*config),
+                _ => None,
+            })
+            .expect("Speak 的清单里恒有门这一节")
+    }
+
+    fn sorted_keys(value: &serde_json::Value) -> Vec<String> {
+        let mut keys: Vec<String> = value
+            .as_object()
+            .expect("门配置在线上是个对象")
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort_unstable();
+        keys
     }
 }

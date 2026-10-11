@@ -564,6 +564,28 @@ impl Chain {
         }
         None
     }
+
+    /// 链里装了半双工门吗？返回它的回声尾巴（ms）。`None` = 没装
+    /// （**含**"链里压根没有门"这条）。
+    ///
+    /// `Worker::mark_playing` 用它在一句 `if` 里短路掉整段计算——桌面档
+    /// （`half_duplex = None`）连 `stats()` 都不问。
+    pub(crate) fn echo_guard_tail_ms(&self) -> Option<u32> {
+        self.stages.iter().find_map(|stage| match stage {
+            ChainStage::Gate { gate, .. } => gate.config().half_duplex.map(|hd| hd.tail_ms),
+            _ => None,
+        })
+    }
+
+    /// 装满压制窗口。链里没有门 / 门没装半双工 → **静默忽略**
+    /// （与 [`Chain::set_gate_active`] 同一个口径）。
+    pub(crate) fn set_echo_guard_ms(&mut self, ms: u64) {
+        for stage in &mut self.stages {
+            if let ChainStage::Gate { gate, .. } = stage {
+                gate.set_mute_for_ms(ms);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -578,6 +600,7 @@ mod tests {
     use crate::cloud::Transport;
     use crate::composition::HostKind;
     use crate::event::Pipeline;
+    use crate::gate::{GateState, HalfDuplex};
     use crate::ports::{CaptureSource, PlaybackSink};
     use crate::runtime::SessionConfig;
     use crate::settings::{ListenTarget, ModelProvider};
@@ -1463,5 +1486,90 @@ mod tests {
             after.iter().all(|row| row.audio_ns > before[0].audio_ns),
             "音频时长也得接着涨：{after:?}"
         );
+    }
+
+    /// 没装半双工的链：两个门控口都是**空操作**——桌面档连一次 `stats()` 都不问。
+    #[test]
+    fn a_chain_without_a_half_duplex_gate_ignores_the_echo_guard() {
+        let dsp = Arc::new(Dsp::default());
+        let deps = deps(&dsp, false);
+
+        // ① 链里有门，但门没装这一档。
+        let mut chain = Chain::build(
+            &[Op::Gate {
+                config: GateConfig::MANUAL,
+            }],
+            &deps,
+            mono_capture(),
+            SESSION_RATE,
+        )
+        .unwrap();
+        let mut scratch = ChainScratch::default();
+        chain.set_gate_active(true);
+        assert_eq!(chain.echo_guard_tail_ms(), None, "没装这一档就没有尾巴可读");
+        chain.set_echo_guard_ms(10_000);
+        for i in 0..4 {
+            let (blocks, status) = drive(&mut chain, &mut scratch, &chunk(CAPTURE_RATE, loud(960)));
+            assert_eq!(blocks.len(), 1, "第 {i} 块应当照常放行");
+            assert!(status.unwrap().active);
+        }
+
+        // ② 链里压根没有门：两个口都静默忽略。
+        let mut bare = Chain::build(
+            &[
+                Op::Mono,
+                Op::Resample {
+                    from: RateRef::Capture,
+                    to: RateRef::Session,
+                },
+            ],
+            &deps,
+            mono_capture(),
+            SESSION_RATE,
+        )
+        .unwrap();
+        let mut scratch = ChainScratch::default();
+        assert_eq!(bare.echo_guard_tail_ms(), None);
+        bare.set_echo_guard_ms(10_000);
+        let (blocks, status) = drive(&mut bare, &mut scratch, &chunk(CAPTURE_RATE, loud(960)));
+        assert_eq!(status, None, "链里没有门就没有状态可报");
+        assert_eq!(blocks.len(), 1, "链里没有门就什么都不该被压住");
+    }
+
+    /// 装了半双工的链：窗口从清单那一格读出来，一路送到门里。
+    ///
+    /// 走**清单**（`Composition::of`）而不是手搓 ops：这一格是清单里的一格
+    /// （`Op::Gate.config.half_duplex`），链只照抄。
+    #[test]
+    fn the_echo_guard_reaches_the_gate_through_the_manifest() {
+        let dsp = Arc::new(Dsp::default());
+        let deps = deps(&dsp, false);
+        let mut gate = GateConfig::MANUAL;
+        gate.half_duplex = Some(HalfDuplex::DEFAULT);
+        let manifest = speak_manifest(true, true, true, gate, false);
+        let mut chain = Chain::build(&manifest.ops, &deps, mono_capture(), SESSION_RATE).unwrap();
+        let mut scratch = ChainScratch::default();
+        chain.set_gate_active(true);
+
+        let tail = chain.echo_guard_tail_ms().expect("清单里装着这一档");
+        assert_eq!(tail, HalfDuplex::DEFAULT_TAIL_MS, "尾巴从清单那一格读出来");
+
+        // 门开着，上行在跑。
+        let (blocks, status) = drive(&mut chain, &mut scratch, &chunk(CAPTURE_RATE, loud(960)));
+        assert_eq!(blocks.len(), 1);
+        assert!(status.unwrap().active);
+
+        // 译音推进播放汇 → 装满窗口（960 样本 = 20 ms 一块，整除）。
+        chain.set_echo_guard_ms(u64::from(tail));
+        let window = CAPTURE_RATE as u64 * u64::from(tail) / 1000;
+        for i in 0..(window as usize / 960) {
+            let (_, status) = drive(&mut chain, &mut scratch, &chunk(CAPTURE_RATE, loud(960)));
+            let status = status.expect("链里有门，每拍都该报状态");
+            assert_eq!(status.state, GateState::PlaybackMute, "第 {i} 块仍在窗口内");
+        }
+        // 窗口走完：照手动门的老路恢复放行。
+        let (blocks, status) = drive(&mut chain, &mut scratch, &chunk(CAPTURE_RATE, loud(960)));
+        assert_eq!(status.unwrap().state, GateState::Manual);
+        assert_eq!(blocks.len(), 1, "压制结束后应当恢复上行");
     }
 }

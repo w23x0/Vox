@@ -34,7 +34,7 @@ pub use composition::{
     PlaybackRole, RateRef, SessionSpec, Ui, COMPOSITION_SCHEMA_VERSION,
 };
 pub use event::{Event, Notice, Pipeline, PipelineState, Severity};
-pub use gate::{ActivationGate, GateConfig, GateKind, GateState, GateStatus};
+pub use gate::{ActivationGate, GateConfig, GateKind, GateState, GateStatus, HalfDuplex};
 pub use hotkey::Hotkey;
 pub use latency::{LatencySnapshot, MetricSummary};
 pub use notice::Msg;

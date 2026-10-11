@@ -1,10 +1,12 @@
-//! 差分台（S4-B B0）：15 组配置各跑一段脚本，把**可观察的外部行为**渲染成一份
+//! 差分台（S4-B B0）：16 组配置各跑一段脚本，把**可观察的外部行为**渲染成一份
 //! 纯文本轨迹，与 `golden/<id>.txt` 逐字比。
 //!
 //! 存在的全部理由：S4-B 要把 `Worker` 里写死的"单声道 → 降噪 → 阀门 → 重采样"
 //! 换成一条按 `Composition.ops` 顺序走的有序节列表，**行为必须一模一样**。
 //! "一模一样"不能靠 `git diff` 说话（`diff` 看不见音频样本与帧边界），所以有了它。
-//! 这 15 份金样是在**重构前**的代码上录的；B2 之后它们必须一个字都不用改。
+//! 这 16 份里**前 15 份**是在**重构前**的代码上录的；B2 之后它们必须一个字都不用改。
+//! 第 16 份（`speak_48k_speaker_half_duplex`）是 S4-C G4 落地**之后**录的，
+//! 它是**回归钉子**而不是差分证据（见 `docs/plans/S4-C-GATE-RESAMPLE.md` §2.8.3）。
 //!
 //! ## 轨迹里放什么
 //!
@@ -49,9 +51,11 @@ use std::sync::atomic::Ordering;
 
 use super::tests::{speak_config, Rig, HOT_MODEL};
 use super::GATE_THROTTLE_MS;
+use crate::capability::HostFacts;
 use crate::catalog::ActivationMode;
+use crate::composition::HostKind;
 use crate::event::{Event, Pipeline, PipelineState};
-use crate::gate::GateConfig;
+use crate::gate::{GateConfig, HalfDuplex};
 use crate::ports::CaptureTarget;
 use crate::runtime::{PipelineCommand, PipelineControl};
 use crate::settings::{ListenSettings, ListenTarget, Settings, SpeakSettings};
@@ -426,7 +430,7 @@ macro_rules! verify {
     }};
 }
 
-// --- 15 个场景 -------------------------------------------------------------
+// --- 16 个场景 -------------------------------------------------------------
 
 /// 场景 1（基线）：手动门、降噪开、48 kHz、门初始关着。
 /// 钉的是：门关着时 preroll 攒、上升沿把 preroll 一次冲出（多帧）、松手出静音尾、
@@ -1014,11 +1018,74 @@ fn speak_48k_text_only() -> String {
     )
 }
 
-// --- 场景表与 16 条用例 -----------------------------------------------------
+/// 场景 16（S4-C G4）：无屏档 + 普通出声口 → 半双工门自动装上。
+///
+/// 脚本走 `Rig::with_facts(…, LinuxHeadless)`：`host_ceiling(LinuxHeadless)` 里没有
+/// `VirtualMic`，所以角色退成 `Speaker`（真外放、麦克风能听见），半双工判据为真。
+///
+/// 钉的是：
+/// ① `meta` 里的门摘要写着装了半双工；
+/// ② 译音推进播放汇那一刻起 `gate_status` 变成 `playback_mute`；
+/// ③ `wire` 段**逐块**钉住"哪一块之后上传断了、断了几块、第几块起恢复"——
+///    窗口 = 队列里剩的 20 ms（假播放汇 `960 样本 / 48 kHz`）+ `tail_ms` 300 ms
+///    = 320 ms = **正好 8 块**（`BLOCK_48` = 1920 样本 = 40 ms，能整除）。
+///
+/// **确定性靠样本数不靠墙钟**：窗口按采集样本倒数，而假播放汇没有渲染线程去取走
+/// `queued_samples`（`Speaker::rendered` 全仓库零写入），所以第 ④ 步之后队列长度是
+/// 一个常数。本场景**不许 `clock.advance`**（`TestClock` 只用来驱动节流）。
+fn speak_48k_speaker_half_duplex() -> String {
+    let rig = Rig::with_facts(RATE_48, HostFacts::all_wired(HostKind::LinuxHeadless));
+    start_speak(&rig, true, |speak| {
+        speak.output_device = Some("hw:0,0".to_string());
+    });
+
+    // ③ 门开着，上行在跑：三块照常上传。
+    for seed in 1..=3 {
+        rig.feed(loud(BLOCK_48, seed));
+    }
+
+    // ④ 译音进播放汇：960 个 i16 样本 @ 假播放汇的 48 kHz = 20 ms 队列。
+    let pcm: Vec<i16> = (0..960)
+        .map(|i| if i % 2 == 0 { 8192 } else { -8192 })
+        .collect();
+    rig.push_message(audio_delta(&pcm));
+    rig.wait_until(|| rig.speaker.played.lock().len() >= 960);
+
+    // ⑤ 20 块：前 8 块一块都不许上行（第 1 块补一段断句尾），第 9 块起恢复。
+    for seed in 4..24 {
+        rig.feed(loud(BLOCK_48, seed));
+    }
+
+    let play = snapshot_play(&rig);
+    rig.engine.shutdown();
+    render(
+        &rig,
+        &[
+            ("scenario", "speak_48k_speaker_half_duplex".to_string()),
+            ("pipeline", "speak".to_string()),
+            ("boot", "ledger".to_string()),
+            ("capture_rate", RATE_48.to_string()),
+            ("block_samples", BLOCK_48.to_string()),
+            ("denoise", "on".to_string()),
+            (
+                "gate",
+                format!("manual+half_duplex({})", HalfDuplex::DEFAULT_TAIL_MS),
+            ),
+            ("gate_active_at_boot", "true".to_string()),
+            ("translate", "true".to_string()),
+            ("host", "linux_headless".to_string()),
+            ("output_device", "hw:0,0".to_string()),
+        ],
+        &play,
+    )
+}
+
+// --- 场景表与 17 条用例 -----------------------------------------------------
 
 type Scenario = fn() -> String;
 
-/// 15 组配置的登记表。`docs/plans/S4-B-OP-CHAIN.md` §6.4 的顺序原样保留。
+/// 16 组配置的登记表。前 15 条照 `docs/plans/S4-B-OP-CHAIN.md` §6.4 的顺序原样保留，
+/// 第 16 条（`speak_48k_speaker_half_duplex`）是 S4-C G4 新增的回归钉子。
 const SCENARIOS: &[(&str, Scenario)] = &[
     ("speak_48k_denoise_manual", speak_48k_denoise_manual),
     ("speak_48k_denoise_off", speak_48k_denoise_off),
@@ -1044,6 +1111,10 @@ const SCENARIOS: &[(&str, Scenario)] = &[
         listen_48k_hot_update_ignored,
     ),
     ("speak_48k_text_only", speak_48k_text_only),
+    (
+        "speak_48k_speaker_half_duplex",
+        speak_48k_speaker_half_duplex,
+    ),
 ];
 
 /// 跑一个场景。跑两遍结果必须一样——这是差分台自己对自己的一致性检查。
@@ -1146,7 +1217,13 @@ fn speak_48k_text_only_matches_its_golden() {
     verify!("speak_48k_text_only", first);
 }
 
-/// 15 组配置在同一个进程里连跑两遍，轨迹必须逐字相同。
+#[test]
+fn speak_48k_speaker_half_duplex_matches_its_golden() {
+    let (first, _) = run_twice("speak_48k_speaker_half_duplex");
+    verify!("speak_48k_speaker_half_duplex", first);
+}
+
+/// 16 组配置在同一个进程里连跑两遍，轨迹必须逐字相同。
 ///
 /// 这是差分台自己的一致性闸：轨迹里混进了墙钟、线程 id、集合遍历顺序或任何别的
 /// 非确定项，这一条会先红——比"金样偶尔对不上"好定位得多。

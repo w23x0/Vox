@@ -41,7 +41,8 @@ export type GateState =
   | "speech"
   | "tail"
   | "tail_end"
-  | "silence";
+  | "silence"
+  | "playback_mute";
 
 export interface Hotkey {
   ctrl: boolean;

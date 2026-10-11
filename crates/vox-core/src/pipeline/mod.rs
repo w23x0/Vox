@@ -649,6 +649,19 @@ struct PlaybackProbe {
     rendered_baseline: u64,
 }
 
+/// 某个播放汇里还压着多少毫秒没放出去。没开或率/声道是 0 时给 0。
+///
+/// **本函数是 `Worker::playback_queue_ms` 的逐字搬移**，差别只是从"只看主出口"
+/// 变成"传进来的这一个"，返回值逐字相同 ⇒ 延迟快照一个数都不变。
+fn sink_queue_ms(sink: &dyn PlaybackSink) -> u64 {
+    let stats = sink.stats();
+    if stats.sample_rate == 0 || stats.channels == 0 {
+        return 0;
+    }
+    let frames = stats.queued_samples / stats.channels as usize;
+    (frames as u64).saturating_mul(1000) / stats.sample_rate as u64
+}
+
 /// 关掉一个播放汇：先把积压的样本放掉再关，然后把槽位清空。
 /// 连不上云端的失败变成给用户看的消息：密钥错 / 欠费 / 模型没权限这类**重连也没用的**，
 /// 说清楚该去哪改（服务端原话在 `detail`）；其余只说"连不上"，诊断串当 `detail`。
@@ -981,15 +994,36 @@ impl Worker {
 
     /// 播放汇里还压着多少毫秒没放出去。没开播放汇（纯文字会话）给 0。
     fn playback_queue_ms(&self) -> u64 {
-        let Some(sink) = self.sink.as_ref() else {
-            return 0;
-        };
-        let stats = sink.stats();
-        if stats.sample_rate == 0 || stats.channels == 0 {
-            return 0;
+        match self.sink.as_ref() {
+            Some(sink) => sink_queue_ms(sink.as_ref()),
+            None => 0,
         }
-        let frames = stats.queued_samples / stats.channels as usize;
-        (frames as u64).saturating_mul(1000) / stats.sample_rate as u64
+    }
+
+    /// **半双工**：译音刚被推进播放汇，把门的压制窗口重新装满。
+    ///
+    /// 窗口 = 设备里还没放出来的毫秒（`stats().queued_samples` 量出来的真值）
+    ///        + `half_duplex.tail_ms`（房间里的回声尾巴）。
+    ///
+    /// **为什么在 `push` 之后量**：量的是"这一刻起还要播多久"，所以必须是推完之后。
+    /// **为什么在同一个 `&mut self` 上**：`handle_server_event` 与 `feed_chain` 同线程
+    /// （都从 `Worker::pump` 来），零原子、零 `Arc`、零 `Cell`。
+    /// **两条出声的路取大**：主出口 + 回听（回听也进系统默认设备，是真出声的）。
+    ///
+    /// 门没装半双工 → 第一句就返回，**桌面档一个整数都不多算**。
+    fn mark_playing(&mut self) {
+        let Some(tail_ms) = self.chain.echo_guard_tail_ms() else {
+            return;
+        };
+        let mut ms = 0u64;
+        if let Some(sink) = self.sink.as_ref() {
+            ms = ms.max(sink_queue_ms(sink.as_ref()));
+        }
+        if let Some(sink) = self.monitor_sink.as_ref() {
+            ms = ms.max(sink_queue_ms(sink.as_ref()));
+        }
+        self.chain
+            .set_echo_guard_ms(ms.saturating_add(u64::from(tail_ms)));
     }
 
     /// 每拍探一次播放进度：渲染计数越过基线，就说明播放汇真的取走了译音，
@@ -1387,6 +1421,11 @@ impl Worker {
                 if let Some(sink) = self.monitor_sink.as_mut() {
                     sink.push(&samples);
                 }
+                // 半双工：译音刚进播放汇 → 按"还要播多久"重新装满门的压制窗口。
+                // 紧跟两次 `push` 之后**量**才对得上"这一刻起还要播多久"。这一行也是
+                // S4-B §2.7 给 AEC 预留的参考信号口的同一个位置（AEC 落在两行 push
+                // 之前，见 S4-C 稿 §6 的最后一条）。
+                self.mark_playing();
                 let now = self.now();
                 if let Some(started) = self
                     .turn_probe
@@ -2284,11 +2323,18 @@ pub(crate) mod tests {
         }
 
         pub(crate) fn build(rate: u32) -> Self {
+            Self::with_facts(rate, HostFacts::all_wired(HostKind::Windows))
+        }
+
+        /// 按给定的事实建夹具。现有 `Rig::build` 的行为逐字不变——它只是把
+        /// `all_wired(Windows)` 这一份事实传进来（`HostFacts::all_wired` 是 `#[cfg(test)]`
+        /// 的，所以这条构造子也只能在测试里用）。
+        pub(crate) fn with_facts(rate: u32, facts: HostFacts) -> Self {
             let clock = Arc::new(TestClock::new());
             let runtime = Runtime::new(Settings::default(), Arc::clone(&clock) as Arc<dyn Clock>);
             // 外壳装配时会注入事实（`lib.rs` 第 13 步）；缺省那份是 fail-closed 的，
             // 不注入就等于"这台机器什么都没接上"。夹具里的 mic / 播放汇都接好了。
-            runtime.set_host_facts(HostFacts::all_wired(HostKind::Windows));
+            runtime.set_host_facts(facts);
             runtime.set_secret_store(Arc::new(MemoryStore::default()));
             runtime.set_api_key("sk-test");
 
