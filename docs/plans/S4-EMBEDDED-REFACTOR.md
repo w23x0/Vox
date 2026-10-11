@@ -1,12 +1,17 @@
 # S4 · 嵌入式优先的重构：共享宿主层 + 算子链 + 轻量化
 
-> 状态：**[已拍板·未开工]**（方向 2026-09-26 与用户拍板，见 `docs/architecture/DIRECTIONS.md` §10.9）。
+> 状态：**[部分落地]**（方向 2026-09-26 与用户拍板，见 `docs/architecture/DIRECTIONS.md` §10.9；2026-10-11 按代码回填状态）。
+> **已落地**：S4-A 共享宿主层 `vox-host`、S4-B 算子链（`pipeline::chain::Chain` + 逐节自计时 `Chain::timings` / `Runtime::op_timings`）、
+> S4-C 的 `vox-audio-alsa`（crate）、半双工门、廉价重采样档，以及 **CI 交叉编译**（`.github/workflows/ci-arm64.yml`；
+> 证据见 §3 的表与 §4 的验收表）。
+> **未落地**：AEC（`Op::Aec`；选型稿 [`S4-C-AEC.md`](S4-C-AEC.md) 与 W0 尖峰 `tools/aec-spike/` 在树上，算子本体没有）、
+> 局域网控制面、S4-D 的 `deb`（`tools/package-headless.sh` 出的是 `tar.gz`）。
 > 本稿是**第 1 版概要稿**：现状证据 → 目标形状 → 改动清单 → 验收标准。各阶段开工前由 architect
 > 按本稿细化成可直接施工的版本（补全调用方清单与测试名），**不要拿本稿直接动手改公共接口**。
 >
 > 口径：代码与本稿打架以代码为准。本稿里的"现状"是 2026-09-26 读代码核到的；
-> 本轮环境里**没有 Rust 工具链**（`cargo` 不在 PATH），所以**没有跑过任何编译或测试**，
-> 凡涉及"跑出来的数"的地方一律写"未跑"。
+> 那一轮环境里**没有 Rust 工具链**（`cargo` 不在 PATH），所以**没有跑过任何编译或测试**，
+> 凡涉及"跑出来的数"的地方一律写"未跑"（`[已落地]` 那几行的证据来自身后各阶段稿的收口实测，逐条注明出处）。
 
 ---
 
@@ -121,12 +126,12 @@
 
 | 模块 | 内容 | 依赖 |
 | --- | --- | --- |
-| `vox-audio-alsa` | ALSA 采集/播放/设备目录；无屏档缺省后端 | S4-A |
-| 半双工门 | `ActivationGate` 加"播放中"输入；`Op::Gate` 可配 | S4-B |
+| `vox-audio-alsa` | ALSA 采集/播放/设备目录；无屏档缺省后端。**crate 已落地**：`crates/vox-audio-alsa/`（`AlsaPlayback`、`registry.rs`、`examples/{devices,loopback}.rs`、`tests/aloop_roundtrip.rs`，workspace 成员）；⚠️ **"无屏档缺省后端"这一步没落地**——`crates/vox-headless/Cargo.toml` 仍依赖 `vox-audio-linux`，全仓没有 `vox-audio-alsa` 的使用者（2026-10-11 按代码核） | S4-A |
+| 半双工门 | `ActivationGate` 加"播放中"输入；`Op::Gate` 可配。**已落地**（2026-10-11）：`gate::HalfDuplex`（`DEFAULT_TAIL_MS = 300`）+ `GateConfig::half_duplex: Option<HalfDuplex>`（`#[serde(default, skip_serializing_if = "Option::is_none")]`）+ `GateState::PlaybackMute`（线上 `"playback_mute"`）+ `ActivationGate::set_mute_for_ms` + `Chain::{echo_guard_tail_ms, set_echo_guard_ms}` + `Worker::mark_playing`；判据在 `pipeline::speak::composition`（`audible && facts.host == HostKind::LinuxHeadless`）。**与概要稿 §2.2 的差别**：不是 `bool` 输入，是按采集率样本倒数的计数器 | S4-B |
 | 回声消除算子 | `Op::Aec` + `hw_aec` / `soft_aec` 能力位；软件实现选型（SpeexDSP vs AEC3） | S4-B |
-| 廉价重采样档 | `vox-dsp` 加一档便宜实现，按配置/能力选 | S4-B |
+| 廉价重采样档 | `vox-dsp` 加一档便宜实现，按配置/能力选。**已落地**（2026-10-11）：`vox_dsp::resample::ResampleQuality`（`Sinc` 为 `#[default]` / `Linear`）+ `Resampler::cheap_upsampler`（`output_rate <= input_rate` → `None`）+ `vox_dsp::ports::cheap_resample_factory` + `vox_host::entry::HostPorts::resample`（新字段，`deps(self, transport)` 签名未动）+ `vox_headless::platform::{RESAMPLE_QUALITY_ENV, resample_quality_from_env, resample_factory_for}`（`VOX_RESAMPLE_QUALITY` **只无屏档读**，缺省 `cheap`）。**与概要稿 §2.3 的差别**：只做线性、且**只对升采样方向**，多相 FIR 不做 | S4-B |
 | 局域网控制面 | 绑定地址开关 + 配对码 → token；缺省仍本机 | S4-A |
-| CI 交叉编译 | `aarch64-unknown-linux-gnu` 构建 + `qemu-user` 测试 | 无 |
+| CI 交叉编译 | `aarch64-unknown-linux-gnu` 构建 + `qemu-user` 测试。**已落地**（2026-10-11 按代码核）：`.github/workflows/ci-arm64.yml`（本机未跑，它要交叉工具链 + qemu-user） | 无 |
 
 ### S4-D 交付
 
@@ -140,12 +145,13 @@
 | --- | --- |
 | S4-A | `cargo test --workspace` 全绿且既有测试**逐字未改**；`cargo tree -p vox-headless` 不含 tauri/gtk/webkit；两个入口 crate 里不再有 `persist` / `mcp` 胶水 / `dsp` 适配器的第二份 |
 | S4-B | 差分台（沿用 S0 做法：多组配置 × 两条流水线）事件轨迹与重构前**逐字相等**；`Plan` 里不再有"装不装某一节"的布尔 |
-| S4-C · ALSA | 本机 `snd-aloop` 回环设备上"采 → 播"跑通（ignored 用例 + example） |
-| S4-C · 半双工 | 用例：播放中上行为静音、播放结束 + 尾巴后恢复；去掉该逻辑即红 |
+| S4-C · ALSA | 本机 `snd-aloop` 回环设备上"采 → 播"跑通（ignored 用例 + example）。**crate 已落地**（2026-10-11 按代码核）：`crates/vox-audio-alsa/tests/aloop_roundtrip.rs`（`#[ignore]`，跑法 `modprobe snd-aloop` 后 `cargo test -p vox-audio-alsa --test aloop_roundtrip -- --ignored`）+ `examples/{loopback,devices}.rs` 在树上；**本轮未跑这一条**（无屏档入口也还没切到它，见 §3） |
+| S4-C · 半双工 | 用例：播放中上行为静音、播放结束 + 尾巴后恢复；去掉该逻辑即红。**已落地**（2026-10-11 实测）：`cargo test -p vox-core` = **364 passed / 0 failed**；`cargo test -p vox-core pipeline::golden` = **17 passed**（15 旧场景 + 新场景 `speak_48k_speaker_half_duplex` + 1 条确定性自检），15 份旧金样 `git diff` 空；**去掉压制分支 ⇒ 8 条红** |
+| S4-C · 廉价重采样档 | 便宜档只在升采样方向成立、装配期由入口选、桌面档零差异。**已落地**（2026-10-11 实测）：`cargo test -p vox-dsp` = **34 passed**；桌面 `app/src-tauri` 里 `cheap_resample_factory` **零命中**（只多一行 `resample: vox_dsp::ports::resample_factory()`，`grep -rn cheap_resample_factory crates/ app/` 在 `app/` 下无命中）；`cd tools/bench-dsp && cargo run --release` **exit 0** |
 | S4-C · AEC | 合成回声（译音按固定时延衰减叠回麦克风）下，回声能量下降达标（阈值在细化稿里定）；位为假时该节不装 |
 | S4-C · 局域网 | 缺省不监听非回环；无 token / 错 token 一律拒；配对码一次性、过期即失效 |
 | S4-C · 自计时 | 快照里每个算子都有耗时与实时倍率；热路径零新增分配（用例或基准佐证） |
-| S4-C · CI | ARM64 交叉构建产物可在 `qemu-user` 下跑通 `cargo test -p vox-core -p vox-dsp` |
+| S4-C · CI | ARM64 交叉构建产物可在 `qemu-user` 下跑通 `cargo test -p vox-core -p vox-dsp`。**已落地**（2026-10-11 按代码核）：`.github/workflows/ci-arm64.yml` —— `aarch64-unknown-linux-gnu` 目标 + `qemu-aarch64 -L /usr/aarch64-linux-gnu` 跑 `cargo test --target aarch64-unknown-linux-gnu -p vox-core -p vox-dsp --locked`；**本机未跑它**（要交叉工具链 + qemu-user） |
 
 ---
 

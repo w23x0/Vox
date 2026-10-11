@@ -1,6 +1,10 @@
 # S4-A · 共享宿主层 `vox-host` —— 施工设计稿
 
-> 状态：**[已拍板·未开工]**。本稿把 `docs/plans/S4-EMBEDDED-REFACTOR.md` §3「S4-A 共享宿主层
+> 状态：**[已生效]**（2026-10-11 按代码回填；原文写的是"[已拍板·未开工]"）。
+> **落地事实**：`crates/vox-host/` 在树上（`entry::HostPorts`、`entry::Core`、`control` / `persist` / `secrets` /
+> `events` / `netcheck` / `models`），两个入口 `app/src-tauri/src/lib.rs` 与 `crates/vox-headless/src/headless.rs`
+> 都已退成薄壳（无屏档的 `crates/vox-headless/src/{persist,mcp,dsp,secrets}.rs` 第二份已不存在）。
+> 本稿把 `docs/plans/S4-EMBEDDED-REFACTOR.md` §3「S4-A 共享宿主层
 > `vox-host`（行为不变）」细化成可直接施工的版本，并回答该稿 §6 第 1 问。
 > 上位口径：`docs/architecture/DIRECTIONS.md` §10.9（嵌入式优先 + 共享宿主层）、
 > `.omp/RULES.md`、`.omp/AGENTS.md`。

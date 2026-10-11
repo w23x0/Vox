@@ -59,8 +59,9 @@ crates/
   vox-{audio,input,overlay}-win/ vox-{audio,input,overlay}-linux/   平台外壳
   vox-mcp/             已建：动作清单 + 协议面 + 本机 HTTP（含 `subscriptions/listen` 的 SSE 长流）+ 端点投影 + 会话/token + 资源面（`resources`/`subscriptions/listen`）；stdio 桥（`transport/stdio.rs`）与 5 个动作子命令已落地（`voxctl serve` / `serve-stdio` / `list-endpoints` / `describe-endpoint` / `compose-endpoint` / `session-open` / `session-close` + 瘦客户端 `client.rs`）
   vox-headless/  已建（无屏档入口，与 app/src-tauri 并列的第二个外壳）：芯 + PipeWire + 无屏三件 + 控制面，零 Tauri；`--config <settings.json>` / `--print-capabilities` / `--dry-run`（一直跑的模式另有 `--start` / `--run-for`）
-  vox-host/            （待建 S4-A）共享宿主层：装配顺序 / 持久化 / 密钥选择 / 控制面胶水 / EventSink，各宿主入口只写薄壳
-  vox-audio-alsa/      （待建 S4-C）ALSA 采集/播放，嵌入式缺省音频后端
+  vox-host/            **已建（S4-A）**共享宿主层：装配顺序 / 持久化 / 密钥选择 / 控制面胶水 / EventSink，各宿主入口只写薄壳（`entry::HostPorts` / `control` / `persist` / `secrets` / `events` / `netcheck`）
+  vox-audio-alsa/      **已建（S4-C）**ALSA 采集/播放/设备目录（`AlsaPlayback` / `registry.rs` / `examples/` / `tests/aloop_roundtrip.rs`，workspace 成员）；⚠️ **无屏档入口还没切到它**（`vox-headless` 仍依赖 `vox-audio-linux`）
+  vox-proxy/           **已建（NET）**出站代理：地址解析 / 系统代理探测 / HTTP CONNECT 与 SOCKS5 隧道
   vox-audio-android/   （待建 S2，顺延到 S4-A 之后）手机音频外壳
 app/
   src-tauri/           装配层（命令、事件桥、platform/ 分流、sys/）

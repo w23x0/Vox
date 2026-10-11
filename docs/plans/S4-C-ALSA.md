@@ -1,6 +1,11 @@
 # S4-C · `vox-audio-alsa`：ALSA 音频后端（无屏档缺省）设计稿
 
-> 状态：**[设计稿·未开工]**。对应 `docs/plans/S4-EMBEDDED-REFACTOR.md` §3 S4-C 表格「`vox-audio-alsa`」一行、
+> 状态：**[部分落地]**（2026-10-11 按代码回填；原文写的是"[设计稿·未开工]"）。
+> **crate 已落地**：`crates/vox-audio-alsa/`（`AlsaCapture` / `AlsaPlayback` / `AlsaDeviceRegistry`、
+> `registry.rs`、`examples/{devices,loopback}.rs`、`tests/aloop_roundtrip.rs`，workspace 成员）。
+> ⚠️ **无屏档入口还没切到它**——`crates/vox-headless/Cargo.toml` 仍依赖 `vox-audio-linux`，
+> 全仓没有 `vox-audio-alsa` 的使用者（2026-10-11 按代码核）。
+> 对应 `docs/plans/S4-EMBEDDED-REFACTOR.md` §3 S4-C 表格「`vox-audio-alsa`」一行、
 > §2.3 轻量化、§4「S4-C · ALSA」验收，以及 §6 第 5 问的答复。
 >
 > **本稿只设计 `crates/vox-audio-alsa` 这个新 crate 本身**（实现 `vox-core` 的三个端口 trait + 自测）。

@@ -211,6 +211,9 @@ Linux 贵在那两个岔路（桌面环境 × 音频后端），一旦拍成"Pip
   对照算子成本表决定这台设备搭哪几块算子。
   **现状缺口**：去噪已经可选（代码里已有开关，采样率不匹配会自动跳过 ✓）；
   **重采样只有贵的 sinc 那一档**，弱设备前必须补一个便宜档。
+  （**2026-10-11 补注**：便宜档已落地——`vox_dsp::resample::ResampleQuality::Linear` / `Resampler::cheap_upsampler` /
+  `vox_dsp::ports::cheap_resample_factory`，装配期由无屏入口按 `VOX_RESAMPLE_QUALITY` 选，**只对升采样方向生效**；
+  见 §7「S4-C 半双工门 + 廉价重采样档 已落地」与 `docs/plans/S4-C-GATE-RESAMPLE.md` §3.3。上面那两句保留作留痕。）
 
 **另外两条当时的判断：**
 
@@ -388,6 +391,17 @@ Windows/macOS/Linux/Android/iOS/浏览器）—— 那次没有拉到平台清�
 - **VRChat OSC**：`crates/vox-osc/` + `osc_start/osc_update/osc_stop/osc_send_chatbox/osc_set_avatar`
   命令 + `sections/Vrchat.tsx` 都已落地 —— `docs/protocols/VRC_OSC_PROTOCOL.md` §6"没动代码"已过期。
 - **Linux 端 P0–P4 全部落地**（`docs/platform/LINUX.md` §0/§8），剩余见 §2 遗留项。
+- **S4-C 半双工门 + 廉价重采样档 已落地**（2026-10-11 本轮；稿子 [`docs/plans/S4-C-GATE-RESAMPLE.md`](../plans/S4-C-GATE-RESAMPLE.md)）：
+  符号名 —— `gate::HalfDuplex`（`DEFAULT_TAIL_MS = 300`）、`GateConfig::half_duplex`、
+  `GateState::PlaybackMute`（线上 `"playback_mute"`）、`ActivationGate::set_mute_for_ms`、
+  `Chain::{echo_guard_tail_ms, set_echo_guard_ms}`、`Worker::mark_playing`；
+  以及 `vox_dsp::resample::ResampleQuality`（`Sinc` 为缺省 / `Linear`）、`Resampler::cheap_upsampler`、
+  `vox_dsp::ports::cheap_resample_factory`、`vox_host::entry::HostPorts::resample`、
+  `vox_headless::platform::{RESAMPLE_QUALITY_ENV, resample_quality_from_env, resample_factory_for}`。
+  实测两条：`cargo test -p vox-core` = **364 passed**、`cargo test -p vox-dsp` = **34 passed**。
+  **产品行为（该稿 §7.1 GR-2 要求的留痕）**：半双工门**只在无屏档（`HostKind::LinuxHeadless`）+ 有出声的播放出口（`Speaker` / `Monitor`）+ 非直通**这三条同时成立时，由 `pipeline::speak::composition` 自动开；
+  **桌面档一个字节不变**（`half_duplex` 为 `None`、`skip_serializing_if` 不写那个键、`Worker::mark_playing` 第一句就早退）。
+  逐条订正与门禁口径见该稿 §0.4 / §5.1。
 
 ---
 
@@ -410,8 +424,8 @@ Windows/macOS/Linux/Android/iOS/浏览器）—— 那次没有拉到平台清�
 | 13 | macOS / Apple 平台 | 未实现，且要先答"要不要虚拟麦"（`docs/platform/SCOPE.md` §C · ≤09-20） | **不做**（用户拍板 · **09-21**） | **以 09-21 为准**；iOS / iPadOS / visionOS 一并作废 |
 | 14 | 手机上怎么复用现有资源 | HostShells：手机端最省的是原生壳（JNI/UniFFI），Tauri 移动端只在确需那套 WebView UI 时才值得（09-21 上午） | AndroidPath + 我的裁决：走 **Tauri v2 Android**（界面/芯都已在这套里，省掉原生 UI + JNI 桥）（09-21 晚） | **以 09-21 晚为准**；真机性能与插件分级需实测（见 §10.3-1） |
 | 15 | 先做哪类设备 | 先手机（Android），再嵌入式（§10.0 第 1 条 · 09-21 晚） | **直接做嵌入式，手机顺延**（用户拍板 · **09-26**，§10.9） | **以 09-26 为准** |
-| 16 | 内部结构（接第 5 行） | 两条固定流水线；算子链"拍板前不动手"（第 5 行 · 09-21） | **拍板做算子链**：清单即作业单，`Worker` 按 `Composition.ops` 执行（**09-26**，`docs/plans/S4-EMBEDDED-REFACTOR.md` S4-B） | **以 09-26 为准**，第 5 行结论作废 |
-| 17 | 嵌入式音频后端 | 复用 `vox-audio-linux`（PipeWire）（`docs/platform/EMBEDDED.md` §3.2 · 09-22） | **ALSA 为嵌入式缺省**，PipeWire 降为可选（**09-26**，S4-C） | **以 09-26 为准** |
+| 16 | 内部结构（接第 5 行） | 两条固定流水线；算子链"拍板前不动手"（第 5 行 · 09-21） | **拍板做算子链**：清单即作业单，`Worker` 按 `Composition.ops` 执行（**09-26**，`docs/plans/S4-EMBEDDED-REFACTOR.md` S4-B） | **以 09-26 为准**，第 5 行结论作废。**已落地**（2026-10-11 按代码核）：符号名 `vox_core::composition::Op` + `pipeline::chain::Chain`（`ChainStage` / `Chain::run` / `Chain::set_gate_config`，另有逐节自计时 `Chain::timings` / `Runtime::op_timings`） |
+| 17 | 嵌入式音频后端 | 复用 `vox-audio-linux`（PipeWire）（`docs/platform/EMBEDDED.md` §3.2 · 09-22） | **ALSA 为嵌入式缺省**，PipeWire 降为可选（**09-26**，S4-C） | **以 09-26 为准**。**部分落地**（2026-10-11 按代码核）：`crates/vox-audio-alsa/` 这个 crate 在树上（`AlsaPlayback` / `registry.rs` / `examples/{loopback,devices}.rs` / `tests/aloop_roundtrip.rs`，workspace 成员），但**"无屏档缺省后端"这一步没落地**——`crates/vox-headless/Cargo.toml` 仍依赖 `vox-audio-linux`，全仓没有 `vox-audio-alsa` 的使用者 |
 | 18 | 控制面监听范围 | 只绑 `127.0.0.1`（S1 · 09-22） | 缺省仍本机；**无屏档可开局域网监听，必须配对码 + token 鉴权**（**09-26**，S4-C） | **以 09-26 为准**；桌面缺省行为不变 |
 | 19 | `Op::Aec` 在算子链上的位置 | `S4-B-OP-CHAIN.md` §2.7：插在 `OP_ORDER` 的 `"gate"` 与 `"resample"` 之间（即**门之后**）（09-30，该稿自己标了 O-1 待定） | **插在 `"denoise"` 与 `"gate"` 之间**（即**门之前**）（**10-10**，`docs/plans/S4-C-AEC.md` §3.1，Main 拍板） | **以 S4-C 为准**：门按能量判开合，AEC 在门之后残留回声会直接推开门（自己译自己）；在门之前最坏只是被 `preroll_ms` 兜住 |
 
@@ -509,6 +523,9 @@ P5 的性价比最低（端侧只做上行、且现有 DSP 要重写），**建�
 4. **嵌入式第一站几乎不用动芯。** 实测核对：`crates/vox-core/src/` 对 `std::fs` / `PathBuf` /
    `std::env` / `tauri` / `tokio` **零命中**；`aarch64-unknown-linux-gnu` 是 Rust
    **Tier 1（含 host tools）**、小端；音频后端还是同一个 PipeWire、同一个 `vox-audio-linux`。
+   （**2026-10-11 补注**：按 §10.9 第 5 条，**ALSA 已定为嵌入式缺省**——`crates/vox-audio-alsa/` crate 在树上，
+   但**无屏档入口还没切过去**（`vox-headless` 仍依赖 `vox-audio-linux`），见 §8 第 17 行旁注。
+   上面那句是当时（09-26）的现状，保留作留痕。）
    真正要新写的只有"无屏外壳"三件：**配置从哪进、状态往哪出、进程怎么活**
    （systemd `--user` unit + `RuntimeDirectory/StateDirectory`，注意
    [系统服务默认拿不到 RT 预算](https://systemd.io/MY_SERVICE_CANT_GET_REALTIME/)）。
@@ -522,7 +539,7 @@ P5 的性价比最低（端侧只做上行、且现有 DSP 要重写），**建�
 | **S0 地基** | 组合清单定稿（**不含 mcu**）+ 统一能力模型（provider 能力位与宿主能力位同一套）；两条流水线描述成清单（不改行为） | 清单 + 能力位表 + 正交测试证明"清单能表达现状" | 1–3 |
 | **S1 Agent 面** | 动作清单 → 出口：**HTTP 优先**（本机 loopback，为手机准备）+ CLI/stdio（桌面/脚本）；5 个工具；字幕走 `resources` + `subscriptions/listen`；不做 `search_tools`；不用 sampling/roots/logging | 桌面与手机都能被外部 Agent 完成"组合→开会话→读字幕" | 3–5 |
 | **S2 手机壳（Android）** | ① **Tauri v2 Android 路线**（现有 `app/ui` + `app/src-tauri` 直接编入 APK，省掉"原生 UI + 自搭 JNI 桥"两层，官方 `tauri android init/dev/build`）② 音频换 **Oboe**：请求 48k 单声道 f32（正好对上 RNNoise 的 48k/480 帧），缓冲**偏大**（`PowerSaving`，真延迟在云端）③ `microphone` 型前台服务 + `RECORD_AUDIO` + 通知权限，必须**从可见 Activity 启动**，按"随时被杀"设计 ④ **应用内字幕**（跨 App 悬浮窗延后）⑤ Keystore 版 `SecretStore` ⑥ Play 合规（FGS 声明表、target SDK、**16 KB page size**） | 手机上面对面翻译可用：说中文→耳机出声译音 + 屏幕字幕 | 12–25 |
-| **S3 嵌入式（小主板）** | 复用 `vox-audio-linux`；无屏外壳（systemd --user + 配置/状态/日志出口）；关掉字幕/热键/托盘/虚拟麦 | 一块 ARM64 板子上能跑通"网络进、网络出"，且能被 §S1 的控制面管 | 5–8 |
+| **S3 嵌入式（小主板）** | 复用 `vox-audio-linux`；无屏外壳（systemd --user + 配置/状态/日志出口）；关掉字幕/热键/托盘/虚拟麦（**2026-10-11 补注**：按 §10.9 第 5 条，缺省音频后端**已改成 ALSA**——`crates/vox-audio-alsa/` 这个 crate 在树上，但**无屏入口还没切过去**，见 §8 第 17 行旁注；"无屏外壳"那一件已落地，见 §10.9「进度回填」） | 一块 ARM64 板子上能跑通"网络进、网络出"，且能被 §S1 的控制面管 | 5–8 |
 | 后续（**本次不承诺**） | 插件宿主（OBS 类）、wasm 算子档、跨 App 悬浮窗、MCU | — | — |
 
 **顺序理由**：S0 是 S1/S2/S3 的共同前置；S1 与 S2 可并行（不同 crate/文件），但 S1 的出口形态必须先定
@@ -798,6 +815,29 @@ clippy **0 warning**、`npm run verify` 全绿——链见 `app/ui/package.json`
 "控制面只在本机"三处按本节读（该文件顶部已加状态注）；§10.0 第 1 条、§10.8 第 2 条已加补注。
 
 **本节写成时的基线**：HEAD = `36813d3`；本轮环境没有 Rust 工具链，**未跑** `cargo test` / `clippy`。
+
+#### 进度回填（2026-10-11）
+
+- **G 组（半双工门 G1–G4 / G5）与 R 组（廉价重采样档 R1–R3）七张工单已全部落地**。符号名与实测数见 §7
+  那一条（`gate::HalfDuplex` / `GateConfig::half_duplex` / `GateState::PlaybackMute` / `Chain::echo_guard_tail_ms` /
+  `Chain::set_echo_guard_ms` / `Worker::mark_playing`；`vox_dsp::resample::ResampleQuality` /
+  `Resampler::cheap_upsampler` / `vox_dsp::ports::cheap_resample_factory` / `vox_host::entry::HostPorts::resample` /
+  `vox_headless::platform::{RESAMPLE_QUALITY_ENV, resample_quality_from_env, resample_factory_for}`）。
+  产品行为留痕（半双工只在无屏档 + 有出声出口 + 非直通时自动开；桌面零差异）也在 §7。
+- **门禁口径如实写**：`cargo test --workspace`（**不含** `--exclude`）**本机跑不了**——`alsa-sys` 的 build script
+  找不到系统 `alsa.pc`（本机只装了 `libasound2t64`、**没有 `libasound2-dev`**），这是**环境缺口，与本轮改动无关**
+  （本轮没碰 `crates/vox-audio-alsa/**`）。改用
+  `cargo test --workspace --exclude vox-audio-alsa` ⇒ **872 passed / 0 failed / 6 ignored**；
+  `cargo fmt --all -- --check` **静默**；`cargo clippy --workspace --all-targets --exclude vox-audio-alsa -- -D warnings`
+  ⇒ **0 warning**；`cd tools/bench-dsp && cargo run --release` ⇒ **exit 0**。
+  CI 里对它用 `--exclude`（`.github/workflows/ci-windows.yml`），`release.yml` 装 `libasound2-dev`。
+- **CI 交叉编译也已在树上**（2026-10-11 按代码核：读了 `.github/workflows/ci-arm64.yml`——**本机没跑它**，
+  它要交叉工具链 + qemu-user）：该 job 用 `aarch64-unknown-linux-gnu` 目标 +
+  `qemu-aarch64 -L /usr/aarch64-linux-gnu` 跑 `cargo test --target aarch64-unknown-linux-gnu -p vox-core -p vox-dsp --locked`。
+  ⚠️ 原先按"未落地"记的**这条是错的**，按代码更正。
+- **仍然未落地的不动**：AEC（`Op::Aec`）、局域网控制面（`vox-mcp::transport::http` 仍明确拒绝非回环 `bind`）、
+  S4-D 的 `deb`（`tools/package-headless.sh` 只出 `tar.gz`）——第 17 行旁注与
+  [`docs/plans/S4-EMBEDDED-REFACTOR.md`](../plans/S4-EMBEDDED-REFACTOR.md) 顶部状态都没把它们标成已落地。
 
 ---
 

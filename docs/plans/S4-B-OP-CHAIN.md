@@ -1,9 +1,12 @@
 # S4-B · 算子链执行器（行为不变）· 施工设计稿
 
+> 状态：**[已落地]**（2026-10-11 按代码回填；本稿原先没有状态头）。
+> **落地事实**：`crates/vox-core/src/pipeline/chain.rs` 的 `Chain` / `ChainStage` / `Chain::build` / `Chain::run`
+> 在树上，`Worker` 按 `Composition.ops` 执行；逐节自计时也落地（`Chain::timings` / `Runtime::op_timings` / `chain::OpTiming`）。
 > 上位稿：[`S4-EMBEDDED-REFACTOR.md`](S4-EMBEDDED-REFACTOR.md) §3「S4-B 算子链执行器（行为不变）」、§4 验收。
 > 方向：[`docs/architecture/DIRECTIONS.md`](../architecture/DIRECTIONS.md) §8 第 16 行（**已拍板**：清单即作业单，`Worker` 按 `Composition.ops` 执行；第 5 行"拍板前不动手"作废）、§10.9 第 3 条。
 > 清单的由来：[`S0-COMPOSITION-MANIFEST.md`](S0-COMPOSITION-MANIFEST.md) §2.1（`Composition` / `Op` 的定义）、§2.7（`Plan` 为什么"字段一个不加一个不减"）。
-> 并行约束：[`S4-A-HOST-LAYER.md`](S4-A-HOST-LAYER.md) 正在施工，**本稿一个文件都不碰它的**（见 §7.2 的自证）。
+> 并行约束：[`S4-A-HOST-LAYER.md`](S4-A-HOST-LAYER.md) 正在施工（**2026-10-11 补注：S4-A 已落地**，见该稿状态头），**本稿一个文件都不碰它的**（见 §7.2 的自证）。
 >
 > 口径：代码与本稿打架以代码为准。引用**符号名优先**（`Plan::from`、`Worker::gated_blocks`），行号是 2026-09-30 核的、写稿当时的值。
 > 本轮环境有 Rust 工具链：`cargo test -p vox-core` 实跑过（**258 passed / 0 failed / 0 ignored**，2026-09-30）。

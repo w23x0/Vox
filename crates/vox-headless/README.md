@@ -30,6 +30,20 @@ vox-headless [--config <settings.json>]
 API 密钥也可以走环境变量覆盖：`VOX_API_KEY_ALIYUN` / `VOX_API_KEY_GEMINI`（优先于文件）。
 日志级别走 `VOX_LOG`（tracing 的 EnvFilter 语法）。
 
+**重采样档走环境变量 `VOX_RESAMPLE_QUALITY`**（**只有这一档读它**；桌面档与共享宿主层都不看）：
+
+| 取值 | 效果 |
+| --- | --- |
+| 不设（**缺省**） | `cheap`：**升采样方向**用线性插值（`vox_dsp::ports::cheap_resample_factory`），降采样 / 同率仍落回 sinc |
+| `cheap` | 同上 |
+| `sinc` | 全走 sinc（`vox_dsp::ports::resample_factory`），与桌面档同一档音质 |
+| 其它任何值 | **启动失败**（退出码 `2`），报错里说清只认 `"sinc"` / `"cheap"`——**不静默回落**（`.omp/RULES.md` #4） |
+
+档位策略在 `platform::{RESAMPLE_QUALITY_ENV, resample_quality_from_env, resample_factory_for}`；
+**上行那一半与播放端口内部那一半取同一个决定**（同一次读），启动日志里记一行实际档（`headless::host_ports`
+的 `tracing::info!`，字段 `env` / `quality`）。依据见
+[`docs/plans/S4-C-GATE-RESAMPLE.md`](../../docs/plans/S4-C-GATE-RESAMPLE.md) §3.4 / §3.5。
+
 样例配置见 `settings.example.json`——它是**部分配置**：没写到的格子走出厂缺省（读设置走
 `Settings::from_json` 的 migrate + normalize，坏配置也只会退回缺省，不会让服务起不来）。
 **控制面（Agent 面）默认是关的**，要开得自己在 `settings.json` 里写：

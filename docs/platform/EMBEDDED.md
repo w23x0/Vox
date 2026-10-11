@@ -275,6 +275,11 @@ Unit 里 **`After=pipewire.service` 不要写**（PipeWire 是**用户**服务�
    **24 kHz 是回放协议**（同文件 `OUTPUT_SAMPLE_RATE = 24_000`）——三处各自写死。
    USB 声卡只给 44.1 kHz 时**整条重采样链就上线了**，而 `crates/vox-dsp/src/resample.rs` 现在只有贵的 `SincFixedIn` 一档
    （`docs/architecture/DIRECTIONS.md` §3.3 路线五记着"重采样只有贵的 sinc 那一档"）。
+   （**2026-10-11 补注**：现在有两档了——`vox_dsp::resample::ResampleQuality` 的 `Linear` 便宜档已落地
+   （`Resampler::cheap_upsampler` / `vox_dsp::ports::cheap_resample_factory`），**但只对升采样方向生效**；
+   44.1 kHz → 48 kHz 是升采样，吃得上这一档，而**降采样（48k→16k）仍然只有 sinc**。
+   这一档只在无屏档开，缺省由 `VOX_RESAMPLE_QUALITY` 定，见 `crates/vox-headless/README.md` §1
+   与 `docs/plans/S4-C-GATE-RESAMPLE.md` §3.3。）
 9. **tokio 只在 `vox-net`，但它会按核数起线程**：多线程调度器默认"每个 CPU 核一个工作线程"
    （<https://docs.rs/tokio/latest/tokio/runtime/index.html>）。芯的流水线是 std 线程 + 5 ms 轮询，不吃 tokio；
    低功耗 1–2 核盒子上值得量一下内存（current-thread 调度器不起工作线程）。
