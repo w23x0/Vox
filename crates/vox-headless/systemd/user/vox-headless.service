@@ -11,9 +11,9 @@
 Description=Vox 无屏档（实时语音翻译）
 # 指仓库里那份 README（同一个文件也在发布包的根目录里）。
 Documentation=https://github.com/w23x0/Vox/blob/main/crates/vox-headless/README.md
-# PipeWire 是**用户**服务，但它不在这条依赖链上：不要写 `After=pipewire.service`
-# （socket 激活、按需拉起；写了反而可能因为对方没起来而卡住我们）。
-# 起来之后自己探（`vox_audio_linux::pipewire_available()`），探不到只记一条启动提示。
+# ALSA 没有 daemon：这条依赖链上**没有任何音频服务可等**，不要写
+# `After=pipewire.service`（那是桌面档的事）。起来之后自己探 ALSA
+# （`vox_audio_alsa::alsa_available()`：真去开一条 PCM），探不到只记一条启动提示。
 After=default.target
 
 [Service]
@@ -46,8 +46,8 @@ RestartMaxDelaySec=60
 StateDirectory=vox-headless
 RuntimeDirectory=vox-headless
 
-# 实时优先级的**上限**（RLIMIT_RTPRIO，<https://www.systemd.exec.html> 的 LimitRTPRIO=）。
-# PipeWire 的 module-rt 要它才能把音频线程提上去；拿不到也不会起不来，只是退化成普通调度。
+# 实时优先级的**上限**（RLIMIT_RTPRIO，<https://www.systemd.exec.html> 的 LimitRTPRIO=）：
+# 音频读写的线程要提优先级就得靠它（拿不到也不会起不来，只是退化成普通调度）。
 LimitRTPRIO=95
 
 # 无屏设备常年无人值守：缺省只打本 crate 的 info，其余 warn。要细节就改这一个变量。

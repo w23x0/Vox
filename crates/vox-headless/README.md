@@ -1,8 +1,13 @@
 # vox-headless —— 无屏档（小主板 ARM64 Linux）入口
 
-跟 `app/src-tauri`（桌面档）**并列的第二个外壳**，不是它的分支：同一份芯（`vox-core`）、同一份
-PipeWire 后端（`vox-audio-linux`），差别只有"入口"与"起了哪些东西"。**不依赖 Tauri**，所以盒子上
-不需要 GTK / WebKitGTK（验收项：`cargo tree -p vox-headless | grep -c tauri` = 0）。
+跟 `app/src-tauri`（桌面档）**并列的第二个外壳**，不是它的分支：同一份芯（`vox-core`）、自己的
+音频后端（`vox-audio-alsa`，**ALSA 直开**——桌面档才是 PipeWire），差别只有"入口"与"起了哪些东西"。
+**不依赖 Tauri**，所以盒子上不需要 GTK / WebKitGTK（验收项：`cargo tree -p vox-headless | grep -c tauri` = 0）。
+
+**为什么无屏档是 ALSA 而不是桌面档那一份 PipeWire**（`DIRECTIONS.md` §8 第 17 行，2026-09-26 裁决；
+`docs/plans/S4-C-ALSA.md` §6.2）：按档位定、不做运行时探测切换——`host_ceiling(linux_headless)` 里没有
+`program_tap` / `virtual_mic`，所以"PipeWire 在不在"在这一档一位能力位都不影响；ALSA 直开还少一层
+服务层（`pipewire-alsa` 的桥会把 `default` 导过去，等于双重路由）。
 
 起因与逐条依据在 `docs/platform/EMBEDDED.md`（本文件只讲**怎么用**）。
 
@@ -17,9 +22,9 @@ vox-headless [--config <settings.json>]
 | 开关 | 做什么 |
 | --- | --- |
 | `--config <path>` | `settings.json` 的**文件**路径。不给就按三级回落取：`$VOX_CONFIG_DIR` → `$XDG_CONFIG_HOME/vox` → `$HOME/.config/vox` |
-| `--print-capabilities` | 装配后打一份 `CapabilityReport` JSON（stdout）就退。**只读**：不碰 PipeWire（不枚举设备、不探可用性）、不建配置目录、不写文件、不监听端口 |
+| `--print-capabilities` | 装配后打一份 `CapabilityReport` JSON（stdout）就退。**只读**：不碰音频设备（不枚举设备目录、不探 ALSA 可用性）、不建配置目录、不写文件、不监听端口 |
 | `--print-composition` | 装配后打一份**两条腿的清单 + 有效能力位**的 JSON（stdout）就退（见 §3）。**只读**，同上 |
-| `--dry-run` | 只装配：验两条腿的清单装不装得上、打能力报告，**不碰 PipeWire（不枚举设备、不探可用性）、不建配置目录、不写文件、不监听端口、不开流、不起流水线**，退出 |
+| `--dry-run` | 只装配：验两条腿的清单装不装得上、打能力报告，**不碰音频设备（不枚举设备目录、不探 ALSA 可用性）、不建配置目录、不写文件、不监听端口、不开流、不起流水线**，退出 |
 | `--start <speak\|listen\|all>` | 一直跑的模式下，起来就开哪几条腿。不给 = 什么都不开（只当控制面宿主） |
 | `--run-for <秒>` | 跑够这么多秒自己收摊（冒烟/自检用）；`0` 或不给 = 一直跑 |
 
@@ -96,14 +101,15 @@ sudo systemctl daemon-reload && sudo systemctl enable --now vox-headless
 
 ### 2.3 两条必须知道的
 
-- **实时优先级**：PipeWire 的 `module-rt` 要 `RLIMIT_RTPRIO`。systemd 给每个 **system** 服务单独的
+- **实时优先级**：音频读写线程要提优先级就得有 `RLIMIT_RTPRIO`。systemd 给每个 **system** 服务单独的
   cpu cgroup，其 `cpu.rt_runtime_us` 缺省是 **0** → 申请 RT 直接 `EPERM`
   （<https://systemd.io/MY_SERVICE_CANT_GET_REALTIME/>）。所以：**优先 `--user`**；非要用系统单元就得
   `LimitRTPRIO=` **加上**给 cgroup 放行预算（`systemctl set-property … CPUAccounting=yes` + drop-in 写
   `cpu.rt_runtime_us`，见那份 unit 的文件头）。拿不到 RT 不会让服务起不来，只是音频线程退化成普通调度。
-- **PipeWire 是用户服务**：system 单元里**不要**写 `After=pipewire.service`（那个名字在 system
-  管理器里不存在），它要的是用户的运行期目录（系统单元那份里给了 `XDG_RUNTIME_DIR=/run/user/%U`）。
-  本程序启动时自己探 PipeWire（探不到只记一条提示），不影响它接控制面。
+- **音频服务**：ALSA **没有 daemon**，这条依赖链上没有任何音频服务可等（system 单元里**不要**写
+  `After=pipewire.service`：那是桌面档的事，而且那个名字在 system 管理器里不存在）。设备访问是
+  logind 的 uaccess ACL（`/dev/snd/*`），所以要 `--user` 或 `loginctl enable-linger`。本程序启动时
+  自己探 ALSA（探不到只记一条提示），不影响它接控制面。
 - **API 密钥怎么给**（两条路，环境变量优先）：
   ① 环境变量 `VOX_API_KEY_ALIYUN` / `VOX_API_KEY_GEMINI`。服务里用 drop-in 给——
      `systemctl --user edit vox-headless` 然后 `[Service]` 段写
@@ -157,13 +163,13 @@ vox-headless --config <settings.json> --print-composition | jq '.capabilities.ho
 vox-headless --config <settings.json> --print-composition | jq '.listen.in'
 #   => []（无屏档不本机抓程序：`program_tap` 在这一档的上限之外；这档的"听"是 net_in，还没实现）
 
-# 逐条验清单装不装得上（只读：不碰 PipeWire、不连云端、不建目录、不写文件；unit 起来之前当自检用）
+# 逐条验清单装不装得上（只读：不碰音频设备、不连云端、不建目录、不写文件；unit 起来之前当自检用）
 vox-headless --config <settings.json> --dry-run
 ```
 
 **三条报告命令都是只读的**（`--print-capabilities` / `--print-composition` / `--dry-run`）：
 清单与能力位只由**设置 + 宿主事实**决定（`Composition::of(设置, 事实)` / "档位上限 − 关掉的位"），
-所以它们**连 PipeWire 都不连**（不枚举设备目录、也不探"PipeWire 在不在"）、**不建配置目录**、
+所以它们**连音频设备都不碰**（不枚举设备目录、也不探"ALSA 在不在"）、**不建配置目录**、
 不写任何文件、不监听端口、不起流水线。
 
 `--print-composition` 的 stdout **只有那一份 JSON**（日志走 stderr），键是：
@@ -202,15 +208,30 @@ tar 里刻意**不含**托盘图标之类桌面档的资源；归档参数（`--
 - `file_config` 恒假：改 `settings.json` 不会热加载（要重启进程）。
 - `background_service` 位仍是 `false(not_wired)`：unit 与打包这一轮落地了，但**位还没有检测者**
   （问 systemd 要状态得走 D-Bus；不拿"unit 文件在"当"服务在跑"的凭据）。
+- `soft_aec` 位：判据 **B1–B4 全部就位**（这个构建恒编进去 / 采集与播放同不同卡 /
+  采集率在不在支持集内 / AEC 工厂起不起得来——见 `platform::linux::soft_aec_unavailable_reason`）。
+  今天开不开**取决于这台机器**：B2 要"缺省的采集口与播放口同属一张卡"，而 `default` 经
+  PipeWire 桥时卡名认不出来（`card=-1`）⇒ 报 `false(unsupported)`；`default` 真的解析到
+  一块声卡（裸板子的常态）这一位才可能开。
+  **两处如实说**：① B2 看的是**缺省的那一对设备**，用户在设置里显式选的那一对不参与判定；
+  ② 报 `unsupported` 的机器里有一部分其实是"认不出卡名"，不是"结构上做不到"。
+  两处都要改进得动共享宿主层（`HostPorts::facts` 的形状），见 `src/platform/linux.rs` 的欠账注释。
+  `hw_aec` 恒 `false(unsupported)`：没有任何手段探测一块会议麦的 AEC 芯片在不在。
+- **启动提示进的是 runtime 账本，不是 journal**：装配期发的那两条（打不开 ALSA /
+  检测到 PipeWire 的 ALSA 桥）发生在挂日志出口**之前**，所以 journal 里看不到它们，
+  要从控制面 / 快照读（与 §3 的状态出口同一份账本）。这是**既有行为**（旧的 PipeWire
+  那条提示同样如此），要不要把日志出口提前到装配之前另议。
 - 没有 health / status HTTP 出口：今天的状态出口就是本文件 §3 的那两条命令 + journal。
 - 没有 `Type=notify` / `WatchdogSec=` 支持（见 §2.3）。
 - 虚拟麦 / 热键 / 托盘 / 悬浮字幕窗**整块不启动**（这四位在 `host_ceiling(linux_headless)` 之外，
   位恒 `false(unsupported)`）。
 
-## 6. 跟桌面档的三处刻意差别
+## 6. 跟桌面档的四处刻意差别
 
-1. **不引入 Tauri**（盒子装不了也不需要 GTK/WebKitGTK）。
-2. **不启动热键 / 托盘 / 悬浮字幕窗**：起了也没人看（没有屏幕、没有键盘、没有 StatusNotifier 宿主）。
-3. **不建虚拟麦节点**：无屏档的出口是声卡/网络，不给别的程序当麦克风。
+1. **音频后端不同**：无屏档 `vox-audio-alsa`（ALSA 直开），桌面档那一份是 PipeWire（在
+   `app/src-tauri/src/platform/linux/audio.rs`）。按档位定、不做运行时探测切换（见开头那段与 `docs/plans/S4-C-ALSA.md` §6.2）。
+2. **不引入 Tauri**（盒子装不了也不需要 GTK/WebKitGTK）。
+3. **不启动热键 / 托盘 / 悬浮字幕窗**：起了也没人看（没有屏幕、没有键盘、没有 StatusNotifier 宿主）。
+4. **不建虚拟麦节点**：无屏档的出口是声卡/网络，不给别的程序当麦克风。
 
 源码地图、装配顺序与每一条的理由写在 `src/lib.rs` / `src/headless.rs` 的头注释里。

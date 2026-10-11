@@ -111,6 +111,7 @@ pub fn host_kind() -> HostKind {
 /// | `tray` | `tray::can_hide_to_tray()`（图标装上 × 有宿主） |
 /// | `background_service` | `events::sync_autostart` 的返回值（[`super::background_service_status`]） |
 /// | `vr_captions` | 这个构建编没编 feature × `vr_overlay::status()`（[`vr_captions_status`]） |
+/// | `soft_aec` | **还没有定义者** → [`UnavailableReason::NotWired`]（见下面那行代码的注释） |
 ///
 /// `mic` 这一位**不在这里关门**——今天**没有定义者**，于是按档位上限报开。理由：
 /// 装配期没有任何否定证据。此刻一条采集流都没开，"麦克风被别的程序独占"只有真去开流
@@ -150,6 +151,10 @@ pub fn host_facts() -> HostFacts {
     if let Some(reason) = super::background_service_status().reason {
         off.insert(Capability::BackgroundService, reason);
     }
+    // 软件 AEC（`docs/plans/S4-C-AEC.md`）：上限里有这一位，但桌面档（WASAPI）今天**还没有
+    // "采集与播放同声卡"的判据**，AEC 工厂那条路（W1）也还没合流——所以如实报 `not_wired`
+    // （"这个版本还没接通"），**不**报 `unsupported`（那是"这台设备结构上做不到"，是假话）。
+    off.insert(Capability::SoftAec, UnavailableReason::NotWired);
 
     HostFacts {
         host: host_kind(),

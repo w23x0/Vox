@@ -13,8 +13,8 @@ use std::time::Duration;
 
 /// 跑哪个模式。四者互斥（写两个就是用法错误）。
 ///
-/// 后三个是**只读模式**（[`Mode::is_read_only`]）：装配到"设置 + 事实"就够，不碰 PipeWire
-/// （不枚举设备、不探可用性）、不建配置目录、不写文件、不监听端口、不起流水线。
+/// 后三个是**只读模式**（[`Mode::is_read_only`]）：装配到"设置 + 事实"就够，不碰音频设备
+/// （不枚举设备目录、不探 ALSA 可用性）、不建配置目录、不写文件、不监听端口、不起流水线。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     /// 一直跑：装配 → 建引擎 → 起控制面（看开关）→ 开 `--start` 那几条腿 → 等退出。
@@ -31,8 +31,8 @@ impl Mode {
     /// **只读模式**：`--print-capabilities` / `--print-composition` / `--dry-run`。
     ///
     /// 这三条路装配到"设置 + 事实"就够——清单是 `Composition::of(设置, 事实)`、能力报告是
-    /// "档位上限 − 关掉的位"，设备目录与"PipeWire 在不在"一条都不进任何一格。所以它们不碰
-    /// PipeWire（`Probe::Nothing`）、不建配置目录（`Paths::ensure_dir` 只给常驻模式调）、
+    /// "档位上限 − 关掉的位"，设备目录与"ALSA 在不在"一条都不进任何一格。所以它们不碰
+    /// 音频设备（`Probe::Nothing`）、不建配置目录（`Paths::ensure_dir` 只给常驻模式调）、
     /// 不写文件、不监听端口、不起流水线。
     pub fn is_read_only(self) -> bool {
         !matches!(self, Mode::Run)
@@ -68,7 +68,7 @@ pub enum Invocation {
 
 pub fn usage() -> String {
     "\
-vox-headless —— 无屏档（小主板 ARM64 Linux）入口：芯 + PipeWire + 配置进 / 状态出 + 控制面
+vox-headless —— 无屏档（小主板 ARM64 Linux）入口：芯 + ALSA + 配置进 / 状态出 + 控制面
 
 用法：
   vox-headless [--config <settings.json>]
@@ -79,11 +79,11 @@ vox-headless —— 无屏档（小主板 ARM64 Linux）入口：芯 + PipeWire 
   --config <path>         settings.json 的路径（要的是文件，不是目录；目录请用环境变量
                           VOX_CONFIG_DIR）。缺省按三级回落取：
                           $VOX_CONFIG_DIR → $XDG_CONFIG_HOME/vox → $HOME/.config/vox
-  --print-capabilities    装配后打一份 CapabilityReport JSON（stdout），退出（只读：不碰 PipeWire、
+  --print-capabilities    装配后打一份 CapabilityReport JSON（stdout），退出（只读：不碰音频设备、
                           不建配置目录、不写文件、不监听端口）
   --print-composition     装配后打一份 Composition 清单 JSON（两条腿 + 有效能力位，stdout），退出（只读，同上）
-  --dry-run               只装配：逐条验清单、打能力报告，不监听端口、不碰 PipeWire（不枚举设备、
-                          不探可用性）、不建配置目录、不开流；退出
+  --dry-run               只装配：逐条验清单、打能力报告，不监听端口、不碰音频设备（不枚举设备目录、
+                          不探 ALSA 可用性）、不建配置目录、不开流；退出
   --start <endpoint>      起来之后开哪条腿（speak / listen / all）；缺省什么都不开
   --run-for <秒>          跑够这么多秒就收摊退出（0 = 一直跑）；缺省一直跑
   -h, --help              打这一页

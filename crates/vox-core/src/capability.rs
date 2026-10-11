@@ -15,7 +15,9 @@
 //! 1. **上限是硬的**：事实只能在档位上限**里面**关。`off` 里出现上限之外的位 = 外壳 bug
 //!    （[`HostFacts::excess_off_bits`]），不是"新能力"——这样"谎报能力"在结构上就被封住。
 //! 2. **位为 `true` 必须有定义者**：由"真的把这条路打开的那段代码"负责（§2.5.4）。没有定义者的位
-//!    一律恒假（`net_in` / `net_out` / `file_config` / `hw_aec` / `soft_aec`，以及 4 个只占名的 provider 位）。
+//!    一律恒假（`net_in` / `net_out` / `file_config` / `hw_aec`，以及 4 个只占名的 provider 位）。
+//!    `soft_aec` 的定义者是外壳的 `host_facts()`（`docs/plans/S4-C-AEC.md` §4.3 的 B1–B4），
+//!    所以它在有判据的三档上限里、由外壳按判据报开关。
 //! 3. **芯只给 `(位, reason)`，句子不在芯里**（§2.6 R3）：文案在 `app/ui/src/i18n/*`。
 //!
 //! 平台 API 一个都不出现：`HostKind` 是**档位名字**这张数据表，`HostFacts` 是外壳填进来的数据。
@@ -80,8 +82,10 @@ pub enum Capability {
     /// 设备自带回声消除（会议全向麦、XMOS 类阵列）。**今天没有定义者 ⇒ 恒假**：
     /// 没有任何手段探测一块会议麦的 AEC 芯片在不在、开了没（udev / ALSA 都不报）。
     HwAec = 19,
-    /// 本机能做软件回声消除。**今天没有定义者 ⇒ 恒假**：判据（这个构建编没编进去 / 采集与播放
-    /// 是不是同一声卡 / 采集率在支持集内 / 工厂起不起得来）全部由外壳报上来，位先进表、上限后补。
+    /// 本机能做软件回声消除。判据是 `docs/plans/S4-C-AEC.md` §4.3 的 B1–B4（这个构建编没编
+    /// 进去 / 采集与播放同声卡 / 采集率在支持集内 / 工厂起得来），**全部由外壳报上来**：
+    /// 它在 `Windows` / `LinuxDesktop` / `LinuxHeadless` 三档的 [`host_ceiling`] 里，
+    /// 外壳按判据决定报不报 `off`（今天三档的外壳都报 `not_wired`：工厂那条路还没接上）。
     SoftAec = 20,
 }
 
@@ -347,6 +351,10 @@ impl HostFacts {
     /// 关掉的是**要外壳多做一步才有**的四位，报 [`UnavailableReason::NotWired`]：虚拟麦
     /// （Windows 要 VB-CABLE、Linux 要节点真的建出来）、进程环回（Windows 要 build ≥ 20348、
     /// Linux 要 PipeWire）、托盘（要有托盘宿主）、全局热键（Linux 要 `input` 组）。
+    /// `soft_aec` 也在这个表里：它已经进了 `LinuxDesktop` 的档位上限，而缺省值**不是它的
+    /// 定义者**——"这个构建编没编进去 / 采集与播放同声卡 / 工厂起得来"三条都只有外壳答得了。
+    /// 不报它就是 fail-open：`effective()` 会把这一位算成"开"。
+    /// 注意它**不是**"这一档做不到"：判据齐了就能开，所以是 `not_wired` 而不是 `unsupported`。
     /// 其余位照档位上限算开：它们由"这一档有没有"决定（采集 / 字幕 / 后台存活），不是"接没接"，
     /// 缺省把它们也关掉只会让芯被单独使用时连一份清单都造不出来。
     ///
@@ -361,6 +369,7 @@ impl HostFacts {
                 (Capability::ProgramTap, UnavailableReason::NotWired),
                 (Capability::Tray, UnavailableReason::NotWired),
                 (Capability::GlobalHotkey, UnavailableReason::NotWired),
+                (Capability::SoftAec, UnavailableReason::NotWired),
             ]),
             virtual_mic_device: None,
         }
@@ -401,9 +410,12 @@ impl HostFacts {
 ///
 /// - 表里是**结构上限**：这一档"有没有这一位"。今天有没有，由外壳的 [`HostFacts::off`] 决定。
 /// - 不在表里的位，外壳就算报了也打不开（`false(unsupported)` 的含义）。
-///   `hw_aec` / `soft_aec` 今天**四档都不在表里**：前者没有探测手段，后者的判据（这个构建
-///   编没编进去 / 采集与播放同声卡 / 采样率 / 工厂起得来）要等外壳报上来。它们进这张表的那一天
-///   = 有外壳真的在定义它们（模块头纪律 2）。
+///   `hw_aec` **四档都不在表里**：我们没有任何手段探测一块会议麦的 AEC 芯片在不在
+///   （udev / ALSA 都不报），没有定义者就恒假（`docs/plans/S4-C-AEC.md` §4.2）。
+///   `soft_aec` 在 `Windows` / `LinuxDesktop` / `LinuxHeadless` 三档的表里：它的判据
+///   （这个构建编没编进去 / 采集与播放同声卡 / 采样率 / 工厂起得来）由外壳逐条报上来
+///   （§4.3 的 B1–B4），所以**进不进表 = 有没有外壳真的在定义它们**（模块头纪律 2）。
+///   它**不在 `Android` 上限里**：那一档还没有任何 AEC 判据。
 /// - Windows 独有的 `vr_captions` 是"这个构建编没编进去"——它在 Windows 上限里，由外壳用
 ///   [`UnavailableReason::NotBuilt`] 关掉。
 pub fn host_ceiling(host: HostKind) -> CapabilitySet {
@@ -417,6 +429,8 @@ pub fn host_ceiling(host: HostKind) -> CapabilitySet {
             Capability::Tray,
             Capability::BackgroundService,
             Capability::VrCaptions,
+            // 软件 AEC 是芯 + DSP 的活，与平台音频后端无关（S4-C-AEC §4.3）。
+            Capability::SoftAec,
         ]),
         HostKind::LinuxDesktop => CapabilitySet::of(&[
             Capability::Mic,
@@ -426,6 +440,7 @@ pub fn host_ceiling(host: HostKind) -> CapabilitySet {
             Capability::GlobalHotkey,
             Capability::Tray,
             Capability::BackgroundService,
+            Capability::SoftAec,
         ]),
         HostKind::Android => CapabilitySet::of(&[
             Capability::Mic,
@@ -436,6 +451,9 @@ pub fn host_ceiling(host: HostKind) -> CapabilitySet {
             // 挂了 USB 声卡且枚举得到时这一位才为真（事实由外壳报）；上限里留着。
             Capability::Mic,
             Capability::BackgroundService,
+            // 无屏档的音频后端就是 ALSA（S4-C-ALSA §6.2），采集与播放同声卡这件事
+            // 由外壳按 B2 判；上限里留着，位今天恒 `not_wired`（见 `HostFacts::uninjected`）。
+            Capability::SoftAec,
         ]),
     }
 }
@@ -667,13 +685,14 @@ mod tests {
         let facts = HostFacts::uninjected();
         let report = CapabilityReport::of(&facts, ModelProvider::Aliyun, ModelProvider::Aliyun);
 
-        // 这四位都要外壳多做一步（装驱动 / 建节点 / 有托盘宿主 / 拿到 `input` 组）才算数：
-        // 没有事实就报"还没接上"，而不是默认全开。
+        // 这五位都要外壳多做一步（装驱动 / 建节点 / 有托盘宿主 / 拿到 `input` 组 /
+        // 接通 AEC 那条腿）才算数：没有事实就报"还没接上"，而不是默认全开。
         for bit in [
             Capability::VirtualMic,
             Capability::ProgramTap,
             Capability::Tray,
             Capability::GlobalHotkey,
+            Capability::SoftAec,
         ] {
             assert_eq!(
                 report.host[&bit],
@@ -744,35 +763,72 @@ mod tests {
         assert!(report.host.values().all(|status| status.is_consistent()));
     }
 
-    /// 两个 AEC 位（`hw_aec` / `soft_aec`）：进 `HOST` 表、`scope()` 认它们是宿主位，
-    /// 但**四档上限都不含**——今天没有定义者（会议麦的 AEC 芯片探不到；软件 AEC 的判据要外壳
-    /// 报上来）。于是报告恒 `off(unsupported)`，外壳往 `off` 里塞它们只会被报成外壳 bug。
+    /// 两个 AEC 位（`hw_aec` / `soft_aec`）的档位口径（`docs/plans/S4-C-AEC.md` §4.2 / §4.3）：
+    ///
+    /// 1. 两位都进 `HOST` 表、`scope()` 都认它们是宿主位（判别式 19 / 20 排在 provider 位之后）；
+    /// 2. `hw_aec` **四档上限都不含**——没有探测手段 ⇒ 报告恒 `off(unsupported)`，
+    ///    外壳往 `off` 里塞它只会被报成外壳 bug；
+    /// 3. `soft_aec` **只在 `Windows` / `LinuxDesktop` / `LinuxHeadless` 三档的上限里**
+    ///    （`Android` 不在：那一档还没有任何 AEC 判据）——上限里有它，位才能被外壳按
+    ///    B1–B4 打开；`all_wired` 那份"都接好了"的事实下这三档就是开的。
+    ///
+    /// 比上一版多的那一条：上一版钉的是"四档上限都不含这两位"（那时两位真的都没有定义者）；
+    /// 现在 `soft_aec` 有定义者了，所以改成**逐档核对它到底在哪些档位的上限里**，
+    /// 且额外钉住"上限里有它 ⇒ 事实齐了它就真的会开"（不再恒 `unsupported`）。
     #[test]
-    fn the_aec_bits_have_no_ceiling_on_any_tier() {
+    fn the_aec_bits_are_host_bits_with_soft_aec_only_in_the_three_wired_tiers() {
+        /// `soft_aec` 进档位上限的那三档：它们的音频后端都是我们已经接上的那几种，
+        /// 判据（B1–B4）有地方落；`Android` 没有。
+        const SOFT_AEC_TIERS: [HostKind; 3] = [
+            HostKind::Windows,
+            HostKind::LinuxDesktop,
+            HostKind::LinuxHeadless,
+        ];
+
         for bit in [Capability::HwAec, Capability::SoftAec] {
             // 判别式排在 provider 位之后（19 / 20）：`scope()` 必须按表反查，不许比大小。
             assert_eq!(bit.scope(), CapabilityScope::Host, "{bit:?} 错桶了");
             assert!(Capability::HOST.contains(&bit), "{bit:?} 不在 HOST 表里");
-            for host in HostKind::ALL {
-                assert!(
-                    !host_ceiling(host).contains(bit),
-                    "{host:?} 的上限里不该有 {bit:?}：没有定义者，算成开就是冒认",
-                );
-            }
         }
 
-        // 外壳把所有位都报成"接好了"也一样：上限里根本没有 ⇒ 恒 `unsupported`，不看外壳说什么。
+        for host in HostKind::ALL {
+            let ceiling = host_ceiling(host);
+            assert!(
+                !ceiling.contains(Capability::HwAec),
+                "{host:?} 的上限里不该有 hw_aec：没有探测手段，算成开就是冒认",
+            );
+            assert_eq!(
+                ceiling.contains(Capability::SoftAec),
+                SOFT_AEC_TIERS.contains(&host),
+                "{host:?} 的 soft_aec 上限与判据的落位对不上（只该在那三档里）",
+            );
+        }
+
+        // 外壳把所有位都报成"接好了"：`hw_aec` 恒 `unsupported`；`soft_aec` 跟上限走
+        // （有判据那三档开着，`Android` 报 `unsupported`）。
         for host in HostKind::ALL {
             let report = CapabilityReport::of(
                 &HostFacts::all_wired(host),
                 ModelProvider::Aliyun,
                 ModelProvider::Aliyun,
             );
-            for bit in [Capability::HwAec, Capability::SoftAec] {
+            assert_eq!(
+                report.host[&Capability::HwAec],
+                CapabilityStatus::off(UnavailableReason::Unsupported),
+                "{host:?} 的 hw_aec 只能报 unsupported",
+            );
+            let soft = report.host[&Capability::SoftAec];
+            if SOFT_AEC_TIERS.contains(&host) {
                 assert_eq!(
-                    report.host[&bit],
+                    soft,
+                    CapabilityStatus::ON,
+                    "{host:?} 的 soft_aec 在上限里，判据齐了就该开着",
+                );
+            } else {
+                assert_eq!(
+                    soft,
                     CapabilityStatus::off(UnavailableReason::Unsupported),
-                    "{host:?} 的 {bit:?} 只能报 unsupported",
+                    "{host:?} 的 soft_aec 在上限之外，只能报 unsupported",
                 );
             }
         }

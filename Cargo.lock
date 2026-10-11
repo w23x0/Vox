@@ -6111,7 +6111,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "vox-audio-linux",
+ "vox-audio-alsa",
  "vox-core",
  "vox-dsp",
  "vox-host",

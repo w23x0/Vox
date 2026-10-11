@@ -22,7 +22,8 @@ mod registry;
 
 pub use capture::AlsaCapture;
 pub use playback::AlsaPlayback;
-pub use registry::AlsaDeviceRegistry;
+pub use probe::CAPTURE_WANT_RATE;
+pub use registry::{same_card, AlsaDeviceRegistry};
 
 /// 碰本机 `Loopback` 卡的 `#[ignore]` 用例共用这一把锁。
 ///

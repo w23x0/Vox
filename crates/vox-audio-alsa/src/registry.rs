@@ -147,6 +147,33 @@ pub(crate) fn hw_device_number(id: &str) -> Option<u32> {
     device.parse().ok()
 }
 
+/// 两个 id 是不是**同一张声卡**。判据是 `docs/plans/S4-C-AEC.md` §4.3 的 B2：
+/// 软件回声消除要求采集源与播放汇共用一个时钟域，否则频率会漂。
+///
+/// 边界（写清，免得日后被当成比它更强的保证）：
+///
+/// * 同声卡 = **同一个 `snd_pcm` 时钟域**——同一个 codec 的 ADC/DAC 共用一个采样时钟。
+///   这是 ALSA 硬件拓扑给的保证，但它**只到"频率不漂"为止**：**不保证时延恒定**
+///   （环缓冲排队量、USB 帧抖动、驱动缓冲深度都会动），相位那部分靠 AEC 自己的对齐机制。
+///   稿 §4.3 把"频率不会漂"这一条标了 `[未核实]`（要等有板子时拿 W4 的对拍才证实），
+///   这里照抄那个口径，**不当事实用**。
+/// * 卡名只认 `hw:CARD=` 后面的**第一段**（到第一个逗号为止）：`hw:CARD=PCH,DEV=0` 与
+///   `hw:CARD=PCH` 都认成 `PCH`。ALSA 的 `CARD=` 语法表示不了逗号，所以"卡名里带逗号"
+///   这种事不存在；真出现也只比较第一段。
+/// * 任一端不是 `hw:CARD=` 开头（`default` / `plughw:` / 空串）就判 `false`：
+///   **认不出是同一张卡 = 不成立**，与 `capability.rs` 的"位为真必须有定义者"同一条纪律
+///   ——宁可报 `unsupported`，不许猜一个"应该是同一张吧"。
+pub fn same_card(capture: &str, playback: &str) -> bool {
+    card_of(capture)
+        .zip(card_of(playback))
+        .is_some_and(|(a, b)| a == b)
+}
+
+/// `hw:CARD=PCH,DEV=0` 里的 `PCH`（§5.4 的 id 口径）。不是这个形式就 `None`。
+fn card_of(id: &str) -> Option<&str> {
+    id.strip_prefix("hw:CARD=")?.split(',').next()
+}
+
 /// 给人看的名字：hint 的 `DESC` 首行 → 所属卡的 longname → `id` 本身。
 ///
 /// 只取首行是因为 ALSA 的 `DESC` 是两行：首行是设备，第二行是
@@ -530,6 +557,51 @@ mod tests {
         assert_eq!(hw_device_number("hw:CARD=Loopback,DEV=x"), None);
         assert_eq!(hw_device_number("default"), None);
         assert_eq!(hw_device_number(""), None);
+    }
+
+    /// B2 的真值表（`docs/plans/S4-C-AEC.md` §4.3）：只有两端都是 `hw:CARD=<卡名>` 形式、
+    /// 且卡名真的相同才算同一张卡。`,DEV=` 不同**不影响**——同一张卡的采集口与播放口
+    /// 往往是不同的 device 号，判据看的是卡（时钟域），不是设备号。
+    #[test]
+    fn same_card_compares_the_card_segment_and_refuses_anything_else() {
+        // 同卡不同口：成立（AEC 要的就是这个）。
+        assert!(same_card("hw:CARD=PCH,DEV=0", "hw:CARD=PCH,DEV=3"));
+        assert!(same_card(
+            "hw:CARD=Generic_1,DEV=0",
+            "hw:CARD=Generic_1,DEV=1"
+        ));
+        // 卡名不同：不成立。
+        assert!(!same_card("hw:CARD=PCH,DEV=0", "hw:CARD=NVidia,DEV=3"));
+        // 卡名是前缀 / 后缀关系时不许误判成同一张。
+        assert!(!same_card(
+            "hw:CARD=Generic,DEV=0",
+            "hw:CARD=Generic_1,DEV=0"
+        ));
+        // 卡名里带逗号也不算串（只按第一个逗号切卡名段，DEV 段在后面）。
+        assert!(same_card(
+            "hw:CARD=Odd,Name,DEV=0",
+            "hw:CARD=Odd,Name,DEV=1"
+        ));
+
+        // `None` 端：不是 `hw:CARD=` 形式的一律不成立——认不出同一张卡就是"拿不到证据"，
+        // 不许退化成"大概是一张吧"（`default` 背后是哪张卡要看 alsa.conf）。
+        for bogus in [
+            "default",
+            "plughw:CARD=PCH,DEV=0",
+            "hw:0,0",
+            "hw:CARDNAMELESS",
+            "",
+        ] {
+            assert!(!same_card(bogus, "hw:CARD=PCH,DEV=0"), "{bogus}");
+            assert!(!same_card("hw:CARD=PCH,DEV=0", bogus), "{bogus}");
+        }
+        assert!(
+            !same_card("default", "default"),
+            "两端都认不出卡 ⇒ 不成立，不许因为字面相等就放行"
+        );
+        assert_eq!(card_of("hw:CARD=PCH,DEV=0"), Some("PCH"));
+        assert_eq!(card_of("plughw:CARD=PCH,DEV=0"), None);
+        assert_eq!(card_of("default"), None);
     }
 
     #[test]

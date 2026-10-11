@@ -3,7 +3,7 @@
 //! 为什么单测不够：`--print-capabilities` / `--dry-run` / 常驻模式这三条都是"进程行为"
 //! （退出码、stdout 上打什么、建不建目录、写不写盘、端口起没起），单元测试碰不到这些。
 //!
-//! 只在 Linux 上跑：这个二进制要 `vox-audio-linux`（PipeWire），别的宿主上装配本来就
+//! 只在 Linux 上跑：这个二进制要 `vox-audio-alsa`（ALSA 直开），别的宿主上装配本来就
 //! 该明确失败（`platform/other.rs`）。
 #![cfg(target_os = "linux")]
 
@@ -132,7 +132,7 @@ fn print_composition_says_why_a_leg_is_null_instead_of_faking_one() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// 验收第二条的"只走装配"：`--dry-run` 不监听、不碰 PipeWire、**不建配置目录**、不写盘——
+/// 验收第二条的"只走装配"：`--dry-run` 不监听、不碰音频设备、**不建配置目录**、不写盘——
 /// `--config` 指到一个还不存在的目录，跑完那个目录**还是不存在**（报告命令不该留副作用）。
 #[test]
 fn dry_run_assembles_without_side_effects() {

@@ -1,11 +1,11 @@
-//! 装配层本体：把芯、PipeWire 音频、配置、状态出口、控制面拼成一个能跑的进程。
+//! 装配层本体：把芯、ALSA 音频、配置、状态出口、控制面拼成一个能跑的进程。
 //!
 //! 两步走，对应两种模式：
 //!
 //! - [`Assembly`]：**芯的那一半**——本机的端口列成一份 [`HostPorts`]，剩下的共用步骤交给
 //!   [`vox_host::Core::assemble`]（落盘 → 设置+时钟+账本 → 密钥 → 用量 → 事实 → 启动提示 →
 //!   落盘监听），再扫一次设备目录。`--print-capabilities` / `--print-composition` /
-//!   `--dry-run` 到这一步就够，而且走 [`Probe::Nothing`]：**不碰 PipeWire**（不枚举设备、
+//!   `--dry-run` 到这一步就够，而且走 [`Probe::Nothing`]：**不碰音频设备**（不枚举设备目录、
 //!   不探可用性），也不建配置目录（只读）。
 //! - [`Daemon`]：**跑得起来的那一半**——接上网络运行时与流水线引擎，起控制面，开工。
 //!
@@ -50,32 +50,32 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 /// 一条腿一根 socket，两条腿也就两根，多起的线程在 1–2 核的小板子上纯属白占。
 const NET_WORKER_THREADS: usize = 2;
 
-/// 装配时**碰不碰这台机器上的 PipeWire**。
+/// 装配时**碰不碰这台机器上的音频设备**。
 ///
 /// 报告三模式（`--print-capabilities` / `--print-composition` / `--dry-run`）走
 /// [`Probe::Nothing`]：它们的输出只吃**设置 + [`HostFacts`]**——清单是
 /// `Composition::of(设置, 事实)`、能力报告是"档位上限 − 关掉的位"，设备目录与
-/// "PipeWire 在不在"一条都不进任何一格。而这两样都要真连一次 PipeWire
-/// （`LinuxDeviceRegistry` 每次调用连一轮、`pipewire_available()` 也要连）：打一份 JSON
-/// 不该去连音频服务。
+/// "ALSA 在不在"一条都不进任何一格。而这两样都要真去碰音频设备
+/// （`AlsaDeviceRegistry` 每次调用枚举一轮 pcm hint、`alsa_available()` 还要开一条 PCM）：
+/// 打一份 JSON 不该去碰它们。
 ///
-/// 常驻模式走 [`Probe::PipeWire`]：设备目录要进账本（`set_devices`，界面/控制面才看得到
+/// 常驻模式走 [`Probe::Audio`]：设备目录要进账本（`set_devices`，界面/控制面才看得到
 /// 插拔后的设备），启动提示要进 journal（`startup_notes`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Probe {
-    /// 连一次 PipeWire：枚举设备目录 + 探可用性（发一条启动提示）。
-    PipeWire,
+    /// 连一次 ALSA：枚举设备目录 + 探可用性（发一条启动提示）。
+    Audio,
     /// 什么都不碰。
     Nothing,
 }
 
 impl Probe {
-    /// 这个模式要不要碰 PipeWire：报告三模式不要，常驻模式要。
+    /// 这个模式要不要碰音频设备：报告三模式不要，常驻模式要。
     pub fn of(mode: Mode) -> Self {
         if mode.is_read_only() {
             Probe::Nothing
         } else {
-            Probe::PipeWire
+            Probe::Audio
         }
     }
 }
@@ -92,7 +92,7 @@ pub struct Assembly {
 /// 这一档的"本机有什么"，一次列清。
 ///
 /// 装配读它建账本、装引擎读它拿那几个音频工厂——**入口参数只有这一处**（S4-A W5）。
-/// 音频几件套来自 [`platform::platform`]：**连接本身不在这儿探**（`PipeWire 在不在`是运行期
+/// 音频几件套来自 [`platform::platform`]：**连接本身不在这儿探**（`ALSA 在不在`是运行期
 /// 事实，见 [`Probe`]），起流那一刻才知道采不采得到声，这里只把几个工厂装好。
 ///
 /// **重采样的档位就定在这里**：`platform()` 读一次 [`platform::RESAMPLE_QUALITY_ENV`]
@@ -130,7 +130,7 @@ impl Assembly {
     /// 共用的那 7 步在 [`Core::assemble`] 里（与桌面档逐条同源，理由随注释搬过去了）；
     /// 剩下的是这一档特有的：装 [`HostPorts`]、扫一次设备目录。
     ///
-    /// `probe` 决定要不要碰 PipeWire（见 [`Probe`]）：报告三模式传
+    /// `probe` 决定要不要碰音频设备（见 [`Probe`]）：报告三模式传
     /// [`Probe::Nothing`]，那时设备目录是空的、也没有启动提示。
     ///
     /// `persist_mode` 决定落盘层建不建配置目录（见 [`PersistMode`]）：报告三模式传
@@ -144,10 +144,10 @@ impl Assembly {
     ) -> Result<Self> {
         // 1–4 步（落盘 → 设置+时钟+`Runtime` → 密钥 → 用量）与桌面档逐条同源；
         // 第 5–7 步（事实 → 启动提示 → 落盘监听）也在这里做完（`Finish::InAssemble`）：
-        // 这一档的事实定义者（档位、PipeWire 有没有、systemd 单元）装配期就都是定值，
+        // 这一档的事实定义者（档位、ALSA 能不能开、systemd 单元）装配期就都是定值，
         // 不像桌面档要等悬浮窗 / 事件桥 / 热键 / 托盘起来才敢注入。
         // 启动提示受 `Probe` 挡：报告三模式连 notice 都不打出来。
-        let notes = if probe == Probe::PipeWire {
+        let notes = if probe == Probe::Audio {
             Notes::Always
         } else {
             Notes::Never
@@ -156,11 +156,11 @@ impl Assembly {
 
         // 5. 设备快照。无屏档**只扫一次**：没有界面要秒级反映插拔，插拔后重启进程即可
         //    （周期性枚举留给下一轮，见 EMBEDDED §3.2）。报告模式连这一次都不扫
-        //    （`LinuxDeviceRegistry` 每次调用连一轮 PipeWire，而清单与能力报告都不吃
+        //    （`AlsaDeviceRegistry` 每次调用枚举一轮 pcm hint，而清单与能力报告都不吃
         //    设备——见 `Probe`）。
         //    排在 `Core::assemble` 之后：账本得先在。它与注入事实的先后因此与今天相反，
         //    但两者都可观测的出口（事件 / journal）这时都还没挂上，无屏档看不到差别。
-        if probe == Probe::PipeWire {
+        if probe == Probe::Audio {
             let devices = vox_host::scan_devices(ports.registry.as_ref());
             tracing::info!(
                 inputs = devices.inputs.len(),
@@ -323,7 +323,7 @@ pub fn run(args: cli::Args) -> Result<()> {
             println!("{}", assembly.capabilities_json()?);
             Ok(())
         }
-        // S0 §4.3-A：装配完打两份清单就退（不碰 PipeWire、不建目录、不写文件、不监听端口、不起流水线）。
+        // S0 §4.3-A：装配完打两份清单就退（不碰音频设备、不建目录、不写文件、不监听端口、不起流水线）。
         Mode::PrintComposition => {
             println!("{}", assembly.composition_json()?);
             Ok(())
@@ -342,14 +342,14 @@ pub fn run(args: cli::Args) -> Result<()> {
 /// `missing_on`）——那正是 `Plan::build` 在 Start 那一刻要做的事，不碰设备、不连云端
 /// （`session_config_for` 是纯派生），所以这一步能在 systemd 起来之前当自检用。
 ///
-/// 整个进程是**只读**的：不扫设备目录、不探 PipeWire（[`Probe::Nothing`]）、不建配置目录、
+/// 整个进程是**只读**的：不扫设备目录、不探 ALSA（[`Probe::Nothing`]）、不建配置目录、
 /// 不写文件、不监听端口、不起流水线（见 [`run`] 与 [`Paths::ensure_dir`]）。
 fn dry_run(assembly: &Assembly) {
     let facts = assembly.runtime().host_facts();
     tracing::info!(
         tier = ?facts.host,
         config_dir = %assembly.paths().dir.display(),
-        "试装完成：不监听端口、不碰 PipeWire（不枚举设备、不探可用性）、不建配置目录、不开流、不起流水线"
+        "试装完成：不监听端口、不碰音频设备（不枚举设备目录、不探 ALSA 可用性）、不建配置目录、不开流、不起流水线"
     );
     let legs = legs_to_check(&assembly.runtime().settings());
     let labels: Vec<&str> = legs.iter().map(|pipeline| pipeline.label()).collect();
@@ -496,7 +496,7 @@ mod tests {
     fn assembly_injects_the_headless_facts() {
         let paths = temp_paths("facts");
         let dir = paths.dir.clone();
-        let assembly = assembly(paths, Probe::PipeWire, PersistMode::Writing)
+        let assembly = assembly(paths, Probe::Audio, PersistMode::Writing)
             .expect("装配（Linux 上音频三件套装得起来）");
         let facts = assembly.runtime().host_facts();
         assert_eq!(facts.host, vox_core::HostKind::LinuxHeadless);
@@ -515,9 +515,9 @@ mod tests {
     #[test]
     fn the_report_does_not_depend_on_the_device_snapshot() {
         let scanned = {
-            let paths = temp_paths("probe-pipewire");
+            let paths = temp_paths("probe-audio");
             let dir = paths.dir.clone();
-            let assembly = assembly(paths, Probe::PipeWire, PersistMode::Writing).expect("装配");
+            let assembly = assembly(paths, Probe::Audio, PersistMode::Writing).expect("装配");
             let json = assembly.composition_json().expect("清单");
             let _ = std::fs::remove_dir_all(&dir);
             json
@@ -549,39 +549,46 @@ mod tests {
     }
 
     /// 没配密钥时开腿要如实留在"没开"（不许假装在跑），而且原因有一条 `Notice` 说清楚。
+    ///
+    /// 两个宿主上都要编得过：非 Linux 那一支只到"装配该失败"为止（`platform::platform()`
+    /// 明确报错，`platform/other.rs` 的用例管同一件事的下一层），Linux 那一支才走整套。
     #[test]
     fn starting_without_a_key_refuses_instead_of_pretending() {
         let paths = temp_paths("no-key");
-        #[cfg(target_os = "linux")]
-        let daemon = {
-            let assembly = assembly(paths, Probe::PipeWire, PersistMode::Writing).expect("装配");
-            Daemon::start(assembly).expect("起引擎")
-        };
+
         #[cfg(not(target_os = "linux"))]
-        let daemon = {
+        {
             // 非 Linux：装配本来就该失败（`platform::platform()` 明确报错），
             // 这条用例在那边的意义到此为止。
-            assert!(assembly(paths, Probe::PipeWire, PersistMode::Writing).is_err());
+            assert!(assembly(paths, Probe::Audio, PersistMode::Writing).is_err());
             return;
-        };
+        }
 
-        daemon.start_pipelines(Start::Speak);
-        assert_eq!(
-            daemon.runtime().pipeline_state(Pipeline::Speak),
-            vox_core::PipelineState::Idle,
-            "没有密钥就不该进 Starting"
-        );
-        let notices = daemon.runtime().snapshot().notices;
-        assert!(
-            notices
-                .iter()
-                .any(|notice| notice.msg.key == vox_core::notice::key::API_KEY_MISSING),
-            "拒绝的理由要说清楚：{notices:?}"
-        );
+        #[cfg(target_os = "linux")]
+        {
+            let daemon = {
+                let assembly = assembly(paths, Probe::Audio, PersistMode::Writing).expect("装配");
+                Daemon::start(assembly).expect("起引擎")
+            };
 
-        let dir = daemon.paths().dir.clone();
-        daemon.shutdown(None);
-        let _ = std::fs::remove_dir_all(&dir);
+            daemon.start_pipelines(Start::Speak);
+            assert_eq!(
+                daemon.runtime().pipeline_state(Pipeline::Speak),
+                vox_core::PipelineState::Idle,
+                "没有密钥就不该进 Starting"
+            );
+            let notices = daemon.runtime().snapshot().notices;
+            assert!(
+                notices
+                    .iter()
+                    .any(|notice| notice.msg.key == vox_core::notice::key::API_KEY_MISSING),
+                "拒绝的理由要说清楚：{notices:?}"
+            );
+
+            let dir = daemon.paths().dir.clone();
+            daemon.shutdown(None);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     /// 清单自检：缺省配置下（听人说话还没选目标程序）一切都干净。

@@ -11,7 +11,12 @@ use alsa::Direction;
 use vox_core::ports::PortError;
 
 /// 我们向采集侧要的率：降噪的原生率（`docs/platform/EMBEDDED.md` §4-8 的三处写死之一）。
-pub(crate) const CAPTURE_WANT_RATE: u32 = 48_000;
+///
+/// **对外**（`vox_audio_alsa::CAPTURE_WANT_RATE`）：装配层判 `soft_aec` 的 B3 要看它
+/// ——"我们向采集侧要的率在不在 AEC 的支持集里"（`docs/plans/S4-C-AEC.md` §4.3）。
+/// 真实协商出来的率只在起流之后才知道，那一步由链上兜底，不在装配期。
+pub const CAPTURE_WANT_RATE: u32 = 48_000;
+
 /// 采集侧要的声道数：麦克风基本都给单声道或双声道，多声道麦克风阵列不在这一稿。
 pub(crate) const CAPTURE_WANT_CHANNELS: u32 = 1;
 /// 播放侧要的声道数：单声道铺成双声道给声卡（与 `vox-audio-linux` 侧同思路）。

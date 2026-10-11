@@ -1,7 +1,8 @@
 //! 无屏档（小主板 ARM64 Linux）入口。
 //!
 //! 这是跟 `app/src-tauri`（桌面档）**并列的第二个外壳**，不是它的分支：同一份芯
-//! （`vox-core`）、同一份 PipeWire 后端（`vox-audio-linux`），差别只有"入口"与"起了哪些东西"。
+//! （`vox-core`）、自己的音频后端（`vox-audio-alsa`，ALSA 直开——桌面档才是 PipeWire），
+//! 差别只有"入口"与"起了哪些东西"。
 //! 无屏三件（配置从哪进 / 状态往哪出 / 进程怎么活）见 `docs/platform/EMBEDDED.md` §3.5。
 //!
 //! ```text

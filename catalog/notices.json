@@ -196,10 +196,15 @@
       "en": "Could not reach PipeWire. The Linux audio backend needs it (most mainstream distributions ship it by default).",
       "ja": "PipeWire に接続できません。Linux の音声バックエンドは PipeWire を前提としています（主要ディストリビューションでは標準で入っています）。"
     },
-    "notice.pipewireMissingHeadless": {
-      "zh": "没连上 PipeWire：Linux 音频后端以 PipeWire 为前提（主流发行版默认就有；无屏盒子上要装 daemon + 会话管理器）。",
-      "en": "Could not reach PipeWire. The Linux audio backend needs it (most distributions ship it; on a headless box install the daemon and a session manager).",
-      "ja": "PipeWire に接続できません。Linux の音声バックエンドは PipeWire を前提としています（ヘッドレス機ではデーモンとセッションマネージャーを入れてください）。"
+    "notice.alsaMissingHeadless": {
+      "zh": "打不开 ALSA 设备：无屏档的音频后端直接开 ALSA（桌面档才走 PipeWire），先确认装了 libasound2、并且这个用户能读写 /dev/snd。",
+      "en": "Could not open an ALSA device. The headless build talks to ALSA directly (the desktop build uses PipeWire); make sure libasound2 is installed and this user can access /dev/snd.",
+      "ja": "ALSA デバイスを開けません。ヘッドレス版は ALSA を直接使います（デスクトップ版は PipeWire）。libasound2 が入っているか、このユーザーが /dev/snd にアクセスできるかを確認してください。"
+    },
+    "notice.pipewireAlsaBridgeHeadless": {
+      "zh": "检测到 PipeWire 的 ALSA 桥；当前按无屏档缺省使用 ALSA 直开设备。",
+      "en": "Detected PipeWire's ALSA bridge; this headless build still opens ALSA devices directly by default.",
+      "ja": "PipeWire の ALSA ブリッジを検出しました。ヘッドレス版は既定で ALSA デバイスを直接開きます。"
     },
     "notice.headlessNeedsLinux": {
       "zh": "这个构建要在 Linux（ARM64 小主板那类）上跑：非 Linux 宿主没有音频后端。",

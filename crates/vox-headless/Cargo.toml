@@ -1,16 +1,18 @@
 [package]
 name = "vox-headless"
-description = "无屏档（小主板 ARM64 Linux）入口：芯 + PipeWire + 配置进 / 状态出 + 控制面，不引 Tauri"
+description = "无屏档（小主板 ARM64 Linux）入口：芯 + ALSA + 配置进 / 状态出 + 控制面，不引 Tauri"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# 依赖表跟桌面装配层（`app/src-tauri/Cargo.toml`）的**芯侧那一段**一致，只有两条差别：
+# 依赖表跟桌面装配层（`app/src-tauri/Cargo.toml`）的**芯侧那一段**一致，只有三条差别：
 #
 # - **没有 Tauri**（也没有 tauri-plugin-*、GTK、WebKitGTK）：无屏盒子上这些东西既装不了
 #   也不需要——验收会拿 `cargo tree -p vox-headless | grep -c tauri` 钉成 0。
 # - **没有平台外壳的其余三件**（`vox-input-linux` 热键 / `vox-overlay-*` 字幕窗 /
 #   `vox-audio-win` 等）：无屏档不启动热键、不画字幕（`docs/platform/EMBEDDED.md` §3.7）。
+# - **音频后端不是同一份**：无屏档 `vox-audio-alsa`（ALSA 直开），桌面档那一份是 PipeWire
+#   （在 `app/src-tauri/src/platform/linux/audio.rs`）。理由见下面那条依赖的注释。
 #
 # 一个包都不新增：`tracing-subscriber` / `tokio` / `serde` 全在 `Cargo.lock` 里
 # 且已被桌面装配层用过（`git diff Cargo.lock` 只多出本 crate 自己那一格）。
@@ -32,5 +34,10 @@ parking_lot.workspace = true
 tokio.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# 无屏档复用桌面 Linux 那一份音频后端（PipeWire），不新写一行采集/播放。
-vox-audio-linux = { path = "../vox-audio-linux" }
+# 无屏档的音频后端是 **ALSA**，不是桌面档那一份 PipeWire：`DIRECTIONS.md` §8 第 17 行
+# （2026-09-26 裁决，推翻 EMBEDDED §3.2）与 `docs/plans/S4-C-ALSA.md` §6.2 的
+# "按档位定、不做运行时探测切换"——`LinuxHeadless → alsa`、`LinuxDesktop → pipewire`。
+# 理由（§6.2 三条里的第一条，来自代码不是判断）：`host_ceiling(LinuxHeadless)` 里
+# 没有 `program_tap` / `virtual_mic`，所以"PipeWire 在不在"在这一档一位能力位都不影响；
+# ALSA 直开还少一层服务层（`pipewire-alsa` 的桥会把 `default` 导过去，等于双重路由）。
+vox-audio-alsa = { path = "../vox-audio-alsa" }
