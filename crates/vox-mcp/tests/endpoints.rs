@@ -444,6 +444,7 @@ fn editable_is_the_design_table_and_excludes_the_gate_cells() {
         json!([
             "in[0].device",
             "ops[denoise] 有无",
+            "ops[aec] 有无",
             "out[playback(primary)].device",
             "out[playback(monitor)] 有无",
             "session.provider",
@@ -766,6 +767,90 @@ fn presence_cells_write_the_matching_setting() {
         applied["manifest"]["out"][1]["role"],
         json!("monitor"),
         "apply 之后账本派生的清单必须与提交的一致：{applied}"
+    );
+}
+
+/// `ops[aec] 有无` 那一格：清单里有没有这一节 → `settings.speak.aec`（§2.1.4，R13）。
+///
+/// 与 `ops[denoise]` 那条同性质——写的是**设置**，不是"清单保证"：`pipeline/speak.rs::composition`
+/// 在设置之外还有 `soft_aec` 位那道闸（`config.aec && bits.contains(Capability::SoftAec)`），
+/// 所以位为假的机器上"设置是真的、清单里仍没有这一节"。这条用例用一位都不关的桌面档
+/// （两道闸都开着），才谈得上"清单里有这一节 ⇔ 设置是真的"。
+#[test]
+fn the_aec_cell_writes_the_setting() {
+    /// `ops` 里 `aec` 那一节的下标。**按 `kind` 找，不写死下标**——算子链的节数会变
+    /// （W5 就是在 `denoise` 与 `gate` 之间插的这一节），下标会把断言指到别人身上。
+    fn aec_index(manifest: &Value) -> Option<usize> {
+        manifest["ops"]
+            .as_array()?
+            .iter()
+            .position(|op| op["kind"] == json!("aec"))
+    }
+
+    let (runtime, mut backend) = harness(desktop_facts());
+    assert!(
+        runtime.settings().speak.aec,
+        "缺省是开的（`SpeakSettings::default().aec`）"
+    );
+
+    let described = backend
+        .describe_endpoint(EndpointId::Speak)
+        .expect("describe_endpoint");
+    let with_aec = described["manifest"].clone();
+    let index = aec_index(&with_aec).expect("位开 + 设置开 ⇒ 清单里该有 aec 那一节");
+    let aec = with_aec["ops"][index].clone();
+
+    // ① 去掉那一节：dry-run 恰好这一条差异，apply 之后设置真的关掉。
+    let mut without_aec = with_aec;
+    without_aec["ops"]
+        .as_array_mut()
+        .expect("ops 是数组")
+        .remove(index);
+    let dry_run = backend
+        .compose_endpoint(EndpointId::Speak, without_aec.clone(), false, None)
+        .expect("dry-run");
+    assert_eq!(
+        dry_run["changed"],
+        json!([{ "path": "ops[aec]", "from": aec, "to": null }]),
+        "去掉 `ops[aec]` 就是这一格的一条差异：{dry_run}"
+    );
+    let token = dry_run["token"].as_str().expect("token").to_string();
+    let applied = backend
+        .compose_endpoint(EndpointId::Speak, without_aec, true, Some(token))
+        .expect("apply");
+    assert_eq!(applied["applied"], json!(true));
+    assert!(
+        !runtime.settings().speak.aec,
+        "清单里没有 aec ⇒ `speak.aec = false`"
+    );
+    assert_eq!(
+        aec_index(&applied["manifest"]),
+        None,
+        "账本重新派生的清单也没有那一节：{applied}"
+    );
+
+    // ② 把它照原位加回去：同一个机制的另一面（设置真的开回来）。
+    let mut back = applied["manifest"].clone();
+    back["ops"]
+        .as_array_mut()
+        .expect("ops 是数组")
+        .insert(index, aec.clone());
+    let dry_run = backend
+        .compose_endpoint(EndpointId::Speak, back.clone(), false, None)
+        .expect("dry-run");
+    assert_eq!(
+        dry_run["changed"],
+        json!([{ "path": "ops[aec]", "from": null, "to": aec }]),
+        "把 `ops[aec]` 加回去是反方向的一条差异：{dry_run}"
+    );
+    let token = dry_run["token"].as_str().expect("token").to_string();
+    let applied = backend
+        .compose_endpoint(EndpointId::Speak, back, true, Some(token))
+        .expect("apply");
+    assert_eq!(applied["applied"], json!(true));
+    assert!(
+        runtime.settings().speak.aec,
+        "清单里有 aec ⇒ `speak.aec = true`"
     );
 }
 

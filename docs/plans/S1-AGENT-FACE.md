@@ -341,7 +341,7 @@ pub static ACTIONS: &[Action] = &[ /* 5 条，顺序即 tools/list 顺序 */ ];
                               "program_tap": { "enabled": true, "reason": null } } },
   "permissions": [ { "permission": "microphone", "user_granted": true, "os_granted": true },
                    { "permission": "audible_output", "user_granted": true, "os_granted": true } ],
-  "editable": [ "in[0].device", "ops[denoise] 有无",
+  "editable": [ "in[0].device", "ops[denoise] 有无", "ops[aec] 有无",
                 "out[playback(primary)].device",
                 "out[playback(monitor)] 有无", "session.provider",
                 "session.params.target_language", "session.params.voice",
@@ -357,9 +357,9 @@ pub static ACTIONS: &[Action] = &[ /* 5 条，顺序即 tools/list 顺序 */ ];
 - **`control` / `life` / `ui` 三格是档位派生的，唯一来源是芯的 `HostKind::shell()`**（`crates/vox-core/src/composition.rs::HostKind::shell` → `TierShell { life, ui, control }`；`pipeline/{speak,listen}.rs::composition` 是**唯一消费者**，逐字取它——外壳不填、界面不改写）。四档取值（线上 snake_case）：`Windows` / `LinuxDesktop` = `interactive` / `gui` / `["inproc_api","ipc"]`；`Android` = `foreground_service` / `gui` / `["inproc_api","http"]`；**`LinuxHeadless` = `daemon` / `none` / `["mcp","cli","config_file"]`**（无屏档没人点界面，三样都从外面来）。`list_endpoints` 的 `device.control` 也直接取清单那一格（`endpoints.rs::list` 的注释写着"不另立一份'这台设备支持什么通道'的表"）。**上面例子里的 `device` / `manifest` 是桌面档的取值，仍然对**；写别的档位之前先去看那张表——这三格**不是常量**（第十一轮复核抓到的正是"写成桌面档的常量"），照平台名另写一份同样不行（§2.1.4 要求这三格逐字相同，写错就与 `editable` 表打架）。那张表由 `composition.rs::the_shell_cells_follow_the_tier_not_a_core_constant` 逐档钉着（`HostKind::ALL` 四行 × `(life, ui, control)`）。**这三格不受能力位开关影响**（S0 §2.5.3 的"条目 → 需要的位"表里没有它们）：无屏档 `life` 是 `daemon`，而它的 `background_service` 位今天仍报 `false(not_wired)`（上限里有这一位，`host_facts()` 把它放进 `off`——`crates/vox-headless/src/platform/linux.rs`）——两者并存是按设计，**别把 `life` 读成"后台服务已经接上了"**。
 - `manifest` 就是 **S0 的 `Composition` 序列化后的结果**（逐字，含 `schema_version`）：S1 **不解析、不改写、不自己拼** `in/ops/out` 条目。
 - `capabilities` 直接来自 S0 的 `CapabilityReport`，**取法只有一处**：`Runtime::capabilities()`（`crates/vox-core/src/runtime.rs::capabilities`，由 `Runtime::host_facts()` 那份事实算一次；`endpoints.rs` 经 `Ledger::capabilities` 拿它）；**S1 不另定义能力位**：`tier` 是本机宿主档位（`windows` / `linux_desktop` / `android` / `linux_headless`），`host` 仍是宿主机位表，`speak` / `listen` 是两张 provider 位分表（例子里省略了后两张）。
-- `editable` 是 §2.1.4 那张映射表的**键**：告诉调用方"这份清单里哪几格可以改"，比给一份 options JSON Schema 更直接（也避免第二份 schema）。上面的例子是 `speak`（**9 格**：`in[0].device`、`ops[denoise] 有无`、`out[playback(primary)].device`、`out[playback(monitor)] 有无`、`session.provider`、`session.params.target_language`、`session.params.voice`、`session.params.clone_frequency`、`session 有无（= 直通）`）；`listen` 是 **6 格**，与它差在三处——① `in[0].device` 换成 `in[0].executable` + `in[0].include_tree`；② 加 `session.params.source_language`；③ **去掉** `ops[denoise] 有无`、`out[playback(monitor)] 有无`、`session.params.target_language`、`session.params.clone_frequency`、`session 有无（= 直通）`（**两边都不含 `ops[gate]`**，D6）。这张 9 / 6 的键表由 `tests/endpoints.rs::editable_is_the_design_table_and_excludes_the_gate_cells` 逐字钉着。
+- `editable` 是 §2.1.4 那张映射表的**键**：告诉调用方"这份清单里哪几格可以改"，比给一份 options JSON Schema 更直接（也避免第二份 schema）。上面的例子是 `speak`（**10 格**：`in[0].device`、`ops[denoise] 有无`、`ops[aec] 有无`、`out[playback(primary)].device`、`out[playback(monitor)] 有无`、`session.provider`、`session.params.target_language`、`session.params.voice`、`session.params.clone_frequency`、`session 有无（= 直通）`）；`listen` 是 **6 格**，与它差在三处——① `in[0].device` 换成 `in[0].executable` + `in[0].include_tree`；② 加 `session.params.source_language`；③ **去掉** `ops[denoise] 有无`、`ops[aec] 有无`、`out[playback(monitor)] 有无`、`session.params.target_language`、`session.params.clone_frequency`、`session 有无（= 直通）`（**两边都不含 `ops[gate]`**，D6）。这张 10 / 6 的键表由 `tests/endpoints.rs::editable_is_the_design_table_and_excludes_the_gate_cells` 逐字钉着。
 - `editable` 之外的格分两类：**必须逐字相同**（`host`/`life`/`ui`/`control`/`schema_version`/`role`/`track`）与**恒定的结构**（`ops[mono]` 恒在、`out[captions]` 恒在、`ops[resample]` 与 `session` 联动）。改动它们 → `unsupported_field`。
-- **`ops[gate]` 两格不进 `editable`（D6）**：闸门配置今天**仍经 `SessionConfig.gate` 走**——`Settings.speak.activation_mode` / `gate_threshold` 由 `Runtime::gate_for` 折成 `SessionConfig.gate`，清单里的 `ops[gate].config` 只是它的**投影**；`endpoints.rs` 的反方向表里**没有**这两格（`SPEAK_CELLS` 9 格，逐格见 §2.1.4），而 `tail_ms` / `preroll_ms` 在 `Settings` 里**根本没有存储**。把这两格列进 `editable` 就是让调用方做空动作：提交对它们的改动只该得到 `unsupported_field`，`why` 取 `endpoints.rs::why` 里那条（"闸门配置仍经 `SessionConfig.gate` 走（D6）：`Settings` 里没有 `tail_ms` / `preroll_ms` 的存储，改它是空动作"）。等那两格有了存储，再把它们放回 `editable`（§2.1.4 表里那两行已按此标注）。
+- **`ops[gate]` 两格不进 `editable`（D6）**：闸门配置今天**仍经 `SessionConfig.gate` 走**——`Settings.speak.activation_mode` / `gate_threshold` 由 `Runtime::gate_for` 折成 `SessionConfig.gate`，清单里的 `ops[gate].config` 只是它的**投影**；`endpoints.rs` 的反方向表里**没有**这两格（`SPEAK_CELLS` 10 格，逐格见 §2.1.4），而 `tail_ms` / `preroll_ms` 在 `Settings` 里**根本没有存储**。把这两格列进 `editable` 就是让调用方做空动作：提交对它们的改动只该得到 `unsupported_field`，`why` 取 `endpoints.rs::why` 里那条（"闸门配置仍经 `SessionConfig.gate` 走（D6）：`Settings` 里没有 `tail_ms` / `preroll_ms` 的存储，改它是空动作"）。等那两格有了存储，再把它们放回 `editable`（§2.1.4 表里那两行已按此标注）。
 - 失败：`endpoint` 是 `enum` 约束 → 非法 id 属 schema 违规 → `-32602`。
 - 用户同意：不需要。长任务：否。幂等：是。
 - 这是三层渐进发现里的 **inspect** 层（`agent://AgentFace` §2.4）。
@@ -470,7 +470,7 @@ pub static ACTIONS: &[Action] = &[ /* 5 条，顺序即 tools/list 顺序 */ ];
 
 清单是 `Settings` 的**只读投影**（S0 的 `pipeline/{speak,listen}.rs::composition` 就是这个方向），
 所以 `compose_endpoint` 要做的是**反方向**：把清单里的差异翻译成 `Settings` 的写入。
-这张表就是那条翻译规则，**只有一处**（`endpoints.rs` 的两张静态表：`SPEAK_CELLS` 9 格 / `LISTEN_CELLS` 6 格，每格一个 `Cell { key, path, write }`）。
+这张表就是那条翻译规则，**只有一处**（`endpoints.rs` 的两张静态表：`SPEAK_CELLS` 10 格 / `LISTEN_CELLS` 6 格，每格一个 `Cell { key, path, write }`）。
 **表的边界照 S0 的 §2.7「进清单 / 不进清单」抄**（那张表是权威，本表是它的反向实现）。
 
 | 清单路径（`editable` 的键；标"**不在 `editable`**"的两行是例外，D6） | 映射到 | 规则 / 依据 |
@@ -478,6 +478,7 @@ pub static ACTIONS: &[Action] = &[ /* 5 条，顺序即 tools/list 顺序 */ ];
 | `in[0].device` | `SpeakSettings.input_device` | 只有 `speak` 的 `Input::Mic{device}` 有这一格（`listen` 的 `in[0]` 是 `process_loopback`，没有 `device`） |
 | `in[0].executable` / `in[0].include_tree` | `ListenSettings.target.executable` / `.include_process_tree` | `listen`；**同名带过去**（`crates/vox-core/src/settings.rs::ListenTarget`，写稿当时 `:190-198`，**第十六轮核到 `:239-247`**）。`display_name` **不在清单里**：按 executable 去 `DeviceRegistry::audio_apps`（`crates/vox-core/src/ports.rs::DeviceRegistry`）查；查不到 → `unsupported_field`（让用户先在界面里选一次） |
 | `ops[denoise]` 有无 | `SpeakSettings.denoise` | 只有 `speak` 有这一节（`pipeline/{speak,listen}.rs::composition` 的 `Op::Denoise`）；`listen` 出现 denoise → `unsupported_field` |
+| `ops[aec]` 有无 | `SpeakSettings.aec` | 只有 `speak` 有这一节（`pipeline/speak.rs::composition` 的 `Op::Aec`，**两道闸**：`config.aec && bits.contains(Capability::SoftAec)`）→ 这一格写的是**设置**，不是"清单保证"（与 `ops[denoise]` 那格同性质）：位为假时设置照存下来、清单里仍不装那一节。**它还是"启动格"**：`speak.aec` 不在 `Runtime::restart_required` 的热更新白名单里，改它要重开这条腿——与 `in[0].device` / `session.provider` 同类，照既有口径办（控制面不加说明，芯的 `update_settings` 替用户停掉重开并 `Notice`）。`listen` 出现 aec → `unsupported_field`（`pipeline/listen.rs::composition` 的 `ops` 里没有这一节，与 denoise 同理） |
 | `ops[mono]` | —— | 必须**恒在**（现状恒有）；缺 → `unsupported_field` |
 | `ops[gate].config.kind`（**不在 `editable`**，D6） | `SpeakSettings.activation_mode`（**只这一半**） | **为什么排除**：闸门配置仍经 `SessionConfig.gate` 走（`Settings.speak.activation_mode`/`gate_threshold` → `Runtime::gate_for`，写稿当时 `:648-653`，现 `:689-694`），`endpoints.rs` 的反方向表里**没有**这一格 → 改清单这一格是空动作（`endpoints.rs::why` 给的就是这句）。映射规则（等那两格有了存储再照此实现）：反写（清单 → `Settings`）按 `kind`：`manual` ⇒ `hold`，`level` ⇒ `toggle`（`GateConfig::MANUAL`；`level` 那侧见 `Runtime::gate_for`）。**只按 `kind` 判断，不许比 threshold**——Toggle 下阈值也可以是 0.012，比数字分不出来。正方向只说"清单表达了它的 **gate 那一半**"：跟着 `activation_mode` 走的**热键语义**（`Toggle` = 按一下切开关、`Hold` = 按下为真松开为假，`Runtime::on_hotkey`，写稿当时 `:826-835`，现 `:923-928`）与**切换时重置开麦状态**（`Runtime::reset_mic_active_locked`，写稿当时 `:493-496`，现 `:713`）**不在清单里** → 别把这一格写成 `activation_mode ⇔ kind` 的双向等价 |
 | `ops[gate].config.threshold`（**不在 `editable`**，D6） | `SpeakSettings.gate_threshold` | **为什么排除**：同上——`SessionConfig.gate` 是唯一落点，反方向表里没有这一格；且 `tail_ms`/`preroll_ms` 与 `kind` 的预设不符时 `Settings` 里没有能写的地方。映射规则（等那两格有了存储再照此实现）：只在 `kind: level` 时有意义（默认 `Toggle` ⇒ `level`，阈值默认 0.012，`SpeakSettings::default()`，**第十六轮核到 `:191`**；第二十二轮照代码复核未漂——`gate_threshold: 0.012` 在 `crates/vox-core/src/settings.rs:191`）。**两个预设的常数不一样，别写成一个**（`crates/vox-core/src/gate.rs`，写稿当时 `:34-51`，现 `:36-55`）：`GateConfig::MANUAL` = `manual / 0.012 / tail 150 / preroll 100`（Hold 与 `Default` 用）；`GateConfig::level(t)` = `level / t.max(0.0) / tail 600 / preroll 200`（Toggle 与 Listen 用，Listen 恒 `t = 0.0`）。`tail_ms`/`preroll_ms` 与当前 `kind` 的预设不符 → `unsupported_field`（`Settings` 里没有这两格） |
@@ -777,7 +778,7 @@ crates/vox-mcp/
 │  ├─ handlers.rs             # ControlBackend（9 个方法 = 5 个动作 + 资源面 3 个 + control_enabled）+ 手写入参校验 + 穷尽 match 分派
 │  ├─ jsonrpc.rs              # JSON-RPC 2.0 帧 + 规范错误码常量（一个数字都不自造）
 │  ├─ ledger.rs               # Ledger 端口（唯一读/写账本）+ Grants 端口（授权位）+ Denied + `impl Ledger for Runtime`
-│  ├─ endpoints.rs            # 端点目录 + 投影 `Composition::of` + 反方向表（SPEAK_CELLS 9 / LISTEN_CELLS 6）+ 差异
+│  ├─ endpoints.rs            # 端点目录 + 投影 `Composition::of` + 反方向表（SPEAK_CELLS 10 / LISTEN_CELLS 6）+ 差异
 │  ├─ resources.rs            # 资源**形状**：URI、list 条目、read 快照、ResourceTick（不含协议、不含账本）
 │  ├─ transcript.rs           # 变更检测：事件口（confirmed/done）+ 账本口（每拍比指纹）→ revision
 │  ├─ session.rs              # handle 注册表 + compose token + 资源面数据面（list/read/poll）+ `control_enabled` + `LedgerBackend`
@@ -1136,7 +1137,7 @@ POST() { # $1=Mcp-Method $2=Mcp-Name $3=body
 | `the_projection_round_trips_on_a_real_settings_snapshot` | 原样发回零差异 + 改一格恰好一条差异 + apply 真落进账本 + **同 token 重放必须失败**（第 12 条的全部要点） |
 | `a_compose_token_expires_exactly_at_its_ttl_and_a_failed_apply_burns_it` | TTL 边界（TTL−1 ms 仍认、过期即废）**且用错一次就把待用 token 烧掉**（fail-closed）（第 12 条的时间面） |
 | `a_compose_token_is_bound_to_the_manifest_it_was_signed_for` | token 绑的是**清单文本**：换成另一份清单再拿同一个 token → `compose_token_stale`（第 12 条的"绑定"面） |
-| `editable_is_the_design_table_and_excludes_the_gate_cells` | `editable` 逐字 = §2.1.4（speak 9 格 / listen 6 格），**且不含 `ops[gate]` 那两格**（D6）（第 11 条） |
+| `editable_is_the_design_table_and_excludes_the_gate_cells` | `editable` 逐字 = §2.1.4（speak 10 格 / listen 6 格），**且不含 `ops[gate]` 那两格**（D6）（第 11 条） |
 | `a_manifest_without_an_input_is_rejected_on_the_first_gate` | `in: []` → 协议错误通道 + `data.errors[0].kind == "missing_input"`（D4）（第 12 条负例⑤） |
 | `a_manifest_from_another_tier_is_reported_before_the_diff` | 拿错档位 → `host_mismatch`，**排在 diff 之前**（第 12 条负例④ + §2.1.3-③ 的顺序理由） |
 | `inconsistent_or_immutable_cells_are_refused_with_a_reason` | 不可改 / 不自洽的格 → `unsupported_field` 带 `path` / `why` / `expected`（第 12 条负例①②③与 `ops[gate]` 那条） |

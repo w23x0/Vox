@@ -113,7 +113,7 @@ pub static ENDPOINTS: &[Endpoint] = &[
 ];
 
 /// `speak` 的反方向表（§2.1.4）。**不含 `ops[gate]` 那两行**（D6，见模块头）。
-static SPEAK_CELLS: [Cell; 9] = [
+static SPEAK_CELLS: [Cell; 10] = [
     Cell {
         key: "in[0].device",
         path: "in[mic].device",
@@ -127,6 +127,14 @@ static SPEAK_CELLS: [Cell; 9] = [
         path: "ops[denoise]",
         write: |settings, submitted, _| {
             settings.speak.denoise = has_op(submitted, "denoise");
+            Ok(())
+        },
+    },
+    Cell {
+        key: "ops[aec] 有无",
+        path: "ops[aec]",
+        write: |settings, submitted, _| {
+            settings.speak.aec = has_op(submitted, "aec");
             Ok(())
         },
     },
