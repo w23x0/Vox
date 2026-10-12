@@ -1,0 +1,83 @@
+# CI (Linux · x86-64 native) —— 每个 push 都跑一次"Linux 专属成员真的编过、跑得过"
+#
+# 为什么需要这个 job（`ci-windows.yml` 与 `ci-arm64.yml` 各缺一半）：
+#
+# - `ci-windows.yml` 把五个 Linux 专属成员全 `--exclude` 掉了
+#   （`vox-input-linux` / `vox-audio-linux` / `vox-audio-alsa` /
+#   `vox-overlay-linux` / `vox-headless`），它的文件头写得很清楚：那些 crate
+#   "只承诺在 Linux 上编过——那边由**本机**的 `cargo test --workspace` 和
+#   release.yml 盯着"。
+# - `ci-arm64.yml` 只 `-p vox-core -p vox-dsp`：它证明的是"芯与 DSP 在 ARM64 上
+#   能编、跑得对"，**不覆盖外壳**。
+# - `release.yml` 有 `cargo test --workspace`，但只在**打 tag** 时跑。
+#
+# ⇒ 合起来就是：**一次普通 push 到 main，没有任何 job 编译 Linux 专属成员**。
+# 这个洞已经咬过三次：`vox-headless` 的 `platform/other.rs` 里两处编译错误躺了很久
+# （非 Linux 分支根本没人编）；`vox-audio-alsa` 写完几个星期**零使用者**
+# （`vox-headless` 还挂在 PipeWire 上）；以及所有"换台机器才炸"的问题。
+#
+# 本 job 补的就是那一半：**原生 Linux 全量**（fmt / clippy / test，含 Tauri 装配层）。
+# aarch64 那半仍归 `ci-arm64.yml`（它只跑芯与 DSP：`vox-audio-alsa` /
+# `vox-headless` 要交叉编译得先给 alsa / pipewire 的 aarch64 sysroot，另案）。
+name: CI (Linux)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # 系统依赖：与 `release.yml` 的 Linux 端同一份（少 patchelf —— 不出包）。
+      #   libpipewire-0.3-dev / libasound2-dev —— 两个音频后端的 .pc 与头文件
+      #   clang / libclang-dev —— libspa-sys 的 build.rs 用 bindgen 生成绑定，
+      #                          缺了会以 "stdbool.h file not found" 直接 panic
+      #   webkit2gtk / gtk / soup / javascriptcore / ayatana / rsvg —— Tauri 装配层
+      #   fonts-noto-cjk / fonts-dejavu-core —— vox-overlay-linux 的光栅器测试要真字体
+      #     （一条断言"汉字必须有墨迹"，另一条要能查到系统无衬线字体）
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config curl wget file libssl-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libpipewire-0.3-dev libasound2-dev clang libclang-dev fonts-noto-cjk fonts-dejavu-core
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: .
+
+      # 三门逐一跑：fmt / clippy / test。`--locked` = lock 文件必须是最新的，
+      # CI 不许悄悄改依赖；`--no-fail-fast` = 一条红了也把剩下的跑完，
+      # 免得一次只看得到一个失败。
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked --workspace --no-fail-fast
+
+      # 第四门：**非 Linux 分支也要编**。
+      #
+      # `vox-headless` 的 `platform/other.rs`（"其它平台"那一支）只在非 Linux 目标上
+      # 编译，所以此前**没有任何机器编过它**——里面两处错误（`headless.rs` 的 E0282
+      # 与 `other.rs` 的 E0277）就这么躺着。2026-10-12 修掉之后这里补一道闸。
+      # 只 `cargo check`：不链接，也不需要 Windows 的 libc。
+      #
+      # 这一步是对 `ci-windows.yml` 文件头那段"要在 Windows 上连它们一起编，得先给
+      # 它们补 cfg 门控"的**部分收口**：`vox-headless` 现在补完了，别的成员没有，
+      # 所以这里只检它一个，别扩。
+      - name: Cross-check the headless shell's non-Linux branch
+        run: |
+          rustup target add x86_64-pc-windows-gnu
+          cargo check --locked -p vox-headless --all-targets --target x86_64-pc-windows-gnu
