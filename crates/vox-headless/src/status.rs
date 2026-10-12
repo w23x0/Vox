@@ -108,15 +108,32 @@ mod tests {
         let document: serde_json::Value = serde_json::from_str(&json).expect("合法 JSON");
 
         assert_eq!(document["capabilities"]["tier"], "linux_headless");
-        // 对外说话：麦克风进、四节算子、译文出声。这一档没有 `virtual_mic` 位，
+        // 对外说话：麦克风进、算子链、译文出声。这一档没有 `virtual_mic` 位，
         // 所以角色退成 `speaker`（"位为假 → 那一格退档"，不是删功能）。
+        //
+        // **算子的节数随机器而定**：`aec` 只在 `soft_aec` 位为真时才多出来
+        // （`platform::linux::soft_aec_unavailable_reason` 按 B1–B4 判：裸板子上可能是真，
+        // 开发机上认不出卡名就是假）。所以这里钉**与机器无关**的形状：四节必须都在、
+        // 顺序正确，`aec` 若在必须夹在 `denoise` 与 `gate` 之间。
         assert_eq!(document["speak"]["in"][0]["kind"], "mic");
         assert_eq!(document["speak"]["out"][0]["role"], "speaker");
         assert_eq!(document["speak"]["session"]["provider"], "aliyun");
-        assert_eq!(
-            op_kinds(&document["speak"]),
-            ["mono", "denoise", "gate", "resample"]
-        );
+        let speak_ops = op_kinds(&document["speak"]);
+        for kind in ["mono", "denoise", "gate", "resample"] {
+            assert!(
+                speak_ops.iter().any(|present| present == kind),
+                "缺了 {kind}：{speak_ops:?}"
+            );
+        }
+        if let Some(at) = speak_ops.iter().position(|kind| kind == "aec") {
+            assert!(at > 0, "aec 前面该是 denoise：{speak_ops:?}");
+            assert_eq!(speak_ops[at - 1], "denoise", "aec 该紧跟在 denoise 之后");
+            assert_eq!(
+                speak_ops.get(at + 1).map(String::as_str),
+                Some("gate"),
+                "aec 该排在 gate 之前"
+            );
+        }
 
         // 缺省没有要抓的程序：这条腿现在**派不出来** → `null` + 一句为什么。
         // （打一份看起来像清单的假清单比打 null 糟得多。）

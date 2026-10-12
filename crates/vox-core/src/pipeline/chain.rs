@@ -950,9 +950,11 @@ mod tests {
             monitor_translation: false,
             loopback_target: None,
             denoise: true,
-            // 与账本派生的那份一致：Speak 缺省开着（`SpeakSettings::default().aec`），
-            // 而 `base_config(Listen)` 由 `listen::composition` 决定装不装（恒不装）。
-            aec: true,
+            // 与账本派生的那份对齐：Speak 取 `settings.speak.aec`（缺省开），
+            // Listen 恒 `false`（`Runtime::session_config_for` 那一支写死——抓的是别的程序的
+            // 数字源，没有回声路径）。这里也不能图省事写死 `true`：将来谁让 listen 尊重
+            // `aec`，这份夹具就会悄悄给 Listen 装上 AEC。
+            aec: matches!(pipeline, Pipeline::Speak),
             source_language: None,
             aliyun_endpoint: crate::cloud::AliyunEndpoint::default(),
             network: crate::settings::NetworkSetting::default(),
