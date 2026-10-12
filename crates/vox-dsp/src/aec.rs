@@ -130,6 +130,8 @@ fn sub_frame_refs() -> [Vec<&'static [f32]>; NUM_BANDS] {
 /// （W0：外部时延估计器 16 k 省约一半、48 k 省约四分之一），要等 W4 在真板子上
 /// 量出"排队量折合的等效 D"再开，现在开就是拿一个没测量过的常量换一点 CPU。
 struct RefRing {
+    /// 上一次 `read_frame` 是否**真的**取满（欠载补零时为 false）。
+    hit: bool,
     buf: Vec<f32>,
     /// 累计写入 / 已取走的样本数。`write_abs - read_abs` 是环里的存量。
     read_abs: u64,
@@ -142,6 +144,7 @@ impl RefRing {
             buf: vec![0.0; samples],
             read_abs: 0,
             write_abs: 0,
+            hit: false,
         }
     }
 
@@ -167,6 +170,8 @@ impl RefRing {
     /// 就是静音（最开始那几拍恒如此——还没有任何译音被播出去）。缺到的那一段
     /// 不吞掉，于是参考的时间轴只会**滞后**，不会丢内容；真的积压到满由
     /// [`RefRing::push`] 丢最旧兜底。
+    /// `hit` 供采集路判"这一拍到底有没有参考可消"：欠载 ⇒ `false` ⇒
+    /// `run_frame` 跳过 `buffer_render`（见那里的长注与 T18）。
     fn read_frame(&mut self, out: &mut [f32]) {
         let cap = self.buf.len();
         let available = (self.write_abs - self.read_abs) as usize;
@@ -181,6 +186,7 @@ impl RefRing {
         }
         out[take..].fill(0.0);
         self.read_abs += take as u64;
+        self.hit = take == out.len();
     }
 }
 
@@ -478,7 +484,16 @@ impl SonoraAec {
         } = self;
         // 先参考后采集：AEC3 的块级路径要求每拍都先 `buffer_render` 再 `process_capture`
         // （S4-C 稿 §6.1 的顺序）。
-        engine.push_render(num_bands, reference, render_bands, render_sub, &mut refs);
+        //
+        // **但环欠载时一次都不推**（`RefRing::hit`）——这是 2026-10-12 修掉的一个真缺陷：
+        // 原来这里无条件调 `push_render`，欠载时推的是**静音的渲染块**，实测 48 kHz 三频带上
+        // 麦克风被压掉 **25.91 dB**（16 kHz 单频带碰巧不受影响）。对照：W0 尖峰在同样条件下
+        // 一次 `buffer_render` 都不调，只压 **0.28 dB**。「远端安静、没有译音可播」恰是**最常见**
+        // 的一格，那时候麦音本该原样过去。判据见 `aec_synthetic.rs::T18`。
+        // 注意这里**只跳渲染路、不跳采集路**：采集照常过，只是这一拍没有参考可消。
+        if self.ring.hit {
+            engine.push_render(num_bands, reference, render_bands, render_sub, &mut refs);
+        }
         engine.push_capture(
             num_bands,
             capture_buf,
