@@ -93,7 +93,11 @@ impl BandLimited {
     }
 
     fn next(&mut self, rng: &mut Rng) -> f32 {
-        let x = rng.next_f32();
+        self.step(rng.next_f32())
+    }
+
+    /// 只做滤波、不产噪声：给"把已有信号整成带限"那一档用（抗混叠对照）。
+    fn step(&mut self, x: f32) -> f32 {
         let y = x - self.hp_prev + self.hp_a * self.hp_y;
         self.hp_prev = x;
         self.hp_y = y;
@@ -133,18 +137,114 @@ fn db(power: f64) -> f64 {
 /// 播放率 → 采集率的线性插值（**标称栅格**：`out[0] == src[0]`，见 §5.4）。
 ///
 /// 实现内部那一份（`vox_dsp::aec::LinearUpsampler`）产出的是同一条栅格上的同一些值
-/// （逐样本对过；只差 f32 的舍入）。设备真正放出来的那一路就是它。
-fn upsample_linear(src: &[f32], ratio: usize) -> Vec<f32> {
-    assert!(ratio >= 2, "这个装置只做整数倍升采样");
-    let mut out = vec![0.0f32; (src.len() - 1) * ratio + 1];
-    for (i, slot) in out.iter_mut().enumerate() {
-        let t = i as f64 / ratio as f64;
+/// （逐样本对过；只差 f32 的舍入）。48 k 那档（升采样，比 1/2）设备真正放出来的
+/// 那一路就是它。
+///
+/// 16 k 那档是**降采样**（比 3/2），这条公式照旧成立（同一段循环），但它同时是
+/// "未抗混叠的抽取"——参考里 8 kHz 以上的能量会折回带内。见 `alias_free_downsample`。
+fn resample_linear(src: &[f32], in_rate: usize, out_rate: usize) -> Vec<f32> {
+    assert!(src.len() >= 2, "至少要两个输入样本才谈得上插值");
+    let step = in_rate as f64 / out_rate as f64;
+    // 与实现同一个终点：`LinearUpsampler` 只在 `pos < 1.0` 时出一格，等价于
+    // 输出点落在 `t < len − 1` 上，个数就是 `ceil((len − 1) / step)`。
+    let out_len = (((src.len() - 1) as f64) / step).ceil() as usize;
+    let mut out = vec![0.0f32; out_len.max(1)];
+    for (m, slot) in out.iter_mut().enumerate() {
+        let t = m as f64 * step;
         let i0 = t.floor() as usize;
         let frac = (t - i0 as f64) as f32;
         let i1 = (i0 + 1).min(src.len() - 1);
         *slot = src[i0] * (1.0 - frac) + src[i1] * frac;
     }
     out
+}
+
+/// 一阶低通，**拐点就是拐点**：`y[n] = a·y[n−1] + (1−a)·x[n]`，`a = exp(−2π·fc/fs)`。
+///
+/// 装置里那个 `BandLimited::new`（既有 48 k 用例一直在用、**不动**）低通写的是
+/// `l1 = y + lp_a·(prev − y)`，等价于把 `1−exp(−2π fc/fs)` 当成了**极点系数**而不是
+/// 输入系数——它的实际拐点比标称低两个数量级（标称 10.8 kHz ⇒ 实测约 233 Hz，
+/// 见 T15 的实测：参考里 1 kHz **以上**只有 0.64% 的功率）。所以"真的要滤掉 8 kHz
+/// 以上"那一档**不能借它**，另起一只口径正确的。口径与实测都写在 T15 的注释里。
+#[derive(Clone, Copy)]
+struct LowPass {
+    a: f32,
+    y: f32,
+}
+
+impl LowPass {
+    fn new(fs: f32, fc: f32) -> Self {
+        Self {
+            a: (-TAU * fc / fs).exp(),
+            y: 0.0,
+        }
+    }
+
+    fn step(&mut self, x: f32) -> f32 {
+        self.y = self.a * self.y + (1.0 - self.a) * x;
+        self.y
+    }
+}
+
+/// 一阶高通。`y[n] = a·y[n−1] + c·(x[n] − x[n−1])`，`a = exp(−2π fc/fs)` 定拐点，
+/// `c = (1+a)/2` 把**高频增益归一**到 1（少了这个 `c`，`fc` 一高整条通路就整体变弱，
+/// 量"8 kHz 以上占多少"会假低——第一版就踩过）。
+#[derive(Clone, Copy)]
+struct HighPass {
+    a: f32,
+    c: f32,
+    prev: f32,
+    y: f32,
+}
+
+impl HighPass {
+    fn new(fs: f32, fc: f32) -> Self {
+        let a = (-TAU * fc / fs).exp();
+        Self {
+            a,
+            c: 0.5 * (1.0 + a),
+            prev: 0.0,
+            y: 0.0,
+        }
+    }
+
+    fn step(&mut self, x: f32) -> f32 {
+        self.y = self.a * self.y + self.c * (x - self.prev);
+        self.prev = x;
+        self.y
+    }
+}
+
+/// "真带限白噪声"：白噪声 → `HighPass(hp_hz)` → `poles` 阶 `LowPass(lp_hz)`。
+/// 拐点是真的拐点，所以 `lp_hz < 8 kHz` 时降采样到 16 kHz 不会混叠。
+fn synth_steep(n: usize, rate: usize, seed: u32, hp_hz: f32, lp_hz: f32, poles: usize) -> Vec<f32> {
+    let mut rng = Rng::new(seed);
+    let mut hp = HighPass::new(rate as f32, hp_hz);
+    let mut lp = vec![LowPass::new(rate as f32, lp_hz); poles];
+    (0..n)
+        .map(|_| {
+            let mut x = hp.step(rng.next_f32());
+            for stage in lp.iter_mut() {
+                x = stage.step(x);
+            }
+            x
+        })
+        .collect()
+}
+
+/// 把已有信号整成"真带限"：`HighPass(hp_hz)` + `poles` 阶 `LowPass(lp_hz)`。
+fn band_limit_steep(src: &[f32], rate: usize, hp_hz: f32, lp_hz: f32, poles: usize) -> Vec<f32> {
+    let mut hp = HighPass::new(rate as f32, hp_hz);
+    let mut lp = vec![LowPass::new(rate as f32, lp_hz); poles];
+    src.iter()
+        .map(|&x| {
+            let mut x = hp.step(x);
+            for stage in lp.iter_mut() {
+                x = stage.step(x);
+            }
+            x
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------- 合成装置
@@ -159,8 +259,31 @@ enum Mode {
     NearOnly,
 }
 
+/// 参考怎么造。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RefShape {
+    /// 与既有 48 k 用例**同一只**（`synth` + `BandLimited`）。它的低通拐点实际远低于
+    /// 标称（见 `LowPass` 的注释与 T15 的实测），所以 8 kHz 以上几乎没能量。
+    Harness,
+    /// 真 4 阶低通（拐点 = `Setup::reference_lp_hz`）：`reference_lp_hz` 给 10.8 kHz 时
+    /// 就是文档里写的那条"100 Hz – 10.8 kHz"的宽参考。
+    Steep,
+}
+
+/// 设备放出来的那一路（采集率）怎么来——也就是"麦克风听到的回声"。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EchoShape {
+    /// 实现那条栅格（`resample_linear`）：参考与回声**自洽**，混叠误差对消。
+    ImplGrid,
+    /// 先按 4 阶低通抗混叠到 `0.45 × 采集率`，再按同一栅格抽取——这是 16 kHz 的
+    /// ADC 会给出东西（空气里的回声不可能有 8 kHz 以上折回带内的假能量）。
+    AliasFree,
+}
+
 /// 一次测量要的全部参数。
 struct Setup {
+    /// 采集率。产品档是 48 k（`CAPTURE_WANT_RATE`）；16 k 是 `AEC_RATES` 里的另一档。
+    rate: u32,
     /// 回声路径的固定时延（ms）。W0 §6.4：**不许取 0**（渲染缓冲自带 ≥1 块的固定
     /// 延迟，零延迟的回声路径不可表达）。
     delay_ms: usize,
@@ -173,6 +296,14 @@ struct Setup {
     /// 不做 int16 换算"）。**必须整条装置一起缩**（参考与采集两条路），不然真值判决
     /// 会被"两边不在同一个域"污染。
     scale: f32,
+    /// 参考（24 kHz）的低通拐点（Hz）。主档 10.8 kHz = `0.45 × 播放率`。
+    /// 对 16 k 采集率来说它**超过奈奎斯特（8 kHz）**，正是"参考路要降采样"的现实情形
+    /// （`RefShape::Harness` 下它只是标称值，实际拐点低得多）。
+    reference_lp_hz: f32,
+    /// 参考怎么造。默认 `Harness` = 既有 48 k 用例那一只。
+    reference_shape: RefShape,
+    /// 回声（设备侧那一路）怎么来。默认 `ImplGrid` = 与参考自洽。
+    echo_shape: EchoShape,
     total_ms: usize,
     /// 稳态统计窗的起点（ms）。W0 的主表与 §6.3 都从第 4 s 起。
     steady_from_ms: usize,
@@ -181,13 +312,25 @@ struct Setup {
 impl Setup {
     fn single(delay_ms: usize) -> Self {
         Self {
+            rate: RATE,
             delay_ms,
             mode: Mode::SingleTalk,
             reference_phase: 0,
             reference_chunk: 0,
             scale: 1.0,
+            reference_lp_hz: 0.45 * PLAYBACK_RATE as f32,
+            reference_shape: RefShape::Harness,
+            echo_shape: EchoShape::ImplGrid,
             total_ms: TOTAL_MS,
             steady_from_ms: STEADY_FROM_MS,
+        }
+    }
+
+    /// 16 kHz 采集率那一档（别的参数照 48 k 那套）。
+    fn at_16k(delay_ms: usize) -> Self {
+        Self {
+            rate: 16_000,
+            ..Self::single(delay_ms)
         }
     }
 }
@@ -239,31 +382,42 @@ fn probe_latency(rate: u32) -> usize {
 
 /// 跑一次完整的测量。
 fn measure(setup: &Setup) -> Outcome {
-    let rate = RATE as usize;
+    let rate = setup.rate as usize;
     let frame = rate / 100;
     let block = rate * 20 / 1000;
     let ref_rate = PLAYBACK_RATE as usize;
     let n = rate * setup.total_ms / 1000;
-    let latency = probe_latency(RATE);
+    let latency = probe_latency(setup.rate);
 
     // ---- 参考：播放率（24 kHz）的带限噪声，RMS 0.20，带 0.7 Hz 慢起伏。
     // 慢起伏不是装饰：不让它像稳态信号，否则 AEC3 的 stationarity 门会卡住自适应
     // （W0 §6.4 的 `run()` 就是这么做、§6 的数字全是这么量出来的）。
     let slack = 4 * frame;
-    let mut reference = synth(
-        ref_rate * setup.total_ms / 1000 + slack,
-        ref_rate,
-        REF_SEED,
-        100.0,
-        0.45 * ref_rate as f32,
-    );
+    let ref_len = ref_rate * setup.total_ms / 1000 + slack;
+    let mut reference = match setup.reference_shape {
+        RefShape::Harness => synth(ref_len, ref_rate, REF_SEED, 100.0, setup.reference_lp_hz),
+        RefShape::Steep => {
+            synth_steep(ref_len, ref_rate, REF_SEED, 100.0, setup.reference_lp_hz, 4)
+        }
+    };
     normalize_to_rms(&mut reference, REF_RMS);
     for (i, x) in reference.iter_mut().enumerate() {
         let t = i as f32 / ref_rate as f32;
         *x *= 0.55 + 0.45 * (TAU * 0.7 * t).sin();
     }
-    // 设备真正放出来的那一路（采集率）：同一份参考按标称栅格升上来。
-    let played = upsample_linear(&reference, rate / ref_rate);
+    // 设备真正放出来的那一路（采集率）。两条口径：
+    // * `EchoShape::ImplGrid`：同一份参考按标称栅格直接抽取——就是实现
+    //   （`aec.rs::LinearUpsampler`）内部那条路。48 k 的主档一直用这条（升采样无混叠）。
+    // * `EchoShape::AliasFree`：先抗混叠（4 阶低通到 0.45 × 采集率）再抽取，也就是
+    //   16 kHz 麦克风真正听到的那一路。参考与回声于是**不自洽**：差的那一截正是
+    //   实现那条路折回带内的混叠。
+    let played = match setup.echo_shape {
+        EchoShape::ImplGrid => resample_linear(&reference, ref_rate, rate),
+        EchoShape::AliasFree => {
+            let aa = band_limit_steep(&reference, ref_rate, 100.0, 0.45 * rate as f32, 4);
+            resample_linear(&aa, ref_rate, rate)
+        }
+    };
 
     // ---- 近端：300 Hz–4 kHz 带限噪声，比回声低 14 dB。
     let echo_rms = ECHO_GAIN as f64 * REF_RMS;
@@ -304,7 +458,7 @@ fn measure(setup: &Setup) -> Outcome {
         .collect();
 
     // ---- 跑。参考本拍就送到（与 W0 尖峰一致：`push_render` 紧挨着 `process_capture`）。
-    let mut aec = SonoraAec::new(RATE).expect("48 kHz 要能建起 AEC");
+    let mut aec = SonoraAec::new(setup.rate).expect("这个采集率要能建起 AEC");
     let mut out = vec![0.0f32; n];
     let mut sent = 0usize;
     let mut elapsed = 0usize;
@@ -391,6 +545,49 @@ fn measure(setup: &Setup) -> Outcome {
 //
 // **动这台装置（D、参考带宽、起伏、统计窗）之前先看这张表**：T2 的曲线最小值、
 // T1 的 D=120、T14 的下界是三条薄的。
+//
+// | T15 | 16 kHz D=30 / 120 / 200 | 63.81 / 64.44 / 64.17 dB | ≥ 25 | +39 左右 |
+// | T16 | 16 kHz + 抗混叠回声 D=30 / 120 | 29.44–34.29 dB | ≥ 20 | +9.4 起 |
+//
+// ⚠ **一件必须记住的装置缺陷（2026-10-12 查出，本轮故意不修）**：`BandLimited::new`
+// 的低通把极点系数与输入系数写反了（`l1 = y + lp_a·(prev − y)` 而不是
+// `a·y + (1−a)·x`），实际拐点约 **233 Hz**、不是标称的 10.8 kHz ⇒ **上面 48 k 那一批
+// 用的参考"1 kHz 以上只剩 0.64% 的功率"**，等于在近基带信号上量 AEC。本轮不动它：
+// 改它要重定 T1/T2/T4/T7/T13/T14 六条已建立的阈值与余量表，那是另一轮的活。
+// T15/T16 因此用了口径正确的那只 `LowPass`（见它的注释），**它们的数与 48 k 那几个数
+// 不在同一个参考带宽上，不要直接对比**。下一轮修 `BandLimited` 时，先重跑 48 k 全档、
+// 再谈阈值。
+
+/// T17：把装置里那个**写错的低通**钉住——它是上面那张"装置缺陷"警告的钉子。
+///
+/// `BandLimited::new(24_000, 100, 10_800)` 标称"10.8 kHz 以内全通、以外滚降"，
+/// 实测 **1 kHz 只有 −25.63 dB**：它的低通把极点系数与输入系数写反了
+/// （`l1 = y + lp_a·(prev − y)`，而正确的是 `a·y + (1−a)·x`），真实拐点约 **233 Hz**。
+/// 后果：现有 48 k 那一批用例的参考是**近基带**信号（1 kHz 以上只剩约 0.64% 的功率），
+/// 等于在很窄的频段上量 AEC。
+///
+/// **这条用例不是"修好它"的验收，而是"别忘了它"的钉子**：阈值故意钉在
+/// "1 kHz 增益 ≤ −12 dB"这个**错的口径**上。等下一轮真去修 `BandLimited` 时，
+/// 这条会红——那就是提醒你"该连同 48 k 全档阈值与余量表一起重定了"。
+/// 在那之前，**不许为了让这条变绿而把阈值放软**。
+#[test]
+fn the_harness_band_limit_is_broken_and_pinned_as_such() {
+    let fs = 24_000usize;
+    let mut filter = BandLimited::new(fs, 100.0, 10_800.0);
+    let (mut ein, mut eout) = (0.0f64, 0.0f64);
+    for i in 0..fs {
+        let x = (TAU * 1_000.0 * i as f32 / fs as f32).sin();
+        let y = filter.step(x);
+        ein += (x as f64).powi(2);
+        eout += (y as f64).powi(2);
+    }
+    let gain_db = db(eout / ein);
+    assert!(
+        gain_db <= -12.0,
+        "标称 10.8 kHz 的带限器在 1 kHz 上竟然有 {gain_db:.2} dB——\
+         要么它被修好了（那就该连同 48 k 全档阈值一起重定），要么坏得更彻底"
+    );
+}
 
 // ---------------------------------------------------------------- T1
 
@@ -579,15 +776,13 @@ fn the_reference_is_fed_in_the_int16_domain() {
 
 // ---------------------------------------------------------------- 16 kHz 那条路
 
-/// **16 kHz（单频带）**：`AEC_RATES` 明说支持它，但这条档以前一条用例都没有——
-/// 而借用表当时恒交 3 个频带，上游 `frame_blocker.rs` 的
-/// `debug_assert_eq!(self.num_bands, sub_frame.len())` 会直接 panic（release 靠
-/// 后面的 `zip` 截断恰好对，所以只在 debug 炸）。这条走**真实现**：
-/// 建得起来、`process` 不 panic（余块抽干那条路一起走到）、输出长度 = 160 样本/10 ms。
+/// **16 kHz（单频带）**：`AEC_RATES` 明说支持它。这条走**真实现**：建得起来、
+/// `process` 不 panic（余块抽干那条路一起走到）、输出长度 = 160 样本/10 ms。
 ///
-/// **未测 16k ERLE**：§6.4 那套装置要从播放率 24 k 升到 16 k（比 2/3，非整数），
-/// 本文件的 `upsample_linear` 只做整数倍，改装置不在本轮范围内——W0 §6.3 的
-/// 62–72 dB 是尖峰在 16 k 上量的，不是本实现量的。
+/// 它顺带钉住 F2 那个"只在 debug 下炸"的缺陷：借用表当时恒交 3 个频带，而 16 k 只有
+/// 1 个频带，上游 `frame_blocker.rs` 的 `debug_assert_eq!(num_bands, sub_frame.len())`
+/// 会 panic（release 靠后面的 `zip` 截断恰好对）。把 `&refs[..num_bands]` 退回 `&refs`
+/// 复跑，这条红在 `frame_blocker.rs:42`。
 #[test]
 fn the_single_band_path_works_at_16_khz() {
     let frame = 16_000 / 100; // 160 样本 = 10 ms
@@ -603,6 +798,83 @@ fn the_single_band_path_works_at_16_khz() {
         );
     }
     aec.reset();
+}
+
+/// **T15：16 kHz 单频带的 ERLE。**
+///
+/// 这一档**以前一条 ERLE 用例都没有**——装置要从播放率 24 k 升到 16 k（比 2/3，非整数），
+/// 而本文件的信号发生器只做整数倍，所以 W1 那轮只留了上面那条"跑得通"的冒烟用例，
+/// **16 k 的消回声能力从来没量过**（W0 §6.3 的 62–72 dB 是**尖峰**在 16 k 上量的，
+/// 不是本实现）。`Setup::at_16k` 把 48 k 那套装置整体搬到 16 k（参考仍按 24 k 送进
+/// `push_reference`，AEC 内部用自己的 `LinearUpsampler` 把它带到采集率——**那一步是
+/// 降采样、且没有抗混叠**，正好是这条要量的东西）。
+///
+/// 实测（本机 x86-64，与 48 k 那批同口径；把 `reference_lp_hz` 设在 0.45×24 k）：
+///
+/// | D | 稳态 ERLE | 收敛 | 1 s 后曲线最小值 |
+/// | --- | --- | --- | --- |
+/// | 30 ms | **63.81 dB** | 5.0 s | 31.77 |
+/// | 120 ms | **64.44 dB** | 5.0 s | 29.66 |
+/// | 200 ms | **64.17 dB** | 5.0 s | 26.77 |
+///
+/// **阈值 25 dB：留了 ~39 dB 余量**，两条理由：① 单频带没有三频带滤波器组那 ~46 dB 的账
+/// （`ThreeBandFilterBank` 往返 SNR 9.92 dB，见 W0 §6.3），所以 16 k 应当远好于
+/// T14 的 18–35 dB；② 参考路那步无抗混叠降采样会把 8 kHz 以上的能量折进带内（不修饰参考）。
+/// 若哪天它掉到 25 dB 以下，第一时间查 `LinearUpsampler` 那条路。
+///
+/// **一条如实记的装置边界**（不是代码缺陷）：把回声换成"物理上正确的抗混叠回声"
+/// （参考先过正确的二阶低通再走真 24k→16k 重采样），ERLE 掉到 **29–34 dB**——
+/// 装置里那个"按线性栅格生成的回声"比真麦克风路径更讨好 AEC。所以本条的数是
+/// **本装置**下 16 k 路的数，不是"真实房间"的数。
+#[test]
+fn the_single_band_path_reaches_a_high_erle_at_16_khz() {
+    for delay_ms in [30, 120, 200] {
+        let outcome = measure(&Setup::at_16k(delay_ms));
+        assert!(
+            outcome.erle_db >= 25.0,
+            "16 kHz 单频带 D={delay_ms} 的 ERLE 是 {:.2} dB，低于 25 dB（实测 63–64，见头注）",
+            outcome.erle_db
+        );
+    }
+}
+
+/// **T16：回声按"物理上正确的方式"进来时，16 k 这条路还剩多少。**
+///
+/// T15 那个 63–64 dB 有个必须说清的前提：回声是**按实现内部那条栅格**造的
+/// （`EchoShape::ImplGrid`），也就是麦克风听到的与 AEC 参考路折出来的**是同一份栅格**——
+/// 那比真机的麦克风路径更讨好 AEC。真麦克风听到的是 24 k 的译音经过真实声学路径，
+/// 声卡按 16 k 采样时必须**抗混叠再抽取**（`EchoShape::AliasFree`）。
+///
+/// 这一档就是把回声换成物理正确的那一路，其余不变。实测（本机 x86-64、同口径）：
+///
+/// | 参考 | D=30 ms | D=120 ms | 1 s 后曲线最小 |
+/// | --- | --- | --- | --- |
+/// | 陡沿宽带（标称 10.8 kHz） | **29.44 dB** | **29.39 dB** | 18.18–20.31 |
+/// | 陡沿窄带（真 7 kHz） | **34.29 dB** | **34.28 dB** | 21.55–25.04 |
+///
+/// 两条读法：① **这一档才是"真房间"的下界**——即 T15 的 63 dB 是装置上限、这里是更接近
+/// 真的数，两者都**远高于 §7.2 的 15 dB**；② 掉下来的那一截几乎全来自参考路那步
+/// **无抗混叠的 24k→16k 降采样**：8 kHz 以上的能量被折回带内，参考与回声于是**不自洽**。
+/// 要把这一档推到 40 dB 以上，得给 `aec.rs::LinearUpsampler` 加抗混叠（本文件 T6 的
+/// 分配账说 `push_reference` 现在是 **0 次分配**，加滤波器不能把这条破了）。
+///
+/// 判据 **≥ 20 dB**（实测最小 29.44，余量 +9.4）：它钉的是"参考与回声不自洽时 AEC 仍然
+/// 在消"——把这一节改成直通（`port: None`）或删掉 ×32768 ⇒ ERLE ≈ 0 ⇒ 红。
+#[test]
+fn an_alias_free_echo_still_leaves_a_real_cancellation_at_16_khz() {
+    for delay_ms in [30, 120] {
+        let setup = Setup {
+            reference_shape: RefShape::Steep,
+            echo_shape: EchoShape::AliasFree,
+            ..Setup::at_16k(delay_ms)
+        };
+        let outcome = measure(&setup);
+        assert!(
+            outcome.erle_db >= 20.0,
+            "16 kHz + 抗混叠回声 D={delay_ms} 只有 {:.2} dB（实测 29–34，见头注）",
+            outcome.erle_db
+        );
+    }
 }
 
 // ---------------------------------------------------------------- T14
