@@ -73,6 +73,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_aec_factory_only_builds_the_supported_rates() {
+        // `AEC_RATES` 的**内容**也要有钉子：只钉"判据用同一个源"拦不住"往源里加一个
+        // 驱不动的率"。32 kHz 不在表里（S4-C-AEC §10 R12：上游的块级 API 驱不动它），
+        // 所以工厂必须报 Err；谁要往 `AEC_RATES` 里加 32000，这条会红着要他先证明 32 k 能用。
+        for rate in vox_core::pipeline::AEC_RATES {
+            assert!(aec_factory()(rate).is_ok(), "{rate} Hz 该建得起来");
+        }
+        assert!(
+            aec_factory()(32_000).is_err(),
+            "32 kHz 不在 AEC_RATES 里，工厂必须报 Err"
+        );
+    }
+
+    #[test]
     fn denoise_adapter_forwards() {
         let mut d = denoise_factory()().expect("RNNoise 应该能建起来");
         // 48 kHz 一帧 480 个样本；第一帧可能被吞掉，只要不 panic 就行。

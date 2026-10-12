@@ -243,18 +243,26 @@ mod tests {
         let background = report.host[&Capability::BackgroundService];
         assert!(!background.enabled);
         assert_eq!(background.reason, Some(UnavailableReason::NotWired));
-        // 软件 AEC 的上限里有这一位（所以不是 unsupported 的"结构上做不到"），但它今天
-        // 开不开**取决于这台机器**：B4 过了之后还要 B2（缺省的采集口与播放口同卡）——
-        // 开发机上 `default` 走 PipeWire 桥、卡名认不出来就报 unsupported，裸板子上才可能开。
-        // 所以这里只钉**机器无关**的两件：上限里有它、且报告里那一格就是那道探针的答案。
+        // 软件 AEC：这里只钉**机器无关**的结构与词汇——上限里有它（所以绝不是
+        // "这一档做不到"），位与 reason 不自相矛盾，且关掉的理由只可能是 B1–B4
+        // 那几种事实。**开不开**取决于这台机器，不在这里断言（"外壳有没有去问探针"
+        // 另有单独一条用例钉着，见 `the_facts_ask_the_soft_aec_probe`）。
         let soft_aec = report.host[&Capability::SoftAec];
-        let expected = soft_aec_unavailable_reason();
         assert!(host_ceiling(HostKind::LinuxHeadless).contains(Capability::SoftAec));
         assert_eq!(
-            soft_aec.reason, expected,
-            "报告里这一格必须就是那道探针的答案"
+            soft_aec.enabled,
+            soft_aec.reason.is_none(),
+            "位与 reason 不能自相矛盾"
         );
-        assert_eq!(soft_aec.enabled, expected.is_none());
+        if let Some(reason) = soft_aec.reason {
+            assert!(
+                matches!(
+                    reason,
+                    UnavailableReason::NotWired | UnavailableReason::Unsupported
+                ),
+                "soft_aec 关掉的理由只可能是 not_wired / unsupported：{reason:?}"
+            );
+        }
 
         // 上限之外的那些：无屏设备没有屏幕/键盘/托盘宿主，也不给别的程序当麦克风。
         for bit in [
@@ -326,6 +334,22 @@ mod tests {
             soft_aec_reason_from(true, true, true),
             None,
             "三条全过 = 位开"
+        );
+    }
+
+    /// 外壳报出去的 `soft_aec` 必须**来自那道探针**，不是照抄一个常量。
+    ///
+    /// 这条与 `the_report_matches_the_headless_tier` 分工：那边不碰探针（只钉结构与词汇），
+    /// 这里只调**一次**探针、比 `host_facts().off`——不让报告那一格参与两次调用
+    /// （两次调用自比较既抓不到"探针本身坏了"，也怕设备热插拔给出假红）。
+    #[test]
+    fn the_facts_ask_the_soft_aec_probe() {
+        let facts = host_facts();
+        let expected = soft_aec_unavailable_reason();
+        assert_eq!(
+            facts.off.get(&Capability::SoftAec).copied(),
+            expected,
+            "外壳要把探针此刻的答案如实报出去"
         );
     }
 

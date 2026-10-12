@@ -170,8 +170,15 @@ pub fn same_card(capture: &str, playback: &str) -> bool {
 }
 
 /// `hw:CARD=PCH,DEV=0` 里的 `PCH`（§5.4 的 id 口径）。不是这个形式就 `None`。
+///
+/// **卡名空着也算"认不出"**：`hw:CARD=` / `hw:CARD=,DEV=0` 返回 `None`，于是
+/// [`same_card`] 判 `false`——与那条"认不出是同一张卡 = 不成立，不许猜"同一条纪律。
+/// （真实设备 id 的卡名一律来自 udev，不会是空；这一格是给人为构造的串兜底。）
 fn card_of(id: &str) -> Option<&str> {
-    id.strip_prefix("hw:CARD=")?.split(',').next()
+    id.strip_prefix("hw:CARD=")?
+        .split(',')
+        .next()
+        .filter(|card| !card.is_empty())
 }
 
 /// 给人看的名字：hint 的 `DESC` 首行 → 所属卡的 longname → `id` 本身。
@@ -602,6 +609,15 @@ mod tests {
         assert_eq!(card_of("hw:CARD=PCH,DEV=0"), Some("PCH"));
         assert_eq!(card_of("plughw:CARD=PCH,DEV=0"), None);
         assert_eq!(card_of("default"), None);
+        // 是 `hw:CARD=` 开头但**卡名为空**：也算"认不出"，不许因为两端都空就判同卡
+        // （与上面那条同一条纪律；真实设备 id 的卡名来自 udev，不会是空）。
+        assert_eq!(card_of("hw:CARD="), None);
+        assert_eq!(card_of("hw:CARD=,DEV=0"), None);
+        assert!(!same_card("hw:CARD=", "hw:CARD="), "空卡名不是证据");
+        assert!(
+            !same_card("hw:CARD=,DEV=0", "hw:CARD=,DEV=1"),
+            "空卡名不是证据"
+        );
     }
 
     #[test]

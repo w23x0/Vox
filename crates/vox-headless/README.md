@@ -217,10 +217,11 @@ tar 里刻意**不含**托盘图标之类桌面档的资源；归档参数（`--
   ② 报 `unsupported` 的机器里有一部分其实是"认不出卡名"，不是"结构上做不到"。
   两处都要改进得动共享宿主层（`HostPorts::facts` 的形状），见 `src/platform/linux.rs` 的欠账注释。
   `hw_aec` 恒 `false(unsupported)`：没有任何手段探测一块会议麦的 AEC 芯片在不在。
-- **启动提示进的是 runtime 账本，不是 journal**：装配期发的那两条（打不开 ALSA /
-  检测到 PipeWire 的 ALSA 桥）发生在挂日志出口**之前**，所以 journal 里看不到它们，
-  要从控制面 / 快照读（与 §3 的状态出口同一份账本）。这是**既有行为**（旧的 PipeWire
-  那条提示同样如此），要不要把日志出口提前到装配之前另议。
+- **启动提示只留在进程内的 runtime 账本里**：装配期发的那两条（打不开 ALSA /
+  检测到 PipeWire 的 ALSA 桥）发生在挂日志出口**之前**，所以 **journal 里看不到**；
+  而**无屏档今天还没有读它们的出口**——§3 那三条命令与 `--dry-run` 都不带 `notices`，
+  控制面也没有这一格（桌面档有：`app/src-tauri/src/dto.rs` 把 notices 送前端）。
+  要读得先把出口接上。这是**既有行为**（旧的 PipeWire 那条提示同样如此）。
 - 没有 health / status HTTP 出口：今天的状态出口就是本文件 §3 的那两条命令 + journal。
 - 没有 `Type=notify` / `WatchdogSec=` 支持（见 §2.3）。
 - 虚拟麦 / 热键 / 托盘 / 悬浮字幕窗**整块不启动**（这四位在 `host_ceiling(linux_headless)` 之外，
