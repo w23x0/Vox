@@ -19,6 +19,11 @@
 > `the_composition_cell_is_generated_from_the_manifest_type` 与
 > `the_composition_cell_is_an_honest_placeholder_without_the_feature` 按 feature 互斥，单次运行 **15 条**）
 > **+ 11 条 crate 内单测**（`resources.rs` 2 / `transcript.rs` 3 / `mcp/subscriptions.rs` 6）——doctest 0 条。
+>
+> **第二十六轮（2026-10-12，R13 落地）**：`SPEAK_CELLS` 现 **10 格**（新增 `ops[aec] 有无` →
+> `SpeakSettings.aec`，见 §2.1.4），`tests/endpoints.rs` 现 **18 条**、`cargo test -p vox-mcp`
+> 现跑 **88 passed**。上面那段里的 `87 / 17 / 76` 是**第二十轮 / 第二十二轮当时的快照**，
+> 按本稿的规矩**保留不回改**——条数类断言随轮记，最新值看这一行与 §4 的当轮记录。
 > **第十六轮复核对账（照代码 / 照实测，不是凭印象）**：下面的字面保持那一轮的原样，**第二十轮**的勘误在这一段末尾。
 > ① 上面三行的计数按 `cargo test -p vox-mcp` 的实测重填
 > （命令与逐条清单见 §4 第 25 条；**第二十轮又按实测重填成 87 / 76 / 11**，第十六轮那版是 83 / 73 / 10）；
