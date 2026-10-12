@@ -84,6 +84,48 @@ pub fn host_kind() -> HostKind {
 /// **代价**：界面不会提前把麦克风那一块灰掉，被独占时的失败推迟到用户按"对外说话"
 /// 那一刻，由起流的 `PortError` → 界面 `Notice` 兜底（`off[mic] = busy` 要等有可靠的
 /// 占用信号再接，§2.5.4）。
+/// 桌面档向采集侧要的那个率（`AEC_RATES` 里我们真正想要的一档）。
+///
+/// PipeWire 按设备协商出真实采集率，那一步在起流之后；B3 只问"这个率在不在支持集里"，
+/// 真实协商结果的兜底在链上（`AecSkip::Rate`）。别拿 `cloud::OUTPUT_SAMPLE_RATE`
+/// （播放率 24 kHz）来问 AEC——AEC 跑在**采集率**上，24 kHz 不在 `AEC_RATES` 里，
+/// 拿它问会把 B4 误报成 `not_wired`（2026-10-12 踩过）。
+const DESKTOP_CAPTURE_RATE: u32 = 48_000;
+
+/// `soft_aec` 为什么开不了（`docs/plans/S4-C-AEC.md` §4.3 的 B1–B4）。全过 ⇒ `None` = 位开。
+///
+/// **B1 恒成立**：AEC 是无条件依赖，没有 `soft-aec` 这个 cargo feature。
+/// **B4**：拿 [`DESKTOP_CAPTURE_RATE`] 把工厂真的调起来一次（`AecFactory` 是
+/// `Fn(u32) -> PortResult<..>`，所以是"先取工厂、再用率调它"）。起不来 ⇒ `not_wired`。
+/// **B2**：缺省采集口与缺省播放口的**卡名段**相同；认不出 ⇒ 不成立。
+/// **B3**：[`DESKTOP_CAPTURE_RATE`] 在 `AEC_RATES` 里。
+///
+/// 这条是**纯函数**：两条节点名进、reason 出。`host_facts()` 只负责探测，于是单测与
+/// "本机接了什么声卡"无关。
+fn soft_aec_reason(
+    source_node: Option<&str>,
+    sink_node: Option<&str>,
+) -> Option<UnavailableReason> {
+    // B4。PipeWire 不在时不等于是"工厂坏了"——那是另一件事（装配层会另报），
+    // 这里只回答"这个构建能不能造出 AEC"。
+    if vox_audio_linux::pipewire_available()
+        && vox_dsp::ports::aec_factory()(DESKTOP_CAPTURE_RATE).is_err()
+    {
+        return Some(UnavailableReason::NotWired);
+    }
+    let same_card = source_node
+        .and_then(vox_audio_linux::card_key_of_node)
+        .zip(sink_node.and_then(vox_audio_linux::card_key_of_node))
+        .is_some_and(|(capture, playback)| capture == playback);
+    if !same_card {
+        return Some(UnavailableReason::Unsupported);
+    }
+    if !vox_core::pipeline::AEC_RATES.contains(&DESKTOP_CAPTURE_RATE) {
+        return Some(UnavailableReason::Unsupported);
+    }
+    None
+}
+
 pub fn host_facts() -> HostFacts {
     let mut off = BTreeMap::new();
 
@@ -115,10 +157,12 @@ pub fn host_facts() -> HostFacts {
     // 会被芯当成外壳 bug。这一位的判定在 `platform/win.rs::vr_captions_status`（它只在
     // Windows 上编），只有 Windows 的 `host_facts()` 读它。
     //
-    // 软件 AEC（`docs/plans/S4-C-AEC.md`）：上限里有这一位，但桌面档（PipeWire）今天**还没有
-    // "采集与播放同声卡"的判据**，AEC 工厂那条路（W1）也还没合流——所以如实报 `not_wired`
-    // （"这个版本还没接通"），**不**报 `unsupported`（那是"这台设备结构上做不到"，是假话）。
-    off.insert(Capability::SoftAec, UnavailableReason::NotWired);
+    // 软件 AEC（`docs/plans/S4-C-AEC.md` §4.3 的 B1–B4）：判据本身是纯函数
+    // （`soft_aec_reason`），这里只把**探测到的缺省设备对**喂进去。
+    let (source, sink) = vox_audio_linux::default_source_and_sink_nodes().unwrap_or_default();
+    if let Some(reason) = soft_aec_reason(source.as_deref(), sink.as_deref()) {
+        off.insert(Capability::SoftAec, reason);
+    }
 
     HostFacts {
         host: host_kind(),
@@ -429,5 +473,65 @@ mod tests {
             !vox_audio_linux::VirtualSink::exists().expect("查不到 PipeWire 图"),
             "退出后不许留幽灵设备"
         );
+    }
+
+    /// `soft_aec` 的判据（B1–B4）是**纯函数**：两条 PipeWire 节点名进、reason 出。
+    /// 所以这条与"本机接了什么声卡"无关，换台机器也是同一个答案。
+    #[test]
+    fn soft_aec_needs_both_devices_on_one_card() {
+        let builtin_in = Some("alsa_input.pci-0000_00_1f.3.analog-stereo");
+        let builtin_out = Some("alsa_output.pci-0000_00_1f.3.analog-stereo");
+        let hdmi_out = Some("alsa_output.pci-0000_01_00.1.hdmi-stereo");
+        let usb_in = Some("alsa_input.usb-Generic_USB_Audio-00.pro-input-0");
+
+        // ① 同卡 ⇒ 位开（笔记本内置 codec：麦和喇叭本来就在一张卡上）。
+        assert_eq!(soft_aec_reason(builtin_in, builtin_out), None);
+        // ② 不同卡 ⇒ 认得出但不是同一张 ⇒ `unsupported`（"这台设备做不到"）。
+        assert_eq!(
+            soft_aec_reason(builtin_in, hdmi_out),
+            Some(UnavailableReason::Unsupported)
+        );
+        assert_eq!(
+            soft_aec_reason(usb_in, builtin_out),
+            Some(UnavailableReason::Unsupported)
+        );
+        // ③ 认不出 ⇒ 同样 `unsupported`，**不许**因为"看不出问题"就放行。
+        //    （反例：虚拟麦那个监视节点没有方向段，`card_key_of_node` 给 `None`。）
+        assert_eq!(
+            soft_aec_reason(Some("vox_virtual_mic.monitor"), builtin_out),
+            Some(UnavailableReason::Unsupported)
+        );
+        assert_eq!(
+            soft_aec_reason(None, None),
+            Some(UnavailableReason::Unsupported)
+        );
+    }
+
+    /// 桌面档的位**不许永远是 `not_wired`**（`not_wired` = 这个版本还没接通；报它是因为
+    /// 判据不在，不是因为判据判不出来）。这一条钉住"判据真的接了"：B4 那条路现在是活的，
+    /// 所以职责只能是 B2/B3 那几种 `unsupported`，或者干脆位开。
+    #[test]
+    fn soft_aec_is_judged_not_just_declared_unwired() {
+        for (source, sink) in [
+            (
+                Some("alsa_input.pci-0000_00_1f.3.analog-stereo"),
+                Some("alsa_output.pci-0000_00_1f.3.analog-stereo"),
+            ),
+            (
+                Some("alsa_input.usb-A.pro-input-0"),
+                Some("alsa_output.pci-0000_01_00.1.hdmi-stereo"),
+            ),
+            (None, None),
+            (
+                Some("vox_virtual_mic.monitor"),
+                Some("alsa_output.pci-0000_00_1f.3.analog-stereo"),
+            ),
+        ] {
+            assert_ne!(
+                soft_aec_reason(source, sink),
+                Some(UnavailableReason::NotWired),
+                "桌面档今天没有'还没接通'这回事了——B4 是活的，剩下的只能是判据判出来的"
+            );
+        }
     }
 }

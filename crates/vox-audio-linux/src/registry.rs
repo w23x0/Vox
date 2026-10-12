@@ -68,6 +68,25 @@ impl DeviceRegistry for LinuxDeviceRegistry {
     }
 }
 
+/// PipeWire 节点名里的**卡名段**（`docs/plans/S4-C-AEC.md` §4.3 的 B2）。
+///
+/// 第一段必须是方向段且以 `_input` / `_output` 结尾（`alsa_input.` /
+/// `alsa_output.` / `bluez_output.` …）；虚拟麦的监视节点
+/// （`vox_virtual_mic.monitor`）没有方向段、也没有卡 ⇒ `None`。
+/// 剩下的**最后一段是 profile**（`analog-stereo` / `hdmi-stereo` / `pro-input-0`），
+/// 它前面那一整段是卡名——**卡名里可能带点**（PCI 地址 `pci-0000_00_1f.3`），
+/// 所以按"最后一段"切，不是"第一段"。
+///
+/// 认不出 ⇒ `None`，与"是同一张卡"区分开（调用方据此判 B2 不成立）。
+pub fn card_key_of_node(node: &str) -> Option<&str> {
+    let (direction, rest) = node.split_once('.')?;
+    if !direction.ends_with("_input") && !direction.ends_with("_output") {
+        return None;
+    }
+    let card = rest.rsplit_once('.')?.0;
+    (!card.is_empty()).then_some(card)
+}
+
 fn devices_of_class(
     snapshot: &GraphSnapshot,
     class: &str,
@@ -245,5 +264,34 @@ mod tests {
         assert!(!devices[0].is_default);
         assert_eq!(devices[1].name, "vox_virtual_mic.monitor");
         assert!(devices[1].is_default);
+    }
+
+    #[test]
+    fn card_key_of_node_splits_on_the_last_segment_not_the_first() {
+        // 同卡不同方向：B2 要的就是这个（笔记本内置 codec 的麦和喇叭）。
+        assert_eq!(
+            card_key_of_node("alsa_input.pci-0000_00_1f.3.analog-stereo"),
+            Some("pci-0000_00_1f.3")
+        );
+        assert_eq!(
+            card_key_of_node("alsa_output.pci-0000_00_1f.3.analog-stereo"),
+            Some("pci-0000_00_1f.3")
+        );
+        // USB 声卡：卡名里带连字符，profile 不带点。
+        assert_eq!(
+            card_key_of_node("alsa_input.usb-Generic_USB_Audio-00.pro-input-0"),
+            Some("usb-Generic_USB_Audio-00")
+        );
+        // 不同卡（HDMI 与板载）：卡名不同 ⇒ B2 不成立。
+        assert_eq!(
+            card_key_of_node("alsa_output.pci-0000_01_00.1.hdmi-stereo"),
+            Some("pci-0000_01_00.1")
+        );
+        // 认不出的都给 `None`：虚拟麦监视节点（无方向段）、空卡名、缺 profile。
+        assert_eq!(card_key_of_node("vox_virtual_mic.monitor"), None);
+        assert_eq!(card_key_of_node("alsa_input."), None);
+        assert_eq!(card_key_of_node("alsa_input.pci"), None);
+        assert_eq!(card_key_of_node("alsa_output.usb-Audio-00"), None);
+        assert_eq!(card_key_of_node(""), None);
     }
 }

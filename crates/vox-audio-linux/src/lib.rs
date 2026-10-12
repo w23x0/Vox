@@ -14,6 +14,8 @@
 
 #![cfg(target_os = "linux")]
 
+use vox_core::ports::PortResult;
+
 mod capture;
 mod link_keeper;
 mod playback;
@@ -33,3 +35,21 @@ pub use virtual_sink::{
 pub fn pipewire_available() -> bool {
     probe::available()
 }
+
+/// 缺省采集口 / 缺省播放口的 **PipeWire 节点名**（`node.name`）。
+///
+/// 为什么要单问一次：设备条目（`DeviceInfo.name`）里装的是 `node.description`
+/// ——给人看的标签（`USB 麦克风`），不是稳定标识，从它身上拿不到卡名。而
+/// `docs/plans/S4-C-AEC.md` §4.3 的 B2（"采集与播放同不同卡"）要的正是卡名。
+///
+/// 任一侧取不到就给 `None`：**"认不出" ≠ "是同一张卡"**，判据照样不成立
+/// （与 `vox-audio-alsa::same_card` 同一条纪律）。
+pub fn default_source_and_sink_nodes() -> PortResult<(Option<String>, Option<String>)> {
+    let snapshot = probe::snapshot()?;
+    Ok((
+        snapshot.default_source.clone(),
+        snapshot.default_sink.clone(),
+    ))
+}
+
+pub use registry::card_key_of_node;

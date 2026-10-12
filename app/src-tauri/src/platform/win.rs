@@ -151,10 +151,11 @@ pub fn host_facts() -> HostFacts {
     if let Some(reason) = super::background_service_status().reason {
         off.insert(Capability::BackgroundService, reason);
     }
-    // 软件 AEC（`docs/plans/S4-C-AEC.md`）：上限里有这一位，但桌面档（WASAPI）今天**还没有
-    // "采集与播放同声卡"的判据**，AEC 工厂那条路（W1）也还没合流——所以如实报 `not_wired`
-    // （"这个版本还没接通"），**不**报 `unsupported`（那是"这台设备结构上做不到"，是假话）。
-    off.insert(Capability::SoftAec, UnavailableReason::NotWired);
+    // 软件 AEC（`docs/plans/S4-C-AEC.md` §4.3）：上限里有这一位，而 **WASAPI 的端点 id
+    // （`{0.0.0.00000000}.{…}`）里不带任何卡名信息**——"采集与播放同不同卡"这一条在
+    // Windows 上今天**判不出来**，所以如实报 `not_wired`（"这个版本还没接通"）。
+    // Linux 侧同一个位是真判的（`platform/linux::soft_aec_reason`，B2 走 PipeWire 节点名
+    // 的卡名段、B4 真调一次 AEC 工厂）。
 
     HostFacts {
         host: host_kind(),
