@@ -335,13 +335,12 @@ fn measure(setup: &Setup) -> Outcome {
     let mut bin_residual = vec![0.0f64; periods];
     let (mut echo_energy, mut residual_energy, mut near_energy, mut cross) =
         (0.0f64, 0.0f64, 0.0f64, 0.0f64);
-    for i in latency..n {
-        let j = i - latency;
+    for (j, &out_i) in out[latency..n].iter().enumerate() {
         let period = (j * 1000 / rate) / 500;
         if period >= periods {
             break;
         }
-        let out_i = out[i] as f64;
+        let out_i = out_i as f64;
         bin_echo[period] += (echo[j] as f64).powi(2);
         bin_residual[period] += (out_i - near[j] as f64).powi(2);
         if period >= steady_bin {
@@ -642,6 +641,7 @@ fn the_three_band_path_is_capped_around_25_db() {
 ///     * **1**：我们那一个返回的 `Vec`（与 `Denoise::process` 同性质）。
 ///     * **6**：我们每帧的**借用表**（`aec.rs::sub_frame_refs`：`Vec::new()` + push，
 ///       **用到哪个频带才分配哪个**；48 k 三个频带都用 ⇒ 3 次/帧 × 2 帧 = 6）。
+///
 ///   三条加起来 55 + 1 + 6 = **62**（本用例的口径，48 k）。
 ///
 ///   **16 kHz**（本用例不量它）：池子只用第 0 个频带 ⇒ 每帧 1 次、一拍 2 次。
