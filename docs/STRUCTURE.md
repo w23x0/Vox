@@ -42,6 +42,7 @@ docs/
 | provider / 外部协议 / 报文格式 | `protocols/` |
 | 施工设计稿（architect 产物，带编号与验收标准） | `plans/<编号>-<主题>.md` |
 | 一次性调研、已被取代的清单、交接单 | `research/`（**文件顶部必须加状态头**：何时、被谁取代） |
+| 施工期发现的规约矛盾、测试不合理、规则两解（等人类确认） | `architecture/ISSUES.md`（只追加不删；与 B 区“方向待拍板”分工，见该文件头部） |
 
 **命名**：目录全小写；文件用 `大写_下划线.md`；计划稿前缀 `S<数字>-`；不建"杂项""其他"目录。
 
@@ -71,6 +72,7 @@ catalog/               模型服务商元数据（前后端共读）
 tools/
   linux-verify/        已有：界面像素级验证
   bench-dsp/           已建：可复现的 DSP 算子成本表（独立 crate，不随 workspace 跑）
+  audit.sh             已建（2026-10-12）：一屏审计——金样规则数/通过/失败/门禁四件套/退步检测；工作流与红线见 architecture/ISSUES.md
 .omp/
   AGENTS.md RULES.md   项目上下文与硬规矩
   agents/*.md          代理定义（architect / core-dev / shell-dev / agent-face-dev / docs-scribe / verifier）

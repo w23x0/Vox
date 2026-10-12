@@ -31,6 +31,7 @@ V2V/
 # Tauri updater 签名密钥：私钥绝不入库。
 /tools/signing/
 /tools/bundle/
+/tools/.audit-log/
 
 
 # 本地 VR 验证用的独立构建目录（编译产物，2.3GB）
