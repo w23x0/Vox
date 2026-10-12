@@ -121,6 +121,10 @@ export function normalizeSettings(settings: Settings): Settings {
   s.speak.output_device = normalizeDevice(s.speak.output_device);
   s.listen.output_device = normalizeDevice(s.listen.output_device);
 
+  // 老配置里没有 `speak.aec` 这一格：缺省 `true`（与 Rust `SpeakSettings::default()` 同口径，
+  // 老配置读出来不许变 false）。类型上是布尔，但进来的可能是旧快照。
+  if (typeof s.speak.aec !== "boolean") s.speak.aec = true;
+
   s.subtitle.font_size = Math.round(
     clamp(s.subtitle.font_size, FONT_SIZE_RANGE.min, FONT_SIZE_RANGE.max),
   );

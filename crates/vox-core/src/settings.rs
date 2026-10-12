@@ -331,6 +331,13 @@ pub struct SpeakSettings {
     pub gate_threshold: f32,
     /// 本地降噪（RNNoise）。
     pub denoise: bool,
+    /// 本地回声消除（`Op::Aec`）。关掉 = 清单里不装那一节，译音从扬声器放出来
+    /// 再进麦克风的那条回声路径就没人管（`docs/plans/S4-C-AEC.md` §3.3）。
+    ///
+    /// 缺省开：这一格是**能力位之外的第二道闸**（`soft_aec` 为假时它说什么都不进清单），
+    /// 而"位假 / 采集率不在支持集里"的机器上清单里本来就不装那一节——所以缺省开不会让
+    /// 装不上的机器多出什么。用户只在明确不想让这一层跑的时候关它。
+    pub aec: bool,
 }
 
 impl Default for SpeakSettings {
@@ -353,6 +360,7 @@ impl Default for SpeakSettings {
             hotkey: Hotkey::plain("V"),
             gate_threshold: 0.012,
             denoise: true,
+            aec: true,
         }
     }
 }
@@ -768,6 +776,16 @@ mod tests {
         let s = Settings::from_json("not json at all");
         assert_eq!(s.speak.model_name, DEFAULT_MODEL_NAME);
         assert_eq!(s.listen.model_name, DEFAULT_MODEL_NAME);
+    }
+
+    #[test]
+    fn a_settings_file_without_the_aec_field_gets_it_on() {
+        // `speak.aec` 是 W5 新加的格子，用户机器上那份 `config.json` 里没有它。
+        // `#[serde(default)]` 是拿 `SpeakSettings::default()` 填缺格 ⇒ 读出来是**开**。
+        // 反过来的失效模式（缺格 ⇒ 静默关掉回声消除）用户看不见，所以钉一条。
+        let s = Settings::from_json(r#"{"speak":{"target_language":"ko"}}"#);
+        assert!(s.speak.aec, "老配置文件里缺这一格 ⇒ 缺省 = 开");
+        assert_eq!(s.speak.target_language, "ko", "文件里给了的格子照旧");
     }
 
     #[test]

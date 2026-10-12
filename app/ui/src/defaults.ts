@@ -41,6 +41,7 @@ export const DEFAULT_SETTINGS: Settings = {
     hotkey: { ctrl: false, alt: false, shift: false, key: "V" },
     gate_threshold: 0.012,
     denoise: true,
+    aec: true,
   },
   listen: {
     enabled: false,

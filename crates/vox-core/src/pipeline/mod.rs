@@ -2066,6 +2066,12 @@ pub(crate) mod tests {
         pub(crate) resets: AtomicU64,
         /// 造降噪器就失败（模型文件没打包进去之类）。
         pub(crate) fail: AtomicBool,
+        /// 回声消除那一节的账（差分台 W5 那四条场景读的就是这三格，全是**真调用**数出来的）：
+        /// 工厂被叫到几次（`Chain::build` 先判采集率在不在 `AEC_RATES` 里，不在就**不叫**工厂）、
+        /// 这一节真的跑了几拍、断线重来清了几次流状态。
+        pub(crate) aec_builds: AtomicU64,
+        pub(crate) aec_calls: AtomicU64,
+        pub(crate) aec_resets: AtomicU64,
     }
 
     pub(crate) struct DenoiseHandle(Arc<Dsp>);
@@ -2080,8 +2086,8 @@ pub(crate) mod tests {
         }
     }
 
-    /// 假回声消除：直通。夹具里的清单今天装不上 `Op::Aec`（W5 才接），
-    /// 所以它不会被叫到；真实现的验收在 `vox-dsp` 那边（T1–T4/T7/T13/T14）。
+    /// 假回声消除：直通。这个假件**不记账**（`ProbeRig` 用；INV-1 只数降噪 / 重采样两节）。
+    /// 差分台那边要数它，用的是 [`AecHandle`]。
     pub(crate) struct AecPassThrough;
 
     impl Aec for AecPassThrough {
@@ -2090,6 +2096,23 @@ pub(crate) mod tests {
         }
         fn push_reference(&mut self, _samples: &[f32]) {}
         fn reset(&mut self) {}
+    }
+
+    /// 假回声消除：直通 + 记账（`Dsp` 里那三格）。与 [`DenoiseHandle`] 同形。
+    ///
+    /// 直通 = 不改一个样本，所以差分台那 16 份既有金样的轨迹**一个字都不动**；
+    /// 三格计数只出现在 W5 新加的那四条场景的 `# aec` 段里（既有 16 份不渲染它）。
+    pub(crate) struct AecHandle(Arc<Dsp>);
+
+    impl Aec for AecHandle {
+        fn process(&mut self, capture: &[f32]) -> Vec<f32> {
+            self.0.aec_calls.fetch_add(1, Ordering::SeqCst);
+            capture.to_vec()
+        }
+        fn push_reference(&mut self, _samples: &[f32]) {}
+        fn reset(&mut self) {
+            self.0.aec_resets.fetch_add(1, Ordering::SeqCst);
+        }
     }
 
     /// 假重采样：按整数比抽点，长度确实会变，好验调用方没假设长度守恒。
@@ -2226,8 +2249,8 @@ pub(crate) mod tests {
                         Ok(Box::new(ProbeDenoise(Arc::clone(&builds), which)) as Box<dyn Denoise>)
                     })
                 },
-                // 这一档的清单今天装不上 `Op::Aec`（W5 才接），所以这个工厂不会
-                // 被叫到；探针也就没必要给它多加一格。
+                // 这一档的清单会装上 `Op::Aec`（`all_wired` 那档 + 缺省开的
+                // `speak.aec`），但 INV-1 只数降噪 / 重采样两节，探针不给它加一格。
                 aec: Box::new(|_rate| Ok(Box::new(AecPassThrough) as Box<dyn Aec>)),
                 resample: {
                     let builds = Arc::clone(&builds);
@@ -2334,6 +2357,7 @@ pub(crate) mod tests {
             monitor_translation: false,
             loopback_target: None,
             denoise: true,
+            aec: true,
             source_language: None,
             aliyun_endpoint: crate::cloud::AliyunEndpoint::default(),
             network: crate::settings::NetworkSetting::default(),
@@ -2363,6 +2387,8 @@ pub(crate) mod tests {
                 include_process_tree: true,
             }),
             denoise: false,
+            // 与运行时一致：听的那条腿没有回声路径。
+            aec: false,
             source_language: None,
             aliyun_endpoint: crate::cloud::AliyunEndpoint::default(),
             network: crate::settings::NetworkSetting::default(),
@@ -2448,10 +2474,17 @@ pub(crate) mod tests {
                         Ok(Box::new(DenoiseHandle(Arc::clone(&dsp))) as Box<dyn Denoise>)
                     })
                 },
-                // 回声消除：夹具里给一台**直通**的假件。今天没有任何现网清单会装上
-                // `Op::Aec`（那是 W5 的 `soft_aec` 位 + `settings.speak.aec`），
-                // 所以这个工厂不会被叫到——留着是为了把 `Deps` 补齐（RULES #5）。
-                aec: Box::new(|_rate| Ok(Box::new(AecPassThrough) as Box<dyn Aec>)),
+                // 回声消除：夹具里给一台**直通 + 记账**的假件。`all_wired(Windows)` 这一档的
+                // Speak 清单会装上 `Op::Aec`（`soft_aec` 位 + 缺省开的 `speak.aec`），
+                // 直通件不改样本 ⇒ 既有 16 份金样的轨迹不受它影响；三格计数由 W5 新加的
+                // 四条场景（`# aec` 段）读走。真实现见 `vox-dsp/src/aec.rs`。
+                aec: {
+                    let dsp = Arc::clone(&dsp);
+                    Box::new(move |_rate| {
+                        dsp.aec_builds.fetch_add(1, Ordering::SeqCst);
+                        Ok(Box::new(AecHandle(Arc::clone(&dsp))) as Box<dyn Aec>)
+                    })
+                },
                 // 48k → 16k 是三抽一，正好对上真实比例。
                 resample: Box::new(|input, output| {
                     let step = (input / output).max(1) as usize;
@@ -3238,8 +3271,8 @@ pub(crate) mod tests {
     /// `self.chain.push_playback_reference(&samples);`——的两条约定：
     /// ① AEC 节收到的参考就是 `pcm16_to_float(&pcm)` 那一段；② 它**早于** `sink.push`。
     ///
-    /// 走**真路径**（不是直接调 chain）：手搭一份带 `Op::Aec` 的清单（W5 之后这一格
-    /// 由 `speak.rs` 自己装，今天测试手插、位置照 `Composition::OP_ORDER`）→
+    /// 走**真路径**（不是直接调 chain）：照**设置 + 事实**推一份清单（`Op::Aec` 由
+    /// `speak::composition` 自己装，W5 之后没有手插这一格的地方了）→
     /// `Worker::new` + `boot()` → 从**传输层**灌一条 `AudioDelta` → `drain_messages`
     /// （= `Worker::handle_server_event` 那条路）。
     ///
@@ -3353,11 +3386,16 @@ pub(crate) mod tests {
         };
 
         let config = speak_config();
-        let mut composition =
+        // 清单从**设置 + 事实**推出来（不手插那一格）：装不装 `Op::Aec` 是
+        // `speak::composition` 的判据（`config.aec` + `soft_aec` 位），这一条要验的
+        // 正是真路径上装上了它、而且是 `OP_ORDER` 里的第 3 格。
+        let composition =
             Composition::of(&config, &HostFacts::all_wired(HostKind::Windows)).unwrap();
-        // `aec` 在 `denoise` 之后、`gate` 之前（`Composition::OP_ORDER` 的第 3 格）。
-        composition.ops.insert(2, Op::Aec);
-        composition.validate().expect("插了这一格仍然合法");
+        assert_eq!(
+            composition.ops.iter().map(Op::kind).collect::<Vec<_>>(),
+            vec!["mono", "denoise", "aec", "gate", "resample"],
+            "参考信号只有装了 `Op::Aec` 才有去处"
+        );
         let plan = Plan::from(&composition).expect("清单该派得出作业单");
 
         let inbox = Arc::new(Inbox::default());
@@ -3391,6 +3429,160 @@ pub(crate) mod tests {
             log.aec_sum.load(Ordering::SeqCst),
             want,
             "送进 AEC 的参考必须逐样本等于 `pcm16_to_float(&pcm)`"
+        );
+    }
+
+    /// F5 的另一半：参考信号只喂给**主出口**那一段译音，回听那一路（`monitor_sink`）
+    /// **不抄**（`chain.rs` 模块头那条约定、`AudioDelta` 分支的注释）。
+    ///
+    /// 理由：回听是给本人戴耳机听的，它的输出不进本机麦克风 ⇒ 不构成回声路径。
+    /// 把它的样本也塞进参考，等于往参考里掺一段"其实没被播出去"的假回声。
+    ///
+    /// 断言靠**件数**说话（两条播放汇都是 `deps.playback` 造的，`boot` 里主出口先开、
+    /// 回听后开）：一条 `AudioDelta` ⇒ 两条汇**各** `push` 一次、AEC 节**恰好**收到
+    /// 一段参考。谁把 `push_playback_reference` 挪进（或复制到）回听那一支，第三个
+    /// 计数就变 2。
+    #[test]
+    fn the_playback_reference_goes_to_the_primary_sink_only() {
+        /// 开过哪一条播放汇。
+        #[derive(Clone, Copy)]
+        enum Which {
+            Primary,
+            Monitor,
+        }
+
+        /// 两条播放汇 + AEC 节共用的一份账。**只用原子量**。
+        #[derive(Default)]
+        struct Bill {
+            /// `deps.playback` 被叫到过几次（= 开过几条播放汇）。
+            sinks: AtomicU64,
+            primary_pushes: AtomicU64,
+            monitor_pushes: AtomicU64,
+            /// AEC 节收到过几段参考。
+            references: AtomicU64,
+        }
+
+        /// 假播放汇：只记"哪一条被 push 了"。
+        struct BillSink {
+            bill: Arc<Bill>,
+            which: Which,
+        }
+
+        impl PlaybackSink for BillSink {
+            fn open(&mut self, _device: Option<&str>, _source_rate: u32) -> PortResult<u32> {
+                Ok(48_000)
+            }
+
+            fn push(&mut self, _samples: &[f32]) {
+                let counter = match self.which {
+                    Which::Primary => &self.bill.primary_pushes,
+                    Which::Monitor => &self.bill.monitor_pushes,
+                };
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
+
+            fn flush(&mut self) {}
+            fn close(&mut self) {}
+        }
+
+        /// 假回声消除：只数参考来了几段。
+        struct BillAec(Arc<Bill>);
+
+        impl Aec for BillAec {
+            fn process(&mut self, capture: &[f32]) -> Vec<f32> {
+                capture.to_vec()
+            }
+            fn push_reference(&mut self, _samples: &[f32]) {
+                self.0.references.fetch_add(1, Ordering::SeqCst);
+            }
+            fn reset(&mut self) {}
+        }
+
+        let bill = Arc::new(Bill::default());
+        let clock = Arc::new(TestClock::new());
+        let runtime = Runtime::new(Settings::default(), Arc::clone(&clock) as Arc<dyn Clock>);
+        runtime.set_host_facts(HostFacts::all_wired(HostKind::Windows));
+        runtime.set_secret_store(Arc::new(MemoryStore::default()));
+        runtime.set_api_key("sk-test");
+
+        let wire = Arc::new(Wire::default());
+        let mic = Arc::new(Mic::new(48_000));
+        let dsp = Arc::new(Dsp::default());
+        let deps = Deps {
+            transport: {
+                let wire = Arc::clone(&wire);
+                Box::new(move || {
+                    let inbox = wire.open_inbox();
+                    Box::new(WireHandle(Arc::clone(&wire), inbox)) as Box<dyn Transport>
+                })
+            },
+            capture: {
+                let mic = Arc::clone(&mic);
+                Box::new(move || Box::new(MicHandle(Arc::clone(&mic))) as Box<dyn CaptureSource>)
+            },
+            playback: {
+                let bill = Arc::clone(&bill);
+                Box::new(move || {
+                    // 主出口先在 `boot` 里开，回听随后由 `set_monitor_translation` 开。
+                    let which = match bill.sinks.fetch_add(1, Ordering::SeqCst) {
+                        0 => Which::Primary,
+                        _ => Which::Monitor,
+                    };
+                    Box::new(BillSink {
+                        bill: Arc::clone(&bill),
+                        which,
+                    }) as Box<dyn PlaybackSink>
+                })
+            },
+            denoise: {
+                let dsp = Arc::clone(&dsp);
+                Box::new(move || Ok(Box::new(DenoiseHandle(Arc::clone(&dsp))) as Box<dyn Denoise>))
+            },
+            aec: {
+                let bill = Arc::clone(&bill);
+                Box::new(move |_rate| Ok(Box::new(BillAec(Arc::clone(&bill))) as Box<dyn Aec>))
+            },
+            resample: Box::new(|input, output| {
+                Box::new(Decimate {
+                    step: (input / output).max(1) as usize,
+                }) as Box<dyn Resample>
+            }),
+        };
+
+        // 回听开着 ⇒ 清单里两条播放汇，`monitor_sink` 在 `boot` 里建起来。
+        let mut config = speak_config();
+        config.monitor_translation = true;
+        let composition =
+            Composition::of(&config, &HostFacts::all_wired(HostKind::Windows)).unwrap();
+        let plan = Plan::from(&composition).expect("清单该派得出作业单");
+
+        let inbox = Arc::new(Inbox::default());
+        let mut worker = Worker::new(runtime, Arc::new(deps), inbox, config, plan);
+        worker.boot().expect("这一档该能建起来");
+        assert_eq!(
+            bill.sinks.load(Ordering::SeqCst),
+            2,
+            "主出口与回听各开一条播放汇"
+        );
+
+        let pcm: Vec<i16> = (0..480).map(|i| ((i * 37) % 2000) as i16 - 1000).collect();
+        wire.push_message(audio_delta(&pcm));
+        assert!(worker.drain_messages(0), "这一拍该收到那条消息");
+
+        assert_eq!(
+            bill.primary_pushes.load(Ordering::SeqCst),
+            1,
+            "主出口该收到这段译音"
+        );
+        assert_eq!(
+            bill.monitor_pushes.load(Ordering::SeqCst),
+            1,
+            "回听照旧出声（这一条不是它的开关）"
+        );
+        assert_eq!(
+            bill.references.load(Ordering::SeqCst),
+            1,
+            "参考只送一段：回听那一路的输出不进麦克风，不算回声路径"
         );
     }
 

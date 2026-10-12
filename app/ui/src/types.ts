@@ -83,6 +83,12 @@ export interface SpeakSettings {
   hotkey: Hotkey;
   gate_threshold: number;
   denoise: boolean;
+  /**
+   * 回声消除：开着时把"自己外放的译音"从麦克风里抵消掉，免得被当成你说的话再翻一遍。
+   * 这是用户开关（"要不要"，R5）；"能不能"看 `soft_aec` 能力位——位为假时这个入口整个不渲染。
+   * 老配置里没有这一格，读出来缺省 `true`（与 Rust `SpeakSettings::default()` 同口径）。
+   */
+  aec: boolean;
 }
 
 export interface ListenSettings {

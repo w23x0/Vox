@@ -10,6 +10,8 @@
  *   [5] Android：抓程序 / 虚拟麦的入口不渲染，各自给出 reason
  *   [6] 无屏（embedded）：字幕页与热键整块不渲染，各自给出 reason
  *   [7] `(位, reason)` 遍历：七种 reason 各按一遍全部宿主位，zh 与 en 都不许漏出 i18n key
+ *   [8] 回声消除开关：`soft_aec` 位为真 ⇒ 开关在且缺省开、能读写；位为假 ⇒ 入口不渲染 + 带 reason
+ *       （`unsupported` / `not_wired` 两档各一遍——后者要说清"译音被录回去再翻一遍"这句实话）
  *
  * 自包含：和 a11y.mjs 一样自己起 vite preview（**端口由内核分配**，别人占着就失败；
  * 起好之后还要认一遍"端上跑的就是这份 `dist`"）——两条都在 `preview.mjs` 里，
@@ -55,9 +57,11 @@ const HOST_BITS = [
   "net_in",
   "net_out",
   "file_config",
+  "hw_aec",
+  "soft_aec",
 ];
 
-/** Windows 档位上限里那 8 位：`?off=` 只能按这些（上限之外的位按不动，上限是硬的）。 */
+/** Windows 档位上限里那 9 位：`?off=` 只能按这些（上限之外的位按不动，上限是硬的）。 */
 const WINDOWS_CEILING = [
   "mic",
   "program_tap",
@@ -67,6 +71,7 @@ const WINDOWS_CEILING = [
   "tray",
   "background_service",
   "vr_captions",
+  "soft_aec",
 ];
 
 const failures = [];
@@ -330,6 +335,58 @@ try {
       `${reason}：en 缺这句特征文案（英文包不许漏条目）`,
     );
   }
+
+  // ── [8] 回声消除开关：位为真 ⇒ 开关在且缺省开、能读写；位为假 ⇒ 入口不渲染 + reason ─
+  // Windows（`soft_aec` 在上限里）：开关在，缺省为开，点一下走设置通道翻状态。
+  await openPage(page, BASE, "home", "首页");
+  const aecToggle = page.locator("#dd-home-speak-aec");
+  expect((await aecToggle.count()) === 1, "Windows：soft_aec 位为真，回声消除开关必须在");
+  expect(
+    (await aecToggle.getAttribute("aria-checked")) === "true",
+    "回声消除缺省应为开（`speak.aec` 缺省 true）",
+  );
+  await aecToggle.click();
+  expect(
+    (await aecToggle.getAttribute("aria-checked")) === "false",
+    "点一下应翻成关（开关读写走设置通道）",
+  );
+
+  // 位为假（`?off=soft_aec:unsupported`）：开关撤下，原位只留一句带 reason 的说明（R1/R9）。
+  await openPage(page, `${BASE}&off=soft_aec:unsupported`, "home", "首页");
+  expect(
+    (await page.locator("#dd-home-speak-aec").count()) === 0,
+    "soft_aec 位为假：回声消除开关不许渲染（R5）",
+  );
+  const aecNote = await noteText(page, "soft_aec");
+  expect(
+    !!aecNote && aecNote.includes(REASON_MARK.unsupported.zh),
+    "soft_aec 位为假：要给「这台设备做不到」的说明（R9）",
+  );
+
+  // 今天真机上最常撞到的那一档（Windows / LinuxDesktop 的外壳还没接上那台工厂）：说明除了
+  // 带 reason，还要说清"在那之前会怎样"——外放的译音被自己的麦克风录回去再翻一遍（R2）。
+  await openPage(page, `${BASE}&off=soft_aec:not_wired`, "home", "首页");
+  expect(
+    (await page.locator("#dd-home-speak-aec").count()) === 0,
+    "soft_aec 位为假（这个版本还没接通）：回声消除开关不许渲染",
+  );
+  const aecNotWired = await noteText(page, "soft_aec");
+  expect(
+    !!aecNotWired && aecNotWired.includes(REASON_MARK.not_wired.zh) && aecNotWired.includes("录回去"),
+    "soft_aec 位为假（这个版本还没接通）：说明要带 reason，也要说清「译音被自己的麦克风录回去再翻一遍」",
+  );
+
+  // Android 档 `soft_aec` 不在上限里：入口同样撤下、同样带说明（不靠 `tier` 分支）。
+  await openPage(page, `${BASE}&host=android`, "home", "首页");
+  expect(
+    (await page.locator("#dd-home-speak-aec").count()) === 0,
+    "Android：soft_aec 不在上限里，回声消除开关不许渲染",
+  );
+  const aecAndroid = await noteText(page, "soft_aec");
+  expect(
+    !!aecAndroid && aecAndroid.includes(REASON_MARK.unsupported.zh),
+    "Android：soft_aec 位为假，要给「这台设备做不到」的说明",
+  );
 
   if (failures.length > 0) {
     console.error(failures.join("\n"));

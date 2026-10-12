@@ -79,7 +79,7 @@ export interface Notice {
 /** 宿主档位（内核 `HostKind`）。四档**并列**，界面只拿它显示，**不许**按它分支降级。 */
 export type HostTier = "windows" | "linux_desktop" | "android" | "linux_headless";
 
-/** 宿主 / 设备位（内核 `Capability::HOST`，11 个）。名字与内核一字不差（`Capability::id()`）。 */
+/** 宿主 / 设备位（内核 `Capability::HOST`，13 个）。名字与内核一字不差（`Capability::id()`）。 */
 export type HostCapability =
   | "mic"
   | "program_tap"
@@ -91,7 +91,9 @@ export type HostCapability =
   | "vr_captions"
   | "net_in"
   | "net_out"
-  | "file_config";
+  | "file_config"
+  | "hw_aec"
+  | "soft_aec";
 
 /** provider 位（内核 `Capability::PROVIDER`，8 个）。界面侧另有 `catalog.ts` 读同一份 JSON。 */
 export type ProviderCapability =

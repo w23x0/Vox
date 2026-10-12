@@ -85,7 +85,8 @@ pub(crate) fn composition(config: &SessionConfig, facts: &HostFacts) -> Composit
     }
 
     // —— 半双工的判据要看 `out` 里有没有"会出声的播放出口"，所以 `ops` 这一段挪到这儿。
-    //    这是**纯位移**：`ops` 只看 `passthrough` / `config.denoise` / `config.gate`，
+    //    这是**纯位移**：`ops` 只看 `passthrough` / `config.denoise` / `config.aec` /
+    //    `config.gate`（外加 `soft_aec` 那一位），
     //    与 `out` 互不依赖；`OP_ORDER` 只管 `ops` 数组的顺序，与 `out` 在清单里的
     //    相对位置无关。判据**直接读 `out`**，不另写一份推导（另写一份就是第二份真源）。
     //
@@ -118,6 +119,16 @@ pub(crate) fn composition(config: &SessionConfig, facts: &HostFacts) -> Composit
     // 麦克风收的是真实空气声，空调、键盘、风扇都在里面，得降。
     if config.denoise {
         ops.push(Op::Denoise);
+    }
+    // 回声消除：**降噪之后、门之前**（`Composition::OP_ORDER` 第 3 格，S4-C 稿 §3.1）。
+    // 门之后装等于没装：门看能量判开合，残留的回声会自己把门推开，于是"没人说话时
+    // 门被回声打开" → 上行发一整轮回声 → 云端把我们的译音又译回来。门之前的失效
+    // 是可恢复的（开头几十毫秒落在门的 preroll 里，开门时补回来）。
+    //
+    // 两道闸缺一不可：能力位说"这台机器装得上"（判据见 `capability.rs::host_ceiling`
+    // 与外壳的 `host_facts()`），`config.aec` 说"用户要不要"。
+    if config.aec && bits.contains(Capability::SoftAec) {
+        ops.push(Op::Aec);
     }
     ops.push(Op::Gate { config: gate });
     if !passthrough {
@@ -189,6 +200,49 @@ mod tests {
             "麦克风收的是空气声，清单里必须有降噪这一节"
         );
         assert!(plan.hot_update, "只有对外说话认热更新");
+    }
+
+    /// `Op::Aec` 的两道闸各自钉住：**能力位**（`soft_aec`）与**设置**（`speak.aec`），
+    /// 缺一不进清单；进的时候位置正好在 `denoise` 之后、`gate` 之前（`OP_ORDER` 第 3 格）。
+    ///
+    /// 三段断言各自钉住一条变异：删掉整段 `push` → 第一段红；只留位、丢掉设置
+    /// （`if bits.contains(SoftAec)`）→ 第三段红；只留设置、丢掉位（`if config.aec`）→
+    /// 第二段红。
+    #[test]
+    fn the_aec_stage_needs_both_the_bit_and_the_setting() {
+        fn ops_of(config: &SessionConfig, facts: &HostFacts) -> Vec<&'static str> {
+            composition(config, facts)
+                .ops
+                .iter()
+                .map(Op::kind)
+                .collect()
+        }
+
+        // 位为假的那一档：档位上限里有 `soft_aec`，但这台机器报"装不上"。
+        let mut without_bit = HostFacts::all_wired(HostKind::Windows);
+        without_bit
+            .off
+            .insert(Capability::SoftAec, UnavailableReason::NotWired);
+
+        let mut config = speak_config();
+        assert!(config.aec, "缺省是开的（`SpeakSettings::default().aec`）");
+        assert_eq!(
+            ops_of(&config, &HostFacts::all_wired(HostKind::Windows)),
+            vec!["mono", "denoise", "aec", "gate", "resample"],
+            "位开 + 设置开 → 装，且落在 denoise 与 gate 之间"
+        );
+        assert_eq!(
+            ops_of(&config, &without_bit),
+            vec!["mono", "denoise", "gate", "resample"],
+            "位为假时设置说什么都不进清单"
+        );
+
+        config.aec = false;
+        assert_eq!(
+            ops_of(&config, &HostFacts::all_wired(HostKind::Windows)),
+            vec!["mono", "denoise", "gate", "resample"],
+            "用户关了这一格就不装"
+        );
     }
 
     #[test]

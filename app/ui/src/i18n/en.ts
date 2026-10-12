@@ -67,6 +67,9 @@ const en = {
     sourceFellBack: "The new model does not support the source language \"{from}\"; switched to \"{to}\".",
     translate: "Translate on the go",
     translateOffHint: "Translation is off: no cloud API is used — your original voice is sent straight to the output device (still gated by activation and the voice gate; no subtitles, no usage).",
+    aec: "Echo cancellation",
+    aecHint:
+      "While on, Vox captures its own translated playback back from the microphone and cancels it, so your speakers' output isn't re-transcribed as if you said it. Turn it off and the translated voice from your speakers gets recorded by your own mic and translated all over again.",
     stateLoading: "Loading",
     changeModel: "Change",
     changeModelAria: "Change the model for {pipe}",
@@ -513,6 +516,8 @@ const en = {
       netIn: "Audio in from network",
       netOut: "Audio out to network",
       fileConfig: "Config file control plane",
+      hwAec: "Hardware echo cancellation",
+      softAec: "Software echo cancellation",
     },
     reason: {
       unsupported: "This device can't do this.",
@@ -532,6 +537,10 @@ const en = {
         "This device can't do this: this kind of device can't capture a single program's sound (headless devices don't capture locally, and phones can't reach call audio). Use microphone capture instead, or switch to a computer.",
       virtualMicNotInstalled:
         "Not usable yet: install the virtual audio driver (VB-CABLE) first, then come back to this page — only then will other programs see it among recording devices.",
+      softAecNotWired:
+        "This device can do this, but this build isn't wired up for it yet; once it is, it turns on by itself with no setting changes. Until then your own microphone picks your translated playback back up and it gets translated a second time — wearing headphones avoids that.",
+      softAecUnsupported:
+        "This device can't do this: its capture and playback ports can't be tied into one echo reference path (phones and headless devices are like this). Your own microphone picks your translated playback back up and it gets translated a second time — wearing headphones avoids that.",
     },
   },
 

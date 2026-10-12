@@ -69,6 +69,7 @@ function needsRestart(before: Settings, after: Settings, pipeline: PipelineName)
       before.speak.input_device !== after.speak.input_device ||
       before.speak.translate !== after.speak.translate ||
       before.speak.denoise !== after.speak.denoise ||
+      before.speak.aec !== after.speak.aec ||
       before.speak.voice_clone_frequency !== after.speak.voice_clone_frequency ||
       (!catalog.supportsHotUpdateLanguage(after.speak.provider) &&
         before.speak.target_language !== after.speak.target_language)

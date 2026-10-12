@@ -1,16 +1,21 @@
-//! 差分台（S4-B B0）：16 组配置各跑一段脚本，把**可观察的外部行为**渲染成一份
+//! 差分台（S4-B B0）：20 组配置各跑一段脚本，把**可观察的外部行为**渲染成一份
 //! 纯文本轨迹，与 `golden/<id>.txt` 逐字比。
 //!
 //! 存在的全部理由：S4-B 要把 `Worker` 里写死的"单声道 → 降噪 → 阀门 → 重采样"
 //! 换成一条按 `Composition.ops` 顺序走的有序节列表，**行为必须一模一样**。
 //! "一模一样"不能靠 `git diff` 说话（`diff` 看不见音频样本与帧边界），所以有了它。
-//! 这 16 份里**前 15 份**是在**重构前**的代码上录的；B2 之后它们必须一个字都不用改。
+//! 这 20 份里**前 15 份**是在**重构前**的代码上录的；B2 之后它们必须一个字都不用改。
 //! 第 16 份（`speak_48k_speaker_half_duplex`）是 S4-C G4 落地**之后**录的，
 //! 它是**回归钉子**而不是差分证据（见 `docs/plans/S4-C-GATE-RESAMPLE.md` §2.8.3）。
+//! 第 17–20 份（`speak_*_aec_*`）是 S4-C W5 落地**之后**录的：它们钉的是新装的
+//! `Op::Aec` 那一节**装没装、跑没跑、断线清没清**（同样只是回归钉子）。
+//! **前 16 份一个字节都没动**——W5 的 AEC 夹具是直通件，轨迹里看不出来。
 //!
 //! ## 轨迹里放什么
 //!
-//! 七节，节内按发生顺序、节间固定顺序（`meta` 打头，其余照可观察面的分类排）：
+//! 七节，节内按发生顺序、节间固定顺序（`meta` 打头，其余照可观察面的分类排）；
+//! W5 那四份**额外**接一节 `aec`（见 [`aec_section`]：既有 16 份不渲染它，
+//! 否则"既有金样一字不动"这条纪律就没了）：
 //!
 //! | 节 | 一行的形状 |
 //! | --- | --- |
@@ -21,6 +26,7 @@
 //! | `capture` | 采集开的抓谁、停了几次 |
 //! | `event` | 账本事件流的紧凑 JSON |
 //! | `wire_life` | socket 的连接/关闭计数 |
+//! | `aec` | **只有 W5 那四份有**：回声消除那一节的工厂次数 / 拍数 / 复位次数 + 链上装了哪几节 |
 //!
 //! `wire` 是最有价值的一节：`Wire::sent` 是 `Vec<String>`，顺序即发送顺序，
 //! 而 `Worker::upload` 逐块调 `transport.send`——**帧边界与块边界都在指纹里**。
@@ -51,7 +57,7 @@ use std::sync::atomic::Ordering;
 
 use super::tests::{speak_config, Rig, HOT_MODEL};
 use super::GATE_THROTTLE_MS;
-use crate::capability::HostFacts;
+use crate::capability::{Capability, HostFacts, UnavailableReason};
 use crate::catalog::ActivationMode;
 use crate::composition::HostKind;
 use crate::event::{Event, Pipeline, PipelineState};
@@ -120,6 +126,9 @@ fn start_speak(rig: &Rig, open_mic: bool, edit: impl FnOnce(&mut SpeakSettings))
         let speak = &mut settings.speak;
         speak.activation_mode = ActivationMode::Hold;
         speak.denoise = true;
+        // 回声消除这一格写死：Speak 的每个场景都在"装了这一节"的前提下跑，
+        // 只有 `speak_48k_aec_off` 用 `edit` 关掉它。
+        speak.aec = true;
         speak.translate = true;
         speak.monitor_translation = false;
         speak.target_language = "ja".to_string();
@@ -403,6 +412,48 @@ fn render(rig: &Rig, meta: &[(&str, String)], play: &PlaySnapshot) -> String {
     out
 }
 
+/// 回声消除那一节的账（**只有 W5 新加的四条场景接它**）。
+///
+/// 为什么不并进 [`render`]：并进去会让既有 16 份金样全部变样（多三行计数 + 一行节名），
+/// 而 S4-C W5 的纪律是**既有 16 份一个字节不动**（`docs/plans/S4-C-AEC.md` §7.4：
+/// 那 15 份是重构前的差分证据，动一份就毁一份）。所以这一段由新场景自己接在标准轨迹后面。
+///
+/// 四行都是**真东西**，没有一行是手写的摘要：
+///
+/// - `factory_calls`：`Deps.aec` 那个闭包被叫到几次。**这是"装没装这一节"的关键**：
+///   清单里没有 `Op::Aec` ⇒ 0；装了 ⇒ 1；采集率不在 `AEC_RATES` 里 ⇒ **0**
+///   （`Chain::build` 先判率，`AecSkip::Rate` 那条路根本不叫工厂）。
+/// - `process_calls`：这一节真的跑了几拍（`Aec::process` 被调到几次）。
+/// - `resets`：断线重来清了几次流状态（`Chain::on_disconnect`，契约 C6）。
+/// - `stages`：链上**真装**了哪几节，从账本的计量读取口取（`Chain::timings` 一行一节、
+///   装配顺序）。它把"装了但降级"（有 `aec` 行）与"清单里没有这一节"（没有 `aec` 行）
+///   分开——只看前三个计数的话，这两态长得一模一样。
+///
+/// **必须在 `engine.shutdown()` 之前取**：`stages` 走账本的会话快照，会话收摊之后就没了。
+fn aec_section(rig: &Rig) -> String {
+    let mut out = String::new();
+    out.push_str("# aec\n");
+    out.push_str(&format!(
+        "aec factory_calls {}\n",
+        rig.dsp.aec_builds.load(Ordering::SeqCst)
+    ));
+    out.push_str(&format!(
+        "aec process_calls {}\n",
+        rig.dsp.aec_calls.load(Ordering::SeqCst)
+    ));
+    out.push_str(&format!(
+        "aec resets {}\n",
+        rig.dsp.aec_resets.load(Ordering::SeqCst)
+    ));
+    let stages: Vec<&str> = rig
+        .runtime
+        .op_timings(Pipeline::Speak)
+        .map(|rows| rows.into_iter().map(|row| row.op).collect())
+        .unwrap_or_default();
+    out.push_str(&format!("aec stages {}\n", stages.join(" ")));
+    out
+}
+
 /// 比对（或重录）一份金样。
 ///
 /// `include_str!` 必须在**编译期**拿到文件名，所以 id 只能是字面量——用宏而不是函数。
@@ -430,7 +481,7 @@ macro_rules! verify {
     }};
 }
 
-// --- 16 个场景 -------------------------------------------------------------
+// --- 20 个场景 -------------------------------------------------------------
 
 /// 场景 1（基线）：手动门、降噪开、48 kHz、门初始关着。
 /// 钉的是：门关着时 preroll 攒、上升沿把 preroll 一次冲出（多帧）、松手出静音尾、
@@ -1080,12 +1131,163 @@ fn speak_48k_speaker_half_duplex() -> String {
     )
 }
 
-// --- 场景表与 17 条用例 -----------------------------------------------------
+// --- W5（S4-C）：回声消除那一节的四态（跑 / 降级 / 用户关 / 位为假）---------------------------------------
+
+/// 场景 17（S4-C W5）：回声消除**装上且真的在跑** —— 采集率 48 kHz 在 `AEC_RATES` 里。
+///
+/// 钉的是 `# aec` 那四行（全是真调用数出来的，见 [`aec_section`]）：
+/// 工厂叫了 **1** 次、这一节真的跑过（`process_calls` > 0）、断线重来清了 **1** 次
+/// 流状态（契约 C6：有流状态的三节之一，门不动 ⇒ 重连后音频照旧上行）、
+/// `stages` 里有 `aec` 那一行。
+fn speak_48k_aec_running() -> String {
+    let rig = Rig::build(RATE_48);
+    start_speak(&rig, true, |_| {});
+    rig.feed(loud(BLOCK_48, 1));
+    rig.feed(loud(BLOCK_48, 2));
+    // 断线重来：`Chain::on_disconnect` 逐节清，回声消除那一节算一节。
+    rig.push_closed();
+    rig.wait_until(|| rig.wire.connects.load(Ordering::SeqCst) >= 2);
+    rig.wait_until(|| rig.runtime.pipeline_state(Pipeline::Speak) == PipelineState::Ready);
+    rig.feed(loud(BLOCK_48, 3));
+    // `stages` 走账本的会话快照 ⇒ 必须在收摊**之前**取。
+    let aec = aec_section(&rig);
+    let play = snapshot_play(&rig);
+    rig.engine.shutdown();
+    let mut trace = render(
+        &rig,
+        &[
+            ("scenario", "speak_48k_aec_running".to_string()),
+            ("pipeline", "speak".to_string()),
+            ("boot", "ledger".to_string()),
+            ("capture_rate", RATE_48.to_string()),
+            ("block_samples", BLOCK_48.to_string()),
+            ("denoise", "on".to_string()),
+            ("aec", "on".to_string()),
+            ("gate", "manual".to_string()),
+            ("gate_active_at_boot", "true".to_string()),
+            ("translate", "true".to_string()),
+            ("output_device", "CABLE_Input".to_string()),
+        ],
+        &play,
+    );
+    trace.push_str(&aec);
+    trace
+}
+
+/// 场景 18（S4-C W5）：采集率 **44.1 kHz 不在 `AEC_RATES` 里** ⇒ 清单里照样有
+/// `aec` 那一节，但 `Chain::build` **先判率**、`AecSkip::Rate` 那条路**不叫工厂**。
+///
+/// 钉的是：`factory_calls 0`、`process_calls 0`，而 `stages` **仍然有** `aec` 那一行
+/// ——"装了但降级成直通"与场景 19 的"清单里压根没有这一节"就靠这一行分辨。
+fn speak_44k_aec_rate_skipped() -> String {
+    let rig = Rig::build(RATE_44);
+    start_speak(&rig, true, |_| {});
+    rig.feed(loud(BLOCK_44, 1));
+    rig.feed(loud(BLOCK_44, 2));
+    let aec = aec_section(&rig);
+    let play = snapshot_play(&rig);
+    rig.engine.shutdown();
+    let mut trace = render(
+        &rig,
+        &[
+            ("scenario", "speak_44k_aec_rate_skipped".to_string()),
+            ("pipeline", "speak".to_string()),
+            ("boot", "ledger".to_string()),
+            ("capture_rate", RATE_44.to_string()),
+            ("block_samples", BLOCK_44.to_string()),
+            ("denoise", "on".to_string()),
+            ("aec", "on_but_rate_mismatch".to_string()),
+            ("gate", "manual".to_string()),
+            ("gate_active_at_boot", "true".to_string()),
+            ("translate", "true".to_string()),
+            ("output_device", "CABLE_Input".to_string()),
+        ],
+        &play,
+    );
+    trace.push_str(&aec);
+    trace
+}
+
+/// 场景 19（S4-C W5）：`speak.aec = false` ⇒ 清单里**没有** `aec` 那一节。
+///
+/// 钉的是：`factory_calls 0`、`process_calls 0`，而且 `stages` 里**没有** `aec`
+/// 那一行——与场景 18 唯一的区别就在这一行上（计数一样、装没装不一样）。
+fn speak_48k_aec_off() -> String {
+    let rig = Rig::build(RATE_48);
+    start_speak(&rig, true, |speak| speak.aec = false);
+    rig.feed(loud(BLOCK_48, 1));
+    rig.feed(loud(BLOCK_48, 2));
+    let aec = aec_section(&rig);
+    let play = snapshot_play(&rig);
+    rig.engine.shutdown();
+    let mut trace = render(
+        &rig,
+        &[
+            ("scenario", "speak_48k_aec_off".to_string()),
+            ("pipeline", "speak".to_string()),
+            ("boot", "ledger".to_string()),
+            ("capture_rate", RATE_48.to_string()),
+            ("block_samples", BLOCK_48.to_string()),
+            ("denoise", "on".to_string()),
+            ("aec", "off".to_string()),
+            ("gate", "manual".to_string()),
+            ("gate_active_at_boot", "true".to_string()),
+            ("translate", "true".to_string()),
+            ("output_device", "CABLE_Input".to_string()),
+        ],
+        &play,
+    );
+    trace.push_str(&aec);
+    trace
+}
+
+/// 场景 20（S4-C W5）：事实里**没有** `soft_aec` 这一位（这台机器报"装不上"）⇒
+/// 设置说"要装"也不装。
+///
+/// 与场景 19 钉的是同一格（清单里没有 `aec` 那一节），走的是**另一道闸**：
+/// 19 是用户关的（`speak.aec = false`）、20 是这台机器做不到的（位为假）。
+/// 两道闸在 `speak::composition` 里各是一句，缺哪一句都有一条金样变红
+/// ——19 钉设置那一半、20 钉能力位那一半。
+fn speak_48k_aec_bit_off() -> String {
+    let mut facts = HostFacts::all_wired(HostKind::Windows);
+    facts
+        .off
+        .insert(Capability::SoftAec, UnavailableReason::NotWired);
+    let rig = Rig::with_facts(RATE_48, facts);
+    start_speak(&rig, true, |_| {});
+    rig.feed(loud(BLOCK_48, 1));
+    rig.feed(loud(BLOCK_48, 2));
+    let aec = aec_section(&rig);
+    let play = snapshot_play(&rig);
+    rig.engine.shutdown();
+    let mut trace = render(
+        &rig,
+        &[
+            ("scenario", "speak_48k_aec_bit_off".to_string()),
+            ("pipeline", "speak".to_string()),
+            ("boot", "ledger".to_string()),
+            ("capture_rate", RATE_48.to_string()),
+            ("block_samples", BLOCK_48.to_string()),
+            ("denoise", "on".to_string()),
+            ("aec", "on_but_bit_off".to_string()),
+            ("gate", "manual".to_string()),
+            ("gate_active_at_boot", "true".to_string()),
+            ("translate", "true".to_string()),
+            ("output_device", "CABLE_Input".to_string()),
+        ],
+        &play,
+    );
+    trace.push_str(&aec);
+    trace
+}
+
+// --- 场景表与 21 条用例 -----------------------------------------------------
 
 type Scenario = fn() -> String;
 
-/// 16 组配置的登记表。前 15 条照 `docs/plans/S4-B-OP-CHAIN.md` §6.4 的顺序原样保留，
-/// 第 16 条（`speak_48k_speaker_half_duplex`）是 S4-C G4 新增的回归钉子。
+/// 20 组配置的登记表。前 15 条照 `docs/plans/S4-B-OP-CHAIN.md` §6.4 的顺序原样保留，
+/// 第 16 条（`speak_48k_speaker_half_duplex`）是 S4-C G4 新增的回归钉子，
+/// 第 17–20 条是 S4-C W5 新增的（回声消除那一节：跑 / 降级 / 用户关 / 位为假）。
 const SCENARIOS: &[(&str, Scenario)] = &[
     ("speak_48k_denoise_manual", speak_48k_denoise_manual),
     ("speak_48k_denoise_off", speak_48k_denoise_off),
@@ -1115,6 +1317,10 @@ const SCENARIOS: &[(&str, Scenario)] = &[
         "speak_48k_speaker_half_duplex",
         speak_48k_speaker_half_duplex,
     ),
+    ("speak_48k_aec_running", speak_48k_aec_running),
+    ("speak_44k_aec_rate_skipped", speak_44k_aec_rate_skipped),
+    ("speak_48k_aec_off", speak_48k_aec_off),
+    ("speak_48k_aec_bit_off", speak_48k_aec_bit_off),
 ];
 
 /// 跑一个场景。跑两遍结果必须一样——这是差分台自己对自己的一致性检查。
@@ -1223,7 +1429,31 @@ fn speak_48k_speaker_half_duplex_matches_its_golden() {
     verify!("speak_48k_speaker_half_duplex", first);
 }
 
-/// 16 组配置在同一个进程里连跑两遍，轨迹必须逐字相同。
+#[test]
+fn speak_48k_aec_running_matches_its_golden() {
+    let (first, _) = run_twice("speak_48k_aec_running");
+    verify!("speak_48k_aec_running", first);
+}
+
+#[test]
+fn speak_44k_aec_rate_skipped_matches_its_golden() {
+    let (first, _) = run_twice("speak_44k_aec_rate_skipped");
+    verify!("speak_44k_aec_rate_skipped", first);
+}
+
+#[test]
+fn speak_48k_aec_off_matches_its_golden() {
+    let (first, _) = run_twice("speak_48k_aec_off");
+    verify!("speak_48k_aec_off", first);
+}
+
+#[test]
+fn speak_48k_aec_bit_off_matches_its_golden() {
+    let (first, _) = run_twice("speak_48k_aec_bit_off");
+    verify!("speak_48k_aec_bit_off", first);
+}
+
+/// 20 组配置在同一个进程里连跑两遍，轨迹必须逐字相同。
 ///
 /// 这是差分台自己的一致性闸：轨迹里混进了墙钟、线程 id、集合遍历顺序或任何别的
 /// 非确定项，这一条会先红——比"金样偶尔对不上"好定位得多。

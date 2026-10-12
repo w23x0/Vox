@@ -482,7 +482,15 @@ fn editable_is_the_design_table_and_excludes_the_gate_cells() {
 
     // 真去改闸门 → `unsupported_field`，`why` 指到 D6 那一条（不是"泛泛不可改"）。
     let mut edited = speak["manifest"].clone();
-    edited["ops"][2]["config"]["threshold"] = json!(0.02);
+    // 按 `kind` 找门那一格，不写死下标：W5 在 `denoise` 与 `gate` 之间插了 `aec`，
+    // 下标会把这一格指到别人身上（测试就会变成"改 aec 被拒"，测的东西就没了）。
+    let gate = edited["ops"]
+        .as_array_mut()
+        .expect("ops 是数组")
+        .iter_mut()
+        .find(|op| op["kind"] == json!("gate"))
+        .expect("Speak 的清单恒有门");
+    gate["config"]["threshold"] = json!(0.02);
     let failure = backend
         .compose_endpoint(EndpointId::Speak, edited, false, None)
         .expect_err("改闸门必须被拒");

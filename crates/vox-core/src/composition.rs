@@ -776,8 +776,15 @@ mod tests {
         assert_eq!(value["in"][0]["kind"], "mic");
         assert_eq!(value["in"][0]["block_ms"], crate::pipeline::INPUT_BLOCK_MS);
         assert_eq!(value["ops"][0]["kind"], "mono");
-        assert_eq!(value["ops"][2]["kind"], "gate");
-        assert_eq!(value["ops"][2]["config"]["kind"], "manual");
+        // 门按 `kind` 找，不按下标：W5 在 `denoise` 与 `gate` 之间插了 `aec`，
+        // 下标断言会跟着每次插节重写一遍（`S4-C-AEC` §3.3 的顺序）。
+        let gate = value["ops"]
+            .as_array()
+            .expect("ops 是数组")
+            .iter()
+            .find(|op| op["kind"] == "gate")
+            .expect("Speak 的清单恒有门");
+        assert_eq!(gate["config"]["kind"], "manual");
         assert_eq!(value["out"][0]["kind"], "playback");
         assert_eq!(value["out"][0]["role"], "virtual_mic");
         assert_eq!(value["out"][1]["track"], "speak");
@@ -800,6 +807,9 @@ mod tests {
     #[test]
     fn the_manifests_match_the_design_documents_instances() {
         // §2.3.1 的两份实例**逐字**：serde 形状就是清单的形状——键名、取值、嵌套一层都不许漂。
+        // ⚠️ Speak 的 `ops` 比 §2.3.1 那份实例**多一格 `aec`**：那份实例写在 S4-C 之前，
+        // 而 W5 之后 `soft_aec` 位为真 + `speak.aec` 缺省开 ⇒ 清单里就是有这一节
+        // （顺序见 `Composition::OP_ORDER`）。**以代码为准**，设计稿那一格待补。
         let mut speak = speak_config();
         speak.input_device = None;
         speak.output_device = Some("CABLE Input (VB-Audio Virtual Cable)".to_string());
@@ -812,6 +822,7 @@ mod tests {
             "ops": [
                 { "kind": "mono" },
                 { "kind": "denoise" },
+                { "kind": "aec" },
                 { "kind": "gate", "config": {
                     "kind": "level", "threshold": 0.012, "tail_ms": 600, "preroll_ms": 200
                 } },
@@ -1000,10 +1011,9 @@ mod tests {
         let ops: Vec<&str> = composition.ops.iter().map(Op::kind).collect();
         assert_eq!(
             ops,
-            // `aec` 这一节要等 W5（`soft_aec` 位 + `settings.speak.aec`）才会进 Speak 的
-            // 清单；规定顺序里它排在 `denoise` 与 `gate` 之间（`Composition::OP_ORDER`）。
-            vec!["mono", "denoise", "gate", "resample"],
-            "采集 → mono → denoise → gate → resample"
+            // `aec` 在 `denoise` 与 `gate` 之间（W5：`soft_aec` 位 + 缺省开的 `speak.aec`）。
+            vec!["mono", "denoise", "aec", "gate", "resample"],
+            "采集 → mono → denoise → aec → gate → resample"
         );
 
         let playback = composition
@@ -1232,8 +1242,15 @@ mod tests {
         dropped.ops.retain(|op| !matches!(op, Op::Mono));
         assert!(dropped.validate().is_ok(), "缺项合法");
 
+        // 把 `resample` 换到 `mono` 前面。按 `kind` 认那一格，不写死下标——
+        // 清单的节数会变（W5 就插了 `aec`），换序这条判据与节数无关。
         let mut swapped = composition.clone();
-        swapped.ops.swap(0, 3);
+        let last = swapped.ops.len() - 1;
+        assert!(
+            matches!(swapped.ops[last], Op::Resample { .. }),
+            "末节是重采样"
+        );
+        swapped.ops.swap(0, last);
         let errors = swapped
             .validate()
             .expect_err("resample 跑到 mono 前面就该报出来");
@@ -1244,8 +1261,9 @@ mod tests {
 
         let mut twice = composition.clone();
         twice.ops.push(Op::Denoise);
+        let at = twice.ops.len() - 1;
         assert!(
-            matches!(twice.validate(), Err(errors) if errors.contains(&CompositionError::BadOpOrder { at: 4 })),
+            matches!(twice.validate(), Err(errors) if errors.contains(&CompositionError::BadOpOrder { at })),
             "同一节装两次也算换序"
         );
     }

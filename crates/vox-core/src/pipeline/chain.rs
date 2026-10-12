@@ -950,6 +950,9 @@ mod tests {
             monitor_translation: false,
             loopback_target: None,
             denoise: true,
+            // 与账本派生的那份一致：Speak 缺省开着（`SpeakSettings::default().aec`），
+            // 而 `base_config(Listen)` 由 `listen::composition` 决定装不装（恒不装）。
+            aec: true,
             source_language: None,
             aliyun_endpoint: crate::cloud::AliyunEndpoint::default(),
             network: crate::settings::NetworkSetting::default(),

@@ -42,6 +42,8 @@ export const HOST_CAPABILITIES: readonly HostCapability[] = [
   "net_in",
   "net_out",
   "file_config",
+  "hw_aec",
+  "soft_aec",
 ];
 
 /** 位 → 文案 key（人是看不懂 `program_tap` 的）。 */
@@ -57,6 +59,8 @@ export const CAPABILITY_KEY: Record<HostCapability, string> = {
   net_in: "capabilities.bit.netIn",
   net_out: "capabilities.bit.netOut",
   file_config: "capabilities.bit.fileConfig",
+  hw_aec: "capabilities.bit.hwAec",
+  soft_aec: "capabilities.bit.softAec",
 };
 
 /** reason → 文案 key。**七种全覆盖**（缺一种就会在界面上漏出 key）。 */
@@ -82,6 +86,12 @@ const SPECIFIC_KEY: Partial<Record<string, string>> = {
   "global_hotkey:permission": "capabilities.specific.hotkeyPermission",
   "program_tap:unsupported": "capabilities.specific.programTapUnsupported",
   "virtual_mic:not_installed": "capabilities.specific.virtualMicNotInstalled",
+  // `soft_aec` 今天在每一档都是假（Windows / LinuxDesktop 的外壳还没接通那台工厂；
+  // 别档不在上限里）。通用文案只说得出"为什么不行"，说不出"在那之前会怎样"——而这一位
+  // 的后果是**用户的译音被自己的麦克风录回去再翻一遍**（§4.3）；不写出来，用户就只会看到
+  // 一句"还没接通"而不知道自己的译文为什么会重复。
+  "soft_aec:not_wired": "capabilities.specific.softAecNotWired",
+  "soft_aec:unsupported": "capabilities.specific.softAecUnsupported",
 };
 
 /**

@@ -105,6 +105,7 @@ const MOCK_CEILING: Record<MockHost, readonly HostCapability[]> = {
     "tray",
     "background_service",
     "vr_captions",
+    "soft_aec",
   ],
   linux: [
     "mic",
@@ -114,9 +115,12 @@ const MOCK_CEILING: Record<MockHost, readonly HostCapability[]> = {
     "global_hotkey",
     "tray",
     "background_service",
+    "soft_aec",
   ],
   android: ["mic", "captions", "background_service"],
-  embedded: ["mic", "background_service"],
+  // 无屏档（`linux_headless`）也在 `soft_aec` 的三档里；`hw_aec` 四档都不在
+  // （没有任何手段探测会议麦的 AEC 芯片 ⇒ 报告恒 `off(unsupported)`）。
+  embedded: ["mic", "background_service", "soft_aec"],
 };
 
 export interface MockFacts {

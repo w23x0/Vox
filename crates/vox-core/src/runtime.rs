@@ -63,6 +63,10 @@ pub struct SessionConfig {
     /// 源语言；`None` = 服务端自动识别。只有听人说话用。
     pub source_language: Option<String>,
     pub denoise: bool,
+    /// 本地回声消除（`Op::Aec`）。只有对外说话用：那条路上译音从扬声器/虚拟麦出去，
+    /// 会拐回麦克风；听人说话抓的是别的程序的数字音源，没有回声路径（`listen::composition`
+    /// 恒不装那一节，所以那一侧恒 `false`）。
+    pub aec: bool,
     /// 阿里云接入点（地区 + 自定义）。只有阿里云会读它；`VOX_ALIYUN_ENDPOINT`
     /// 环境变量的优先级更高，但那层在建连处才看。
     pub aliyun_endpoint: crate::cloud::AliyunEndpoint,
@@ -944,6 +948,7 @@ impl Runtime {
                 monitor_translation: settings.speak.monitor_translation,
                 loopback_target: None,
                 denoise: settings.speak.denoise,
+                aec: settings.speak.aec,
                 source_language: None,
                 aliyun_endpoint: aliyun_endpoint.clone(),
                 network: settings.network.of(settings.speak.provider).clone(),
@@ -974,6 +979,8 @@ impl Runtime {
                 loopback_target: settings.listen.target.clone(),
                 // 数字音源本来就干净，不降噪。
                 denoise: false,
+                // 也没有回声可消：抓的是别的程序的输出，我们的译音根本没进这条路。
+                aec: false,
                 // 源语言；None = 服务端自动识别。
                 source_language: settings.listen.source_language.clone(),
                 aliyun_endpoint,

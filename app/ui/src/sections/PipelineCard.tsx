@@ -149,6 +149,13 @@ export function PipelineCard({ pipeline }: { pipeline: HomePipeline }) {
   const tapNote =
     pipeline === "listen" && snapshot ? capabilityNote(t, "program_tap", hostBit(snapshot, "program_tap")) : null;
 
+  /**
+   * 回声消除这一位（`soft_aec`）："能不能做软件回声消除"。位为假时 AEC 开关整个不渲染、
+   * 原位只留一句说明（R1/R9）；位为真时用户开关照旧（R5，"要不要"是用户的事）。
+   * 硬件回声消除（`hw_aec`）另有其位，但今天没有定义者（恒假），不做入口。
+   */
+  const aecBit = hostBit(snapshot, "soft_aec");
+
   const card = CARDS.find((c) => c.id === pipeline);
   if (!card) return null;
   const Icon = card.icon;
@@ -445,6 +452,24 @@ export function PipelineCard({ pipeline }: { pipeline: HomePipeline }) {
               />
             </div>
             {!speak.translate ? <div className="hint">{t("pipeline.translateOffHint")}</div> : null}
+            {aecBit.enabled ? (
+              <>
+                <div className="toggle-line">
+                  <span>{t("pipeline.aec")}</span>
+                  <Toggle
+                    id="dd-home-speak-aec"
+                    checked={speak.aec}
+                    disabled={!snapshot}
+                    label={t("pipeline.aec")}
+                    onChange={(aec) => patch({ speak: { aec } })}
+                  />
+                </div>
+                <div className="hint">{t("pipeline.aecHint")}</div>
+              </>
+            ) : (
+              /* 位为假：开关整个不渲染，原位只留一句说明（R1/R9）。 */
+              <CapabilityNote bit="soft_aec" />
+            )}
           </>
         ) : tapNote ? (
           /* 位为假：选择器 / 子进程开关 / 重扫按钮整块不渲染，只留这一句说明（R1/R9）。 */
