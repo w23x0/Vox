@@ -1219,7 +1219,7 @@ pub fn cheap_resample_factory() -> ResampleFactory {
 | **R2** | `crates/vox-headless/src/platform/linux.rs` | **`85324b9` 以来零改动** | `platform::platform` 读一次档位、填 `playback` 闭包与 `Platform.resample` 两处 | R1 |
 | **R3** | `tools/bench-dsp/src/main.rs` | **`85324b9` 以来零改动** | 修守卫 + 补 44.1k→16k + 便宜档 + 固化用例 | R1 |
 | **G6 / R4** 文档回填 | `docs/plans/S4-EMBEDDED-REFACTOR.md`、`docs/architecture/DIRECTIONS.md` | **`S4-EMBEDDED-REFACTOR.md` 自 `85324b9` 零改动；`DIRECTIONS.md` 被 `9207895`（AEC 稿）碰过一次**（`git log 85324b9..main --oneline -- <path>`；r4 更正：原写"两个文件都零改动"对 `DIRECTIONS.md` 是**假命题**） | 两张表都在 `docs/` 下，本稿与 AEC 稿将来都会动它们 ⇒ 一律串到最后 | G4 且 R3 |
-| **AEC**（稿子 [`S4-C-AEC.md`](S4-C-AEC.md) 已在树上（`9207895`），**算子 `Op::Aec` 未落地**；见 §7.3 Q2） | `pipeline/mod.rs`（`AudioDelta` 分支）、`pipeline/chain.rs`（`Chain::push_playback_reference`）、`pipeline/speak.rs`（三档互斥的选档 `match`）、`composition.rs` / `capability.rs` | ——（**有稿子、无施工 commit 可列**） | 与 G3 / G4 / G2 **同一个区域**：`push_playback_reference` 要插在 `sink.push` **之前**，`mark_playing` 在两次 push **之后**，是相邻两行 | **排在 G4 之后**（本稿的拍板，§7.3 Q2） |
+| **AEC**（稿子 [`S4-C-AEC.md`](S4-C-AEC.md) 已在树上（`9207895`），**算子 `Op::Aec` 未落地**——**2026-10-12 补注：已落地**（W0/W1/W2/W3/W5，**W4 除外**），见 [`S4-C-AEC.md`](S4-C-AEC.md) 状态头；本行保留 r4 当时的记录；见 §7.3 Q2） | `pipeline/mod.rs`（`AudioDelta` 分支）、`pipeline/chain.rs`（`Chain::push_playback_reference`）、`pipeline/speak.rs`（三档互斥的选档 `match`）、`composition.rs` / `capability.rs` | ——（**有稿子、无施工 commit 可列**） | 与 G3 / G4 / G2 **同一个区域**：`push_playback_reference` 要插在 `sink.push` **之前**，`mark_playing` 在两次 push **之后**，是相邻两行 | **排在 G4 之后**（本稿的拍板，§7.3 Q2） |
 
 **给 Main 的一句话建议**：**七张工单现在零外部阻塞**（两张在途稿的施工部分都已经在树上）：
 `G1` / `G2` / `R1` / `R2` / `R3` 可立即派；`G3` 只需等 `G1`；`G4` 等 `G3`；
@@ -1392,7 +1392,7 @@ cd tools/bench-dsp && cargo run --release                          # 本轮实�
 | # | 事项 | 状态 |
 | --- | --- | --- |
 | **Q1** | **`HalfDuplex::DEFAULT_TAIL_MS = 300` 的实机值** | `[未核实]` 估算值，依据见 §2.3。有板子后：录一段"译音 → 立刻接话"的音频，测译音结束后多久麦克风上的自回声低于 −40 dB，取那个值再加 50 ms 余量 |
-| **Q2** | **AEC 落地时，半双工的判据与 AEC 的参考信号口怎么合** | `[未决]` **见 AEC 稿** —— [`S4-C-AEC.md`](S4-C-AEC.md)。⚠️ **r4 补注（2026-10-11）**：该稿最初写这段时（基线 `4bc6e8a`）`docs/plans/` 下确实**没有** AEC 稿；**现在它在树上**（`9207895`，含 W0 尖峰 `tools/aec-spike/`）——但**算子 `Op::Aec` 仍未落地**，所以 Q2 还是未决。**以 AEC 稿为准**，本稿下面这段只是**本稿自己的形状**（保留作留痕）：AEC 的 `Chain::push_playback_reference` 插在 `mark_playing` 的**前一行**（都在 `AudioDelta` 分支），三档互斥的选档入口落在 `Composition::of` 的一处 `match` 上，并把 §2.5.2 的 `audible && host == LinuxHeadless` **整条替换**成位驱动。**G4 之后动 `pipeline/mod.rs` 的 AEC 工单必须与本稿串行** |
+| **Q2** | **AEC 落地时，半双工的判据与 AEC 的参考信号口怎么合** | `[未决]` **见 AEC 稿** —— [`S4-C-AEC.md`](S4-C-AEC.md)。⚠️ **r4 补注（2026-10-11）**：该稿最初写这段时（基线 `4bc6e8a`）`docs/plans/` 下确实**没有** AEC 稿；**现在它在树上**（`9207895`，含 W0 尖峰 `tools/aec-spike/`）——但**算子 `Op::Aec` 仍未落地**，所以 Q2 还是未决。**2026-10-12 补注**：`Op::Aec` **已落地**（W0/W1/W2/W3/W5，**W4 除外**，见 AEC 稿状态头）⇒ 今天两节都会进清单；"两档怎么合"按 AEC 稿 §10 R9 的口径读（清单里两者都装时 **Gate 仍是最后一道**，AEC 收窄到只在门开时自适应——**这一形态还没做**，等那张工单）。**以 AEC 稿为准**，本稿下面这段只是**本稿自己的形状**（保留作留痕）：AEC 的 `Chain::push_playback_reference` 插在 `mark_playing` 的**前一行**（都在 `AudioDelta` 分支），三档互斥的选档入口落在 `Composition::of` 的一处 `match` 上，并把 §2.5.2 的 `audible && host == LinuxHeadless` **整条替换**成位驱动。**G4 之后动 `pipeline/mod.rs` 的 AEC 工单必须与本稿串行** |
 | **Q3** | **要不要给用户一个半双工开关** | `[未决]` §2.5.3 写了技术成本为零（`set_config` 已经能带），不做是**取舍**不是**做不到**。要做的完整清单：`Settings` 加一格 + `Runtime::gate_for` 一支 + 界面开关 + 三份 i18n + 一条新金样 |
 | **Q4** | **`ports::Resample::quality()` 要不要加** | `[未决]` §3.5 给了"没有消费者就不加"的判据。触发条件：`Snapshot` 要显示"本条链的重采样档"。**注意 B3 的自计时读取口已落地，但这一格今天仍然没有消费者** |
 | **Q5** | **渲染卡顿多久算一次事件** | `[未核实]` 影响 `GR-5` 的实际暴露面。有板子后用 `Chain::timings` 的 `max_ns` 观察（**读取口 `Runtime::op_timings` B3 已落地**，不再是"等它落地"） |
@@ -1411,7 +1411,7 @@ cd tools/bench-dsp && cargo run --release                          # 本轮实�
 - 方向与裁决：[`docs/architecture/DIRECTIONS.md`](../architecture/DIRECTIONS.md) §8 第 15/16/17 行、§10.9 第 1/4/7 条
 - 算子链（**已落地的代码，不是预想**）：[`S4-B-OP-CHAIN.md`](S4-B-OP-CHAIN.md) §2.2（契约 C1–C6）、§2.7（参考信号口）、§3.4（INV-1/INV-2）、§9.3 O-5（本稿给了答复）、§11 M1–M4。B3（逐节计量 + `Runtime::op_timings`）**已合入本稿核对的 `main`**
 - ALSA 后端：[`S4-C-ALSA.md`](S4-C-ALSA.md) §5.2（"能不重采样就不重采样"、三档率阶梯）、§12 M1–M6（**已合入**）
-- AEC：**[`S4-C-AEC.md`](S4-C-AEC.md)**（在树上，`9207895`；含 W0 尖峰 `tools/aec-spike/`。**算子未落地**，见 Q2——r4 补注：本稿 r3 写这句时该文件尚未合入）
+- AEC：**[`S4-C-AEC.md`](S4-C-AEC.md)**（在树上，`9207895`；含 W0 尖峰 `tools/aec-spike/`。**算子未落地**——**2026-10-12 补注：已落地**（W0/W1/W2/W3/W5，W4 除外）；见 Q2——r4 补注：本稿 r3 写这句时该文件尚未合入）
 - **已合入的相邻稿子**（`main` @ `4bc6e8a`）：[`OVERLAY-CAPTIONS.md`](OVERLAY-CAPTIONS.md)（`690efef` / `33927d3`，改过 `pipeline/mod.rs` 的 `Worker::push_text`、`subtitle.rs`、`app/ui/src/types.ts`）、[`MODEL-TABLE.md`](MODEL-TABLE.md)（`73e7c58` / `6b91a9a` / `0a04e19` / `7ca4333`，改过 `cloud/**`、`settings.rs`、`catalog.rs`、`app/ui/src/types.ts`；**只剩 M7 `AliyunRegion::Hk` 未落**）、[`LANG.md`](LANG.md)（`4bc6e8a`）—— 逐张工单的落点见 §4.5
 - 清单由来：[`S0-COMPOSITION-MANIFEST.md`](S0-COMPOSITION-MANIFEST.md) §2.1（`Composition` / `Op`）、§2.7（`Plan` 的边界）
 - 性能事实：`tools/bench-dsp/`（**复核者实跑过**，§3.1 表一）、`AGENTS.md`「性能事实」一节（采集链 3.03 / 播放链 1.73 ms/s，与实测同量级）
@@ -1425,7 +1425,7 @@ cd tools/bench-dsp && cargo run --release                          # 本轮实�
 ## 9. Main 拍板（2026-09-30 首次；2026-10-09 复核后追加第 6 条；2026-10-10 r3 再追加第 7 条）
 
 - **Q1**：`HalfDuplex::DEFAULT_TAIL_MS = 300` 先用，实机校准后再改（改时新增金样，不改旧的）。
-- **Q2**：AEC（**见 [`docs/plans/S4-C-AEC.md`](S4-C-AEC.md)**——**在树上**（`9207895`），**算子未落地**；r4 补注：本稿 r3 写这句时该文件尚未合入）与半双工 G 系列串行，G 先落（**G 已落**）。
+- **Q2**：AEC（**见 [`docs/plans/S4-C-AEC.md`](S4-C-AEC.md)**——**在树上**（`9207895`），**算子未落地**——**2026-10-12 补注：已落地**（W4 除外）；r4 补注：本稿 r3 写这句时该文件尚未合入）与半双工 G 系列串行，G 先落（**G 已落**）。
 - **Q3**：本轮**不**给用户半双工开关。
 - **Q8**：`ActivationGate::process_into`（S4-B X3）排在 G 系列之后。
 - **Q4/Q5/Q6/Q7/Q9**：记账，不在本轮。
@@ -1448,3 +1448,8 @@ cd tools/bench-dsp && cargo run --release                          # 本轮实�
   （逐条原始命令见 §0.4，口径见 §5.1）。
   ⚠️ **落地不等于把未决项结案**：**Q1**（实机 tail 值）、**Q3**（用户开关）、**Q4**（`ports::Resample::quality()`）、
   **Q5 / Q6 / Q7 / Q10** 仍然**未决 / 未核实**，**Q2** 也照旧要等 AEC 稿 —— 一条都不要标成"已解决"。
+  （**2026-10-12 补注**：Q2 那一半的**前提变了**——AEC 稿的 `Op::Aec` 已落地（W0/W1/W2/W3/W5，W4 除外），
+  所以"等 AEC 稿"这一步已经走完；但"**两档怎么合**"这个形态**还没做**（按 AEC 稿 §10 R9：两者都装时
+  Gate 仍是最后一道），所以 Q2 依然**不算已解决**。上一条 2026-10-11 的门禁读数是**那一轮的环境**
+  （缺 `libasound2-dev` 才带 `--exclude`）；2026-10-12 那一轮 `cargo test --workspace --no-fail-fast` =
+  **941 passed / 0 failed / 14 ignored**，见 `docs/architecture/DIRECTIONS.md` §10.9「进度回填（2026-10-12）」。

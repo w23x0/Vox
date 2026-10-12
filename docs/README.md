@@ -39,7 +39,7 @@
 | [`LINUX.md`](platform/LINUX.md) | Linux 适配执行方案：锚定范围、P0–P4 步骤、逐条实测证据 | **[已生效]**，P0–P4 已落地；遗留见本文 §9 与 `architecture/DIRECTIONS.md` §2 |
 | [`WINDOW_BEHAVIOR.md`](platform/WINDOW_BEHAVIOR.md) | Windows 窗口边缘两项未决问题（12px 大圆角没渲染 / 最小高度锁不到 38）的真机现状追踪 | **[未拍板]**，只能真机验证 |
 | [`ANDROID.md`](platform/ANDROID.md) | 手机档：面对面翻译（自麦进 → 耳机/外放出 + 应用内字幕）；抓通话音频与虚拟麦结构上做不到（位报 `false` + 界面照实说）；含 Tauri v2 路线、Oboe 48k 单声道、Keystore、分发与审核 | **[已拍板·未开工]**（S2），**2026-09-26 起顺延到 S4-A 之后**（`architecture/DIRECTIONS.md` §8 第 15 行），**当前被环境阻塞**：需 Android NDK + `cargo-ndk` + `aarch64-linux-android`/`x86_64-linux-android` 两个 rust target，本机未装（装机需用户同意，见 [`architecture/DIRECTIONS.md`](architecture/DIRECTIONS.md) §10.7「环境阻塞」）；一轮桌面调研，**未实机验证**，无一手出处的条目已逐一标 `[未核实]` |
-| [`EMBEDDED.md`](platform/EMBEDDED.md) | 嵌入式档：小主板 ARM64 Linux（Rust Tier 1）复用 `vox-audio-linux` + systemd `--user` + 无屏三件（配置进 / 状态出 / 进程活）；MCU 档已砍，代价留档（`nnnoiseless`/`rubato` 都踩 std） | **2026-09-26 起优先于手机**，音频缺省改 ALSA、控制面可开局域网，见文件顶部状态注与 [`plans/S4-EMBEDDED-REFACTOR.md`](plans/S4-EMBEDDED-REFACTOR.md)；**[部分落地]**（S3；原写"[已拍板·未开工]"——无屏外壳本体已落地，见本行末；`vox-audio-alsa` 只是 crate 在树上、**无屏入口还没切过去**，见 [`plans/S4-C-ALSA.md`](plans/S4-C-ALSA.md) 状态头）；一轮桌面调研，**未实机验证**，无一手出处的条目已逐一标 `[未核实]`。**第十五轮进度**：无屏外壳本体 `crates/vox-headless/` + systemd 两份 unit（`systemd/{user,system}/`）+ 样例配置 + README + 打包脚本 `tools/package-headless.sh` 已落地，`--print-composition` 可用；`background_service` 位仍如实 `not_wired`（unit 文件不算凭据）——**板子上的实机验证仍未做**，见 [`architecture/DIRECTIONS.md`](architecture/DIRECTIONS.md) §10.7「第十五轮回填」 |
+| [`EMBEDDED.md`](platform/EMBEDDED.md) | 嵌入式档：小主板 ARM64 Linux（Rust Tier 1）复用 `vox-audio-alsa`（无屏档缺省后端）+ systemd `--user` + 无屏三件（配置进 / 状态出 / 进程活）；MCU 档已砍，代价留档（`nnnoiseless`/`rubato` 都踩 std） | **2026-09-26 起优先于手机**，音频缺省改 ALSA、控制面可开局域网，见文件顶部状态注与 [`plans/S4-EMBEDDED-REFACTOR.md`](plans/S4-EMBEDDED-REFACTOR.md)；**[部分落地]**（S3；原写"[已拍板·未开工]"——无屏外壳本体已落地，见本行末；**音频后端也已切过去**：`crates/vox-headless/Cargo.toml` 依赖 `vox-audio-alsa`、`Probe::Audio`，见 [`plans/S4-C-ALSA.md`](plans/S4-C-ALSA.md) 状态头）；一轮桌面调研，**未实机验证**，无一手出处的条目已逐一标 `[未核实]`。**第十五轮进度**：无屏外壳本体 `crates/vox-headless/` + systemd 两份 unit（`systemd/{user,system}/`）+ 样例配置 + README + 打包脚本 `tools/package-headless.sh` 已落地，`--print-composition` 可用；`background_service` 位仍如实 `not_wired`（unit 文件不算凭据）——**板子上的实机验证仍未做**，见 [`architecture/DIRECTIONS.md`](architecture/DIRECTIONS.md) §10.7「第十五轮回填」 |
 
 ## protocols/ —— 对外协议与数据
 
@@ -60,10 +60,10 @@
 | [`S3-NET-AUDIO.md`](plans/S3-NET-AUDIO.md) | 网络音频进出（`net_in` / `net_out`）：媒体面协议与帧格式 + 两条腿网络化 + `NetIn`/`NetOut` 能力位定义者 + 心跳来源 + 安全 | **[已生效]**（部分实现）：**S3 帧层已落地**——`crates/vox-net/src/media/{mod,frame,pipe,server,client}.rs`（13 条 `tests/media_pipe.rs` + `examples/media_probe.rs`）+ `CaptureTarget::Net { pipe }`（已迁移四处穷尽 `match`）；**S3 后半未做**（无屏档端到端接媒体管子；`NetIn`/`NetOut` 两位仍恒假）。进度回填见 [`architecture/DIRECTIONS.md`](architecture/DIRECTIONS.md) §10.7 |
 | [`S4-A-HOST-LAYER.md`](plans/S4-A-HOST-LAYER.md) | S4-A 细化稿：共享宿主层 `vox-host`（装配顺序 / 持久化 / 密钥选择 / 控制面胶水 / EventSink），两个入口退成薄壳 | **[已生效]**（按代码核）：`crates/vox-host/`（`entry::HostPorts`、`control` / `persist` / `secrets` / `events` / `netcheck`）在树上，两个入口 `app/src-tauri/src/lib.rs` 与 `crates/vox-headless/src/headless.rs` 都只剩薄壳 |
 | [`S4-B-OP-CHAIN.md`](plans/S4-B-OP-CHAIN.md) | S4-B 细化稿：算子链执行器（`Worker` 按 `Composition.ops` 执行，行为不变）+ 逐节自计时 | **[已落地]**（按代码核；与稿子首行一致）：`crates/vox-core/src/pipeline/chain.rs` 的 `Chain` / `ChainStage` / `Chain::build` / `Chain::run` + `Chain::timings` / `Runtime::op_timings` 在树上 |
-| [`S4-C-ALSA.md`](plans/S4-C-ALSA.md) | S4-C 细化稿：`vox-audio-alsa` 后端（采集 / 播放 / 设备目录），无屏档缺省音频后端 | **[部分落地]**：crate 在树上（`AlsaPlayback`、`registry.rs`、`examples/{loopback,devices}.rs`、`tests/aloop_roundtrip.rs`）；⚠️ **无屏档入口仍装 `vox-audio-linux`**（`crates/vox-headless/Cargo.toml`），全仓无 `vox-audio-alsa` 的使用者 |
-| [`S4-C-AEC.md`](plans/S4-C-AEC.md) | S4-C 细化稿：回声消除算子 `Op::Aec` 选型（`sonora-aec3`）与施工（三档互斥 + 能力位） | **[未落地]**：选型与 W0 尖峰 `tools/aec-spike/` 在树上（commit `9207895`），**`Op::Aec` 与 `hw_aec`/`soft_aec` 位都没有**（`crates/vox-core/src/composition.rs` 的 `OP_ORDER` 仍是 4 项） |
-| [`S4-C-GATE-RESAMPLE.md`](plans/S4-C-GATE-RESAMPLE.md) | S4-C 施工稿：半双工门（回声消除保底档）+ 廉价重采样档（只升采样的线性档 + 入口选档） | **[已落地]**（2026-10-11）：G1–G4 / R1–R3 七张工单收口 —— `gate::HalfDuplex` / `GateConfig::half_duplex` / `GateState::PlaybackMute` / `Chain::{echo_guard_tail_ms,set_echo_guard_ms}` / `Worker::mark_playing`；`vox_dsp::resample::ResampleQuality` / `Resampler::cheap_upsampler` / `vox_dsp::ports::cheap_resample_factory` / `vox_host::entry::HostPorts::resample` / `vox_headless::platform::{RESAMPLE_QUALITY_ENV,resample_quality_from_env,resample_factory_for}` |
-| [`S4-EMBEDDED-REFACTOR.md`](plans/S4-EMBEDDED-REFACTOR.md) | 嵌入式优先的重构：共享宿主层 `vox-host` + 算子链执行器 + 轻量化（ALSA / 回声消除三档 / 局域网控制面 / 算子自计时） | **[部分落地]**（2026-10-11 按代码回填）：S4-A / S4-B / S4-C 的 `vox-audio-alsa`（crate）、半双工门、廉价重采样档、**CI 交叉编译**（`.github/workflows/ci-arm64.yml`）已落地；**AEC / 局域网控制面 / S4-D `deb` 未落地**；方向见 [`architecture/DIRECTIONS.md`](architecture/DIRECTIONS.md) §10.9 |
+| [`S4-C-ALSA.md`](plans/S4-C-ALSA.md) | S4-C 细化稿：`vox-audio-alsa` 后端（采集 / 播放 / 设备目录），无屏档缺省音频后端 | **[已落地]**（2026-10-12 按代码回填）：crate 在树上（`AlsaPlayback`、`registry.rs`、`same_card`、`examples/{loopback,devices}.rs`、`tests/aloop_roundtrip.rs`）+ **无屏档入口已切到它**（`crates/vox-headless/Cargo.toml` 依赖 `vox-audio-alsa`，旧 `vox-audio-linux` 依赖已删；`Probe::Audio`、`startup_notes()` 吃 `alsa_available()` / `pipewire_alsa_bridge_present()`） |
+| [`S4-C-AEC.md`](plans/S4-C-AEC.md) | S4-C 细化稿：回声消除算子 `Op::Aec` 选型（`sonora-aec3`）与施工（三档互斥 + 能力位） | **[部分落地]**（2026-10-12 按代码回填）：**W0 / W1 / W2 / W3（含 ALSA-T7）/ W5 已落地**——`Op::Aec` + `OP_ORDER` 5 项（`crates/vox-core/src/composition.rs`）、`ports::Aec` + `Chain::push_playback_reference`、`crates/vox-dsp/src/aec.rs::SonoraAec` + `AEC_RATES`、`Capability::{HwAec,SoftAec}` 与三档 `host_ceiling`、`settings.speak.aec` / `SessionConfig.aec` / 差分台 4 条新场景 / 界面 13 位；**W4（真板子上的播放汇排队量稳定化）未做** |
+| [`S4-C-GATE-RESAMPLE.md`](plans/S4-C-GATE-RESAMPLE.md) | S4-C 施工稿：半双工门（回声消除保底档）+ 廉价重采样档（只升采样的线性档 + 入口选档） | **[已落地]**（2026-10-11）：G1–G4 / R1–R3 七张工单收口 —— `gate::HalfDuplex` / `GateConfig::half_duplex` / `GateState::PlaybackMute` / `Chain::{echo_guard_tail_ms,set_echo_guard_ms}` / `Worker::mark_playing`；`vox_dsp::resample::ResampleQuality` / `Resampler::cheap_upsampler` / `vox_dsp::ports::cheap_resample_factory` / `vox_host::entry::HostPorts::resample` / `vox_headless::platform::{RESAMPLE_QUALITY_ENV,resample_quality_from_env,resample_factory_for}`。姊妹稿 [`S4-C-AEC.md`](plans/S4-C-AEC.md) 的 `Op::Aec` 也已落地（W4 除外）——**半双工是保底档，AEC 是提升档，两档不再是"只有前者"** |
+| [`S4-EMBEDDED-REFACTOR.md`](plans/S4-EMBEDDED-REFACTOR.md) | 嵌入式优先的重构：共享宿主层 `vox-host` + 算子链执行器 + 轻量化（ALSA / 回声消除三档 / 局域网控制面 / 算子自计时） | **[部分落地]**（2026-10-12 按代码回填）：S4-A / S4-B / S4-C 的 `vox-audio-alsa`（crate **+ 无屏档入口**）、半双工门、廉价重采样档、**AEC（`Op::Aec` 一路，W4 除外）**、**CI 交叉编译**（`.github/workflows/ci-arm64.yml`）已落地；**局域网控制面 / S4-D `deb` 未落地**；方向见 [`architecture/DIRECTIONS.md`](architecture/DIRECTIONS.md) §10.9 |
 | [`LANG.md`](plans/LANG.md) | 统一语言登记表 + 语言名本地化显示（L1–L5） | **[已生效]**（按代码核）：`vox_core::catalog::LanguageInfo` + `LANGUAGES` 表在树上；前端语言名走 `app/ui/src/catalog.ts` 的 `Intl.DisplayNames` |
 | [`MODEL-TABLE.md`](plans/MODEL-TABLE.md) | 模型表 + 协议方言 + 接入点走配置链 + 官方模型列表 | **[部分落地]**（按代码核）：M1–M6 / M8–M9 在树上；**M7（`AliyunRegion::Hk`）未落**——`crates/vox-core/src/settings.rs::AliyunRegion` 仍只有 `Cn` / `Intl`。⚠️ M7 自带"证明不了香港有实时翻译 WebSocket 地址就不加"的条件，所以它**未必该落**，不是单纯漏做 |
 | [`NET.md`](plans/NET.md) | 每服务商代理 + 测速 + Clash TUN 检测引导 | **[已生效]**（按代码核）：`crates/vox-proxy/`（地址解析 / 系统代理探测 / HTTP CONNECT 与 SOCKS5 隧道）+ `vox_host::netcheck`（列表与测速）在树上 |
@@ -85,13 +85,14 @@
 ## 质量门口径
 
 - 计数只写真值，写哪一次就注哪个日期；**本节里的数一律是"带轮次的快照"，当前值一律以
-  [`architecture/DIRECTIONS.md`](architecture/DIRECTIONS.md) §10.7 为准**（取数与逐项依据也在那里）。
+  [`architecture/DIRECTIONS.md`](architecture/DIRECTIONS.md) §10.7 / §10.9 为准**（取数与逐项依据也在那里；
+  最近一次全量门禁读数见 §10.9 的「进度回填（2026-10-12）」）。
 - Rust：`cargo test --workspace` 第十五轮收口时 **570 passed / 0 failed / 5 ignored**（2026-09-22 实测，
-  第十六轮复核重跑同值）；**当前值见 §10.7**；`cargo clippy --workspace`、
-  `cargo fmt --all -- --check` 的口径同 §10.7。
-- 前端：`npm run verify`（`app/ui/package.json` 的 `verify`）——链 =
-  `build` → `check:classes` → `check:preview` → `a11y` → `qa:narrow` → `check:cable` → `check:capabilities` →
-  `check:agent` → `qa:home`。
+  第十六轮复核重跑同值）；**当前值见 §10.9**；`cargo clippy --workspace`、
+  `cargo fmt --all -- --check` 的口径同 §10.9。
+- 前端：`npm run verify`（`app/ui/package.json` 的 `verify`）——链 = `build` → `check:classes` →
+  `check:preview` → `a11y` → `qa:narrow` → `check:cable` → `check:capabilities` → `check:agent` →
+  `check:i18n` → `check:models` → `check:languages` → `qa:home`（**12 步**）。
 
 ## 维护规矩
 

@@ -1,10 +1,16 @@
 # S4-C · `vox-audio-alsa`：ALSA 音频后端（无屏档缺省）设计稿
 
-> 状态：**[部分落地]**（2026-10-11 按代码回填；原文写的是"[设计稿·未开工]"）。
-> **crate 已落地**：`crates/vox-audio-alsa/`（`AlsaCapture` / `AlsaPlayback` / `AlsaDeviceRegistry`、
-> `registry.rs`、`examples/{devices,loopback}.rs`、`tests/aloop_roundtrip.rs`，workspace 成员）。
-> ⚠️ **无屏档入口还没切到它**——`crates/vox-headless/Cargo.toml` 仍依赖 `vox-audio-linux`，
-> 全仓没有 `vox-audio-alsa` 的使用者（2026-10-11 按代码核）。
+> 状态：**[已落地]**（2026-10-12 按代码回填；原文写的是"[设计稿·未开工]"，2026-10-11 那版写的是"[部分落地]"）。
+> **crate + 无屏档入口都切了**：
+> ① **crate 已落地**：`crates/vox-audio-alsa/`（`AlsaCapture` / `AlsaPlayback` / `AlsaDeviceRegistry`、
+> `registry.rs`（含 `same_card` / `CAPTURE_WANT_RATE`）、`examples/{devices,loopback}.rs`、
+> `tests/aloop_roundtrip.rs`，workspace 成员）。
+> ② **无屏档入口已切到它**：`crates/vox-headless/Cargo.toml` 依赖 `vox-audio-alsa`（旧依赖
+> `vox-audio-linux` 已删、无屏档里零引用），装配在
+> `crates/vox-headless/src/platform/linux.rs::platform()`；`headless.rs` 的 `Probe::PipeWire`
+> 改名 `Probe::Audio`，`startup_notes()` 改吃 `vox_audio_alsa::alsa_available()` /
+> `pipewire_alsa_bridge_present()`（提交 `217ffe5`，ALSA-T7）。
+> 回填时点：2026-10-12，`main` @ `e62cfdc`。
 > 对应 `docs/plans/S4-EMBEDDED-REFACTOR.md` §3 S4-C 表格「`vox-audio-alsa`」一行、
 > §2.3 轻量化、§4「S4-C · ALSA」验收，以及 §6 第 5 问的答复。
 >
@@ -16,6 +22,10 @@
 > 引用优先给符号名，行号只作参考并注明核对日期（`.omp/AGENTS.md`「引用要耐久」、`.omp/RULES.md` #11）。
 > **本轮环境里 `cargo` 不可执行**（沙箱未放行），因此**没有跑过任何编译、测试或 `aplay`**，
 > 凡涉及"跑出来的结果"的地方一律写"未跑"（`.omp/RULES.md` #10）。
+> （**2026-10-12 补注**：上面这段说的是**写稿那一轮**。crate 落地之后，
+> `cargo test -p vox-audio-alsa -- --ignored` 在本机 `snd-aloop` **真回环**上
+> lib 4 + `aloop_roundtrip` 4 全过——出处与本轮的完整门禁读数见
+> `docs/architecture/DIRECTIONS.md` §10.9 的「进度回填」，以及本稿 §7 的接线结论。）
 
 ---
 

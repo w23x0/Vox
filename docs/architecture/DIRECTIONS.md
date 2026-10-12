@@ -425,7 +425,7 @@ Windows/macOS/Linux/Android/iOS/浏览器）—— 那次没有拉到平台清�
 | 14 | 手机上怎么复用现有资源 | HostShells：手机端最省的是原生壳（JNI/UniFFI），Tauri 移动端只在确需那套 WebView UI 时才值得（09-21 上午） | AndroidPath + 我的裁决：走 **Tauri v2 Android**（界面/芯都已在这套里，省掉原生 UI + JNI 桥）（09-21 晚） | **以 09-21 晚为准**；真机性能与插件分级需实测（见 §10.3-1） |
 | 15 | 先做哪类设备 | 先手机（Android），再嵌入式（§10.0 第 1 条 · 09-21 晚） | **直接做嵌入式，手机顺延**（用户拍板 · **09-26**，§10.9） | **以 09-26 为准** |
 | 16 | 内部结构（接第 5 行） | 两条固定流水线；算子链"拍板前不动手"（第 5 行 · 09-21） | **拍板做算子链**：清单即作业单，`Worker` 按 `Composition.ops` 执行（**09-26**，`docs/plans/S4-EMBEDDED-REFACTOR.md` S4-B） | **以 09-26 为准**，第 5 行结论作废。**已落地**（2026-10-11 按代码核）：符号名 `vox_core::composition::Op` + `pipeline::chain::Chain`（`ChainStage` / `Chain::run` / `Chain::set_gate_config`，另有逐节自计时 `Chain::timings` / `Runtime::op_timings`） |
-| 17 | 嵌入式音频后端 | 复用 `vox-audio-linux`（PipeWire）（`docs/platform/EMBEDDED.md` §3.2 · 09-22） | **ALSA 为嵌入式缺省**，PipeWire 降为可选（**09-26**，S4-C） | **以 09-26 为准**。**部分落地**（2026-10-11 按代码核）：`crates/vox-audio-alsa/` 这个 crate 在树上（`AlsaPlayback` / `registry.rs` / `examples/{loopback,devices}.rs` / `tests/aloop_roundtrip.rs`，workspace 成员），但**"无屏档缺省后端"这一步没落地**——`crates/vox-headless/Cargo.toml` 仍依赖 `vox-audio-linux`，全仓没有 `vox-audio-alsa` 的使用者 |
+| 17 | 嵌入式音频后端 | 复用 `vox-audio-linux`（PipeWire）（`docs/platform/EMBEDDED.md` §3.2 · 09-22） | **ALSA 为嵌入式缺省**，PipeWire 降为可选（**09-26**，S4-C） | **以 09-26 为准**。**已落地**（2026-10-12 按代码核）：`crates/vox-audio-alsa/` 这个 crate 在树上（`AlsaPlayback` / `registry.rs` / `same_card` / `examples/{loopback,devices}.rs` / `tests/aloop_roundtrip.rs`，workspace 成员），**无屏档入口也切过去了**——`crates/vox-headless/Cargo.toml` 依赖 `vox-audio-alsa`（旧 `vox-audio-linux` 依赖已删、无屏档里零引用），`Probe::Audio` / `alsa_available()` / `pipewire_alsa_bridge_present()`（提交 `217ffe5`）；桌面档仍是 PipeWire |
 | 18 | 控制面监听范围 | 只绑 `127.0.0.1`（S1 · 09-22） | 缺省仍本机；**无屏档可开局域网监听，必须配对码 + token 鉴权**（**09-26**，S4-C） | **以 09-26 为准**；桌面缺省行为不变 |
 | 19 | `Op::Aec` 在算子链上的位置 | `S4-B-OP-CHAIN.md` §2.7：插在 `OP_ORDER` 的 `"gate"` 与 `"resample"` 之间（即**门之后**）（09-30，该稿自己标了 O-1 待定） | **插在 `"denoise"` 与 `"gate"` 之间**（即**门之前**）（**10-10**，`docs/plans/S4-C-AEC.md` §3.1，Main 拍板） | **以 S4-C 为准**：门按能量判开合，AEC 在门之后残留回声会直接推开门（自己译自己）；在门之前最坏只是被 `preroll_ms` 兜住 |
 
@@ -523,8 +523,9 @@ P5 的性价比最低（端侧只做上行、且现有 DSP 要重写），**建�
 4. **嵌入式第一站几乎不用动芯。** 实测核对：`crates/vox-core/src/` 对 `std::fs` / `PathBuf` /
    `std::env` / `tauri` / `tokio` **零命中**；`aarch64-unknown-linux-gnu` 是 Rust
    **Tier 1（含 host tools）**、小端；音频后端还是同一个 PipeWire、同一个 `vox-audio-linux`。
-   （**2026-10-11 补注**：按 §10.9 第 5 条，**ALSA 已定为嵌入式缺省**——`crates/vox-audio-alsa/` crate 在树上，
-   但**无屏档入口还没切过去**（`vox-headless` 仍依赖 `vox-audio-linux`），见 §8 第 17 行旁注。
+   （**2026-10-11 补注**：按 §10.9 第 5 条，**ALSA 已定为嵌入式缺省**——`crates/vox-audio-alsa/` crate 在树上。
+   **2026-10-12 补注**：**无屏档入口也已切过去**（`vox-headless` 依赖 `vox-audio-alsa`，旧 `vox-audio-linux` 依赖已删），
+   见 §8 第 17 行旁注。
    上面那句是当时（09-26）的现状，保留作留痕。）
    真正要新写的只有"无屏外壳"三件：**配置从哪进、状态往哪出、进程怎么活**
    （systemd `--user` unit + `RuntimeDirectory/StateDirectory`，注意
@@ -539,7 +540,7 @@ P5 的性价比最低（端侧只做上行、且现有 DSP 要重写），**建�
 | **S0 地基** | 组合清单定稿（**不含 mcu**）+ 统一能力模型（provider 能力位与宿主能力位同一套）；两条流水线描述成清单（不改行为） | 清单 + 能力位表 + 正交测试证明"清单能表达现状" | 1–3 |
 | **S1 Agent 面** | 动作清单 → 出口：**HTTP 优先**（本机 loopback，为手机准备）+ CLI/stdio（桌面/脚本）；5 个工具；字幕走 `resources` + `subscriptions/listen`；不做 `search_tools`；不用 sampling/roots/logging | 桌面与手机都能被外部 Agent 完成"组合→开会话→读字幕" | 3–5 |
 | **S2 手机壳（Android）** | ① **Tauri v2 Android 路线**（现有 `app/ui` + `app/src-tauri` 直接编入 APK，省掉"原生 UI + 自搭 JNI 桥"两层，官方 `tauri android init/dev/build`）② 音频换 **Oboe**：请求 48k 单声道 f32（正好对上 RNNoise 的 48k/480 帧），缓冲**偏大**（`PowerSaving`，真延迟在云端）③ `microphone` 型前台服务 + `RECORD_AUDIO` + 通知权限，必须**从可见 Activity 启动**，按"随时被杀"设计 ④ **应用内字幕**（跨 App 悬浮窗延后）⑤ Keystore 版 `SecretStore` ⑥ Play 合规（FGS 声明表、target SDK、**16 KB page size**） | 手机上面对面翻译可用：说中文→耳机出声译音 + 屏幕字幕 | 12–25 |
-| **S3 嵌入式（小主板）** | 复用 `vox-audio-linux`；无屏外壳（systemd --user + 配置/状态/日志出口）；关掉字幕/热键/托盘/虚拟麦（**2026-10-11 补注**：按 §10.9 第 5 条，缺省音频后端**已改成 ALSA**——`crates/vox-audio-alsa/` 这个 crate 在树上，但**无屏入口还没切过去**，见 §8 第 17 行旁注；"无屏外壳"那一件已落地，见 §10.9「进度回填」） | 一块 ARM64 板子上能跑通"网络进、网络出"，且能被 §S1 的控制面管 | 5–8 |
+| **S3 嵌入式（小主板）** | 复用 `vox-audio-linux`；无屏外壳（systemd --user + 配置/状态/日志出口）；关掉字幕/热键/托盘/虚拟麦（**2026-10-12 补注**：按 §10.9 第 5 条，缺省音频后端**已改成 ALSA 且已落地**——`crates/vox-audio-alsa/` 既在树上**也是无屏档入口实际用的那份**（`crates/vox-headless/Cargo.toml` 依赖它，旧 `vox-audio-linux` 依赖已删），见 §8 第 17 行旁注；"无屏外壳"那一件已落地，见 §10.9「进度回填」） | 一块 ARM64 板子上能跑通"网络进、网络出"，且能被 §S1 的控制面管 | 5–8 |
 | 后续（**本次不承诺**） | 插件宿主（OBS 类）、wasm 算子档、跨 App 悬浮窗、MCU | — | — |
 
 **顺序理由**：S0 是 S1/S2/S3 的共同前置；S1 与 S2 可并行（不同 crate/文件），但 S1 的出口形态必须先定
@@ -835,9 +836,51 @@ clippy **0 warning**、`npm run verify` 全绿——链见 `app/ui/package.json`
   它要交叉工具链 + qemu-user）：该 job 用 `aarch64-unknown-linux-gnu` 目标 +
   `qemu-aarch64 -L /usr/aarch64-linux-gnu` 跑 `cargo test --target aarch64-unknown-linux-gnu -p vox-core -p vox-dsp --locked`。
   ⚠️ 原先按"未落地"记的**这条是错的**，按代码更正。
-- **仍然未落地的不动**：AEC（`Op::Aec`）、局域网控制面（`vox-mcp::transport::http` 仍明确拒绝非回环 `bind`）、
-  S4-D 的 `deb`（`tools/package-headless.sh` 只出 `tar.gz`）——第 17 行旁注与
-  [`docs/plans/S4-EMBEDDED-REFACTOR.md`](../plans/S4-EMBEDDED-REFACTOR.md) 顶部状态都没把它们标成已落地。
+- **当时仍没落地的不动**：局域网控制面（`vox-mcp::transport::http` 仍明确拒绝非回环 `bind`）、
+  S4-D 的 `deb`（`tools/package-headless.sh` 只出 `tar.gz`）。
+  （**2026-10-12 更正**：这条原来把 **AEC（`Op::Aec`）**也列在里面——**那是错的**，AEC 已落地，
+  见下面 2026-10-12 的回填。）
+
+#### 进度回填（2026-10-12）：S4-C 的 AEC 一路 + 无屏档切 ALSA
+
+- **回声消除 `Op::Aec` 落地**（**W4 除外**）。落地符号：
+  - 芯：`crates/vox-core/src/composition.rs::Op::Aec`（无字段）+ `Composition::OP_ORDER` 5 项
+    `["mono","denoise","aec","gate","resample"]`；`crates/vox-core/src/ports.rs::Aec`
+    （`process` / `push_reference` / `reset`）；`crates/vox-core/src/pipeline/chain.rs`
+    的 `ChainStage::Aec { port: Option<Box<dyn Aec>>, rate, skip }` / `AecSkip::{Rate,Factory}` /
+    `Chain::push_playback_reference`（插在 `AudioDelta` 的 `sink.push` **之前**，`monitor_sink` 那一路不抄）；
+    `crates/vox-core/src/pipeline/mod.rs::AEC_RATES = [16_000, 48_000]` + `AecFactory` + `Deps.aec`。
+  - DSP：`crates/vox-dsp/src/aec.rs::SonoraAec`（`sonora-aec3 = "=0.2.0"` + `sonora = "0.2"`，纯 Rust、
+    无 `-sys`/`cc`/`cmake`）；`crates/vox-dsp/src/ports.rs::aec_factory`。
+  - 能力位：`crates/vox-core/src/capability.rs::Capability::{HwAec = 19, SoftAec = 20}`；
+    `hw_aec` **四档 `host_ceiling` 都不进**，`soft_aec` 进 `Windows` / `LinuxDesktop` / `LinuxHeadless`
+    **三档**（不进 `Android`）；`scope()` 改按 `HOST` 表反查。
+  - 外壳：`crates/vox-headless/src/platform/linux.rs::host_facts`（B1–B4：B1 恒成立——AEC 是无条件依赖、
+    **没有** `soft-aec` feature；B2 `vox_audio_alsa::same_card`；B3 `AEC_RATES`；B4
+    `aec_factory()(CAPTURE_WANT_RATE).is_ok()`）；工厂由 `vox_host::entry::HostPorts::deps` 统一注入。
+  - 清单/界面：`settings.speak.aec`（缺省 `true`，容器级 `serde(default)` ⇒ 老配置文件读出来也是开）、
+    `SessionConfig.aec`（Listen 恒 `false`）、`speak::composition` 两道闸
+    （`if config.aec && bits.contains(Capability::SoftAec)`）；差分台新开 4 条场景
+    （`pipeline/golden/speak_{48k_aec_running,44k_aec_rate_skipped,48k_aec_off,48k_aec_bit_off}.txt`
+    + `golden.rs::aec_section` 的 `# aec` 段）；界面 `HostCapability` 补齐 13 位 + AEC 开关按位降级。
+  - **金样总数 = 20 份**（`crates/vox-core/src/pipeline/golden.rs::SCENARIOS`：既有 16 份 + W5 新开 4 份；
+    **既有 16 份一个字节没动**）。
+  - 施工稿与逐条订正见 [`docs/plans/S4-C-AEC.md`](../plans/S4-C-AEC.md) 状态头与 §4.1–§9；
+    **未做的是 W4**（真板子上播放汇排队量稳定化）。
+- **无屏档已切到 `vox-audio-alsa`**（ALSA-T7，提交 `217ffe5`）：`crates/vox-headless/Cargo.toml` 依赖
+  `vox-audio-alsa`、旧 `vox-audio-linux` 依赖删除（无屏档里零引用）；`Probe::PipeWire` → `Probe::Audio`；
+  `startup_notes()` 改吃 `vox_audio_alsa::alsa_available()` / `pipewire_alsa_bridge_present()`。
+- **门禁读数（2026-10-12 本轮，`main` @ `e62cfdc`，本机实测）**：
+  `cargo test --workspace --no-fail-fast` = **941 passed / 0 failed / 14 ignored**；
+  `cargo clippy --workspace --all-targets -- -D warnings` = **0 warning**；`cargo fmt --all -- --check` 静默；
+  `cd app/ui && npm run verify` = **exit 0**；
+  `cargo test -p vox-audio-alsa -- --ignored` = lib 4 + `aloop_roundtrip` 4 **全过**（本机 `snd-aloop` 真回环）；
+  Miri（Stacked Borrows + Tree Borrows）在 `crates/vox-dsp/src/` 里 `unsafe` **零命中**的前提下均通过。
+  ⚠️ 上一条 2026-10-11 记的"`cargo test --workspace` 本机跑不了（缺 `libasound2-dev`）"是**那一轮的环境**，
+  本轮能跑（读数如上）。
+- **仍未落地**：AEC 的 **W4**、**Agent 面开不了 AEC**（MCP 控制面的 `SPEAK_CELLS` 9 格里没有
+  `speak.aec` 那一格 ⇒ `compose_endpoint` 改不了它；本轮选择显式记下"不进 compose"，见
+  `docs/plans/S4-C-AEC.md` §10 R13）、局域网控制面、S4-D 的 `deb`。
 
 ---
 

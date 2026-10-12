@@ -94,7 +94,7 @@ Vox/
 │  ├─ vox-input-win/   # global hotkeys (GetAsyncKeyState polling)
 │  ├─ vox-overlay-win/ # Win32 transparent caption window
 │  ├─ vox-audio-linux/ # PipeWire capture/playback, per-program capture, virtual microphone
-│  ├─ vox-audio-alsa/  # ALSA capture/playback/devices, default backend for the headless build (S4-C, under construction)
+│  ├─ vox-audio-alsa/  # ALSA capture/playback/devices — the headless build's default backend (S4-C, landed)
 │  ├─ vox-input-linux/ # global hotkeys (evdev)
 │  └─ vox-overlay-linux/# GTK transparent caption window (XWayland), swash glyph raster
 ├─ app/

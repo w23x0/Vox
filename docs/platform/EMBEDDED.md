@@ -23,6 +23,20 @@
 > ① §1/§3.2 "音频原样复用 PipeWire" → **ALSA 为嵌入式缺省、PipeWire 可选**；
 > ② §1 "端点形态 = `net_in → net_out`" → **组合式**：插了什么硬件报什么位，网络中继与"本地麦 + 喇叭"盒子是同一份二进制；
 > ③ §1/§3.5 控制面只在本机 → **无屏档可开局域网监听（配对码 + token）**。另：本文未涉及的**回声消除**见 S4 §2.2。
+>
+> **状态注（2026-10-12，音频缺省后端已按代码核）**：上面 ① 那句"ALSA 为嵌入式缺省、PipeWire 可选"
+> **已经不只是方向**：无屏档入口真的切过去了——`crates/vox-headless/Cargo.toml` 依赖
+> `vox-audio-alsa`（旧 `vox-audio-linux` 依赖已删、无屏档里零引用），装配在
+> `crates/vox-headless/src/platform/linux.rs::platform()`；`headless.rs` 的 `Probe::PipeWire` 改名
+> `Probe::Audio`，`startup_notes()` 改吃 `vox_audio_alsa::alsa_available()` /
+> `pipewire_alsa_bridge_present()`（提交 `217ffe5`，ALSA-T7）。
+> 所以 §0 的"同一个 PipeWire"、§1 表里的"原样复用 `crates/vox-audio-linux`"、§3.2 的"音频：还是 PipeWire"、
+> §5 的"PipeWire 没有会话管理器 = 声卡不会被打开"**按"无屏档已是 ALSA 直开"这层意思读**
+> （ALSA 直开不需要 PipeWire 会话管理器）；**桌面档仍是 PipeWire**，那几条坑对桌面档照样成立。
+> 回声消除（`Op::Aec`，W4 除外）见 [`../plans/S4-C-AEC.md`](../plans/S4-C-AEC.md)；
+> **这一档（`LinuxHeadless`）的 `soft_aec` 是按判据真算的**（工厂建得起来 + 缺省采集/播放同卡 +
+> 采集率在 `AEC_RATES` ⇒ **位为真**，`crates/vox-headless/src/platform/linux.rs`），
+> 与桌面两档外壳**硬写 `not_wired`** 不同。
 
 ---
 

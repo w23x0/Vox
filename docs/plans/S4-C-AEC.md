@@ -1,5 +1,15 @@
 # S4-C · 回声消除算子（`Op::Aec`）：选型 + 施工稿
 
+> 状态：**[部分落地]**（2026-10-12 按代码回填；原文写的是"选型 + 施工稿"）。
+> **已落地**：**W0**（`tools/aec-spike/` + §6 全部实测）、**W1**（`Op::Aec` / `ChainStage::Aec` /
+> `Chain::push_playback_reference` / `vox-dsp/src/aec.rs::SonoraAec` / `AEC_RATES`）、
+> **W2 + W3（含 ALSA-T7）**（`Capability::{HwAec,SoftAec}` / 三档 `host_ceiling` /
+> `vox-headless/src/platform/linux.rs::host_facts` 的 B1–B4 / 无屏档切 `vox-audio-alsa`）、
+> **W5**（`settings.speak.aec` / `SessionConfig.aec` / `speak::composition` 两道闸 / 差分台 4 条新场景 / 界面按位降级）。
+> **未落地**：**W4**（真板子上播放汇排队量的稳定化——本稿唯一没有代码的那张工单）。
+> 订正过的地方集中在 §4.1 / §4.2 / §4.3 / §5.1（口子形状在 §8.1）/ §7.1 / §7.3 / §8.1 / §9 / §10，
+> 每处都带「落地回填 / 订正」标记；**符号名与命令输出以代码与实跑为准**。
+>
 > **范围**：回答 `docs/plans/S4-EMBEDDED-REFACTOR.md` §6 第 3 问（软件 AEC 选 SpeexDSP 还是
 > WebRTC AEC3），并把该表 S4-C 那一行「回声消除算子」细化成可直接施工的版本。
 > **不覆盖**：ALSA 后端本体（`S4-C-ALSA.md`）、半双工门（S4-C 另一张工单）、局域网控制面。
@@ -307,10 +317,10 @@ SoftAec = 20,
 | --- | --- | --- |
 | `Capability::ALL` | `capability.rs:82-102` | 加这两位 |
 | `Capability::HOST` | `capability.rs:105-117` | 加这两位 |
-| **`Capability::scope()`** | `capability.rs:137-141` | **必须修**：现在 `> FileConfig(10)` 一律判 Provider，新位会错桶 |
+| **`Capability::scope()`** | `capability.rs:137-141` | **必须修（已落地）**：现在 `> FileConfig(10)` 一律判 Provider，新位会错桶 |
 | 测试里的 `19` | `capability.rs:552` | 改成 `21` |
 | `Capability::id()` | `capability.rs:148-170` | `"hw_aec"` / `"soft_aec"`（与 serde 的 `snake_case` 必须一致，有测试钉着） |
-| `host_ceiling` | `capability.rs:388-420` | **四档都不加**（理由见 §4.2） |
+| `host_ceiling` | `capability.rs::host_ceiling`（写稿时 `:388-420`） | **拆开（落地回填）**：`hw_aec` **四档都不加**（§4.2）；`soft_aec` **进 `Windows` / `LinuxDesktop` / `LinuxHeadless` 三档、不进 `Android`**（§4.3）。**上限条目与它的定义者同轮落地**——`soft_aec` 的三档上限就是跟它的定义者（外壳的 `host_facts()`）一起进树的，本轮即 ALSA-T7 那一轮 |
 | 界面 i18n | `app/ui/src/i18n/*` | 两个 key（`capability.rs` 模块头纪律 3：句子不在芯里） |
 
 **`scope()` 怎么修**（给个具体写法，实现者照抄）：
@@ -327,7 +337,7 @@ pub fn scope(self) -> CapabilityScope {
 
 按两张表反查，而不是按数值比大小——数值比大小是这次差点踩的坑。
 
-### 4.2 `hw_aec`：今天**恒假**
+### 4.2 `hw_aec`：任何一档的档位上限里都没有它（今天**恒假**）
 
 **判据：没有定义者 ⇒ 恒假。** 这不是占位符，是 `capability.rs` 既有纪律
 （`NetIn` / `NetOut` / `FileConfig` 三个位今天就这么写着）。理由：我们**没有任何手段探测一块会议全向麦
@@ -342,24 +352,59 @@ pub fn scope(self) -> CapabilityScope {
 - `HostFacts::off` 里**不许**由外壳往上报 `hw_aec`——报了也是
   `HostFacts::excess_off_bits`（`capability.rs:368`）里的外壳 bug。
 
+> **落地回填（2026-10-12 按代码核）**：以上三条与实情一致——
+> `crates/vox-core/src/capability.rs::host_ceiling` 四档都不含 `HwAec`，钉子用例
+> `capability::tests::the_aec_bits_are_host_bits_with_soft_aec_only_in_the_three_wired_tiers`
+> 逐档断言"上限里没有 `hw_aec`"、并断言"外壳往 `off` 里塞 `hw_aec` 会被
+> `excess_off_bits()` 报成外壳 bug"。
+> **但"四档都不加这两位"这句话只对 `hw_aec` 成立**：`soft_aec` 进三档（见 §4.3 开头）。
+> 稿子原文把两位写在同一行（§4.1 表的 `host_ceiling` 行），实现拆开了——**上限条目与它的
+> 定义者同轮落地**，本轮 = ALSA-T7 那一轮。
+
 ### 4.3 `soft_aec`：五条判据，全 AND
+
+> **落位（落地回填，2026-10-12 按代码核）**：`soft_aec` **进 `Windows` / `LinuxDesktop` /
+> `LinuxHeadless` 三档的 `host_ceiling`，不进 `Android`**（`crates/vox-core/src/capability.rs::host_ceiling`；
+> `Android` 那一档还没有任何 AEC 判据）。**上限里有它，外壳才能按下面几条把它打开**；
+> 这两件事同轮落地：本轮 = ALSA-T7 那一轮，判据落在
+> `crates/vox-headless/src/platform/linux.rs::host_facts`。
 
 `soft_aec` 为真的充要条件（`op_kind: p3` 写死顺序）：
 
 | # | 判据 | 不满足时 `HostFacts::off` 报 | 谁判 | 数据从哪来 |
 | --- | --- | --- | --- | --- |
-| **B1** | 这个构建**编进去了**（cargo feature `soft-aec` 开着，且 `sonora-aec3` 拉成功） | `NotBuilt` | 装配层，`vox-host` | `cfg!(feature = "soft-aec")` |
+| **B1** | 这个构建**编进去了** | `NotBuilt` | —（**恒成立**） | **AEC 是无条件依赖：没有 `soft-aec` cargo feature**（`crates/vox-dsp/Cargo.toml` 里 `sonora-aec3` 是普通依赖）⇒ **B1 恒成立**。稿子原写的 `cfg!(feature = "soft-aec")` 不存在 |
 | **B2** | 采集源与播放汇在**同一声卡** | `Unsupported` | 装配层 | 两边 ALSA id 的 `CARD=` 段相同（见下） |
-| **B3** | 采集率在 AEC 支持集内 | `Unsupported` | 装配层 | `CaptureFormat.sample_rate ∈ {16000, 32000, 48000}` |
-| **B4** | AEC **工厂起得来**（分配失败、配置非法） | `NotWired` | 装配层 | `Deps::AecFactory()` 返回 `Err` |
+| **B3** | 采集率在 AEC 支持集内 | `Unsupported` | 装配层 | 判 `vox_core::pipeline::AEC_RATES`（**唯一真源**）= **`[16_000, 48_000]`**。稿子写的 `{16000, 32000, 48000}` 里的 **32 kHz 驱不动上游**（§10 R12） |
+| **B4** | AEC **工厂起得来**（分配失败、配置非法） | `NotWired` | 装配层 | `aec_factory()(rate).is_ok()`（`crates/vox-dsp/src/ports.rs::aec_factory` → `SonoraAec::new(rate)`，与链上共用同一份 `AEC_RATES`）。稿子写的 `Deps::AecFactory()` 返回 `Err` 是同一件事的另一种写法 |
 | **B5** | 用户没在设置里把它关掉 | —（**不是位的事**） | 芯 | `settings.speak.aec` |
+
+> **落地回填（2026-10-12 按代码核）**：B1–B4 的判据实现在
+> `crates/vox-headless/src/platform/linux.rs`：`host_facts()` 采事实（B2 走
+> `default_devices_share_a_card()` → `vox_audio_alsa::same_card`；B3 读
+> `vox_core::pipeline::AEC_RATES`；B4 走 `aec_factory_available_at(rate)`），纯函数
+> `soft_aec_reason_from(factory_ok, same_card, rate_ok)` 做映射——B1 那一格的注释就是
+> **"B1 恒成立（见上），所以这里没有分支"**。
+> **不是 §8.3 写的 `crates/vox-audio-alsa/src/platform.rs`**：那个文件不存在；`vox-audio-alsa`
+> 只出厂 `same_card` 与 `CAPTURE_WANT_RATE`，判据本身在**无屏档的装配层**。
+>
+> **这一位今天各档到底报什么（口径订正，2026-10-12 按代码核）**——**不是"四档全假"**：
+> | 档 | 报什么 | 靠什么 |
+> | --- | --- | --- |
+> | `Windows` | `false(not_wired)` | **硬写**：`app/src-tauri/src/platform/win.rs` 的 `off.insert(Capability::SoftAec, UnavailableReason::NotWired)`（桌面档没有 AEC 判据） |
+> | `LinuxDesktop` | `false(not_wired)` | **硬写**：`app/src-tauri/src/platform/linux/mod.rs` 同上 |
+> | `LinuxHeadless` | **按 B1–B4 真判**：工厂建得起来 + 缺省采集/播放同卡 + 采集率在 `AEC_RATES` ⇒ **位为真** | `crates/vox-headless/src/platform/linux.rs::soft_aec_unavailable_reason` |
+> | `Android` | `false(unsupported)` | 不在 `host_ceiling(Android)` 里（那一档还没有任何 AEC 判据） |
+>
+> 所以"位为假时界面整个入口不渲染"只在**桌面两档**成立；无屏档这一位是**真的能开**
+> （它也正是 `Op::Aec` 的产品形态：盒子上外放译音 + 开麦）。
 
 **B2 怎么判"同声卡"**（`S4-C-ALSA.md` §5.4 已把 id 口径定成 `hw:CARD=<name>,DEV=<n>`）：
 
 ```rust
 // crates/vox-audio-alsa/src/registry.rs，与 §5.4 的 id 口径同一处
 /// 两个 id 的 `CARD=` 段相同吗？（`hw:CARD=PCH,DEV=0` → `Some("PCH")`）
-pub(crate) fn same_card(capture: &str, playback: &str) -> bool {
+pub fn same_card(capture: &str, playback: &str) -> bool {
     card_of(capture).zip(card_of(playback)).is_some_and(|(a, b)| a == b)
 }
 
@@ -545,9 +590,13 @@ const REF_RING_MS: u32 = 200;   // 48 kHz → 9600 样本 ≈ 38.4 KB
 > **够不到 3 dB 判据 ⇒ 维持线性插值，不上 sinc。R6 关闭。**
 > 剩下没量的只剩 A53 上线性插值 vs sinc 的 CPU 差（那一条仍然是 R1 的外推口径，不单独开票）。
 
-**零分配**：插值的输出写进建链期就分配好的 `upsample_scratch: Vec<f32>`，
-**不新建**。整条 `push_reference` + `process` 里除了 `process` 的返回值那个 `Vec`
-（和 `Denoise::process` / `Resample::process` 今天一样的**一个**分配）之外，不分配。
+**零分配**：插值的输出写进建链期就分配好的环形缓冲（落地形态是 `LinearUpsampler::push_into`
+直接写 `RefRing`，**没有**单独的 `upsample_scratch`），**不新建**。
+
+> **订正（2026-10-12 按代码核）**：上面"除 `process` 返回值那一个 `Vec` 之外不分配"这句
+> **不成立**——上游 `sonora-aec3` 每 4 ms 块自建 11 份工作区，一拍实测 **62** 次
+> （48 kHz；16 kHz = 58）。分配口径**以 §7.3 的 T6 与 `crates/vox-dsp/src/aec.rs` 模块头为准**；
+> 「插值不新分配」这一半仍然成立。
 
 ### 5.5 频带 / 子帧 / 块三级流的拆拼（W0 更正，原稿写错了）
 
@@ -580,9 +629,12 @@ const REF_RING_MS: u32 = 200;   // 48 kHz → 9600 样本 ≈ 38.4 KB
 `chain.rs::Chain::on_disconnect`（`:396`）今天只清 `Denoise` 与 `Resample`。
 **AEC 要清**（自适应滤波器里的历史回声路径对下一条会话无效），但**和门一样不许调
 会动 `external_active` 的东西**——`Aec::reset` 不会碰门，两者是分开的节，安全。
+（**已落地**：`Chain::on_disconnect` 的 `ChainStage::Aec` 臂调 `port.reset()`；
+钉子用例 `chain.rs::tests::the_aec_resets_but_the_gate_does_not`。）
 
 ```rust
-ChainStage::Aec { port, .. } => port.reset(),
+// port 是 Option（降级两态：装了这一节但没有 port）——只清真装上的那个。
+ChainStage::Aec { port: Some(port), .. } => port.reset(),
 ```
 
 **为什么门不动、AEC 要动**（把这条差别钉住，别后来者"顺手"统一了）：
@@ -789,27 +841,39 @@ ERLE 跟着塌。**W1 的 `Aec::push_reference` / `process` 必须自己换算 `
 
 ## 7. 验收测试
 
-### 7.1 测试装置（`crates/vox-dsp/tests/aec_synthetic.rs`）
+### 7.1 测试装置（`crates/vox-dsp/tests/aec_synthetic.rs`）——**以 §6.4 那套为准**
 
-固定种子、确定性，**不依赖真声卡**（`snd-aloop` 那条走 W4 的 `#[ignore]` 用例）：
+**§7.1 的简笔装置已被 W0 取代（订正，2026-10-12 按代码核）**：稿子原来那套（1 kHz 正弦 +
+固定种子均匀噪声的参考、β = 0.4、D = 30 ms）在真实现上只有 **5.43 dB**（D = 30 ms）/
+**3.61 dB**（D = 40 ms），**够不到 §7.2 的 15 dB**——而 §7.2 的阈值**全部**来自 §6.4 的装置
+（带限噪声 + 0.7 Hz 慢起伏）。实现按 §6.4 那套装，**装置以 §6.4 为准**。
+（出处：那两个数是 **W5 那轮的复核实测**，仓内无第二处记载；本稿按它改口径，**不改 §7.2 的阈值**。）
 
+固定种子、确定性，**不依赖真声卡**（`snd-aloop` 那条走 W4 的 `#[ignore]` 用例）。
+落地在 `crates/vox-dsp/tests/aec_synthetic.rs`（常量名可核）：
+
+```text
+参考    reference[] = 24 kHz 带限噪声（100 Hz – 10.8 kHz，REF_SEED），RMS = REF_RMS(0.20)，
+                     再乘 0.7 Hz 慢起伏 0.55 + 0.45·sin
+                     ← 少了这层起伏，AEC3 的 stationarity 门会卡住自适应（§6.4 的 run() 就是这么做的）
+播放    played[]    = upsample_linear(reference) 升到采集率（线性插值，即 §5.4 那一档）
+回声    echo[n]     = ECHO_GAIN(0.4) · played[n − D]        D = setup.delay_ms 折算成样本
+近端    near[]      = 300 Hz – 4 kHz 带限噪声，比回声低 NEAR_BELOW_ECHO_DB = 14 dB
+采集    capture[n]  = echo[n] + near[n]（单讲把 near 清零；"只有近端"把 echo 清零）
 ```
-capture[n]  = near_end[n] + echo[n]
-echo[n]     = β · reference[n − D]        β = 0.4（−8.0 dB）
-reference[] = 1 kHz 正弦（幅度 1.0）+ 固定种子的均匀噪声（幅度 0.01）
-near_end[n] = 幅度 0.1 的带限噪声（代表 20 dB SNR 的近端语音）
-D = 30 ms（1440 样本 @48 k）
-```
 
-**W0 给这个装置补了三条"不写就一定是空转"的前提**（§6）：
+**W0 给这个装置补了四条"不写就一定是空转"的前提**（§6）：
 
 1. **幅度必须是 int16 域**：送进 `SonoraAec` 的参考与采集都要 ×32768。
-   装置里的 `reference` / `near_end` 因此先归一到 int16 RMS 量级，`β·reference` 才是回声。
+   装置里的 `reference` / `near[]` 因此先归一到 int16 RMS 量级，`ECHO_GAIN·played` 才是回声。
    （这一条 W0 之前没人知道，是所有"ERLE ≈ 0 dB"假象的成因。）
 2. **算子延迟 8 ms 必须对齐**（16 k = 128 样本、48 k = 430 样本）：
-   `residual[n] = out[n + L] − near_end[n]`，其中 L 由实现自己定（本实现固定 8 ms）。
+   `residual[n] = out[n + L] − near[n]`，L 由 `probe_latency()`（渲染全零 + 单冲激）量出来
+   （本实现固定 8 ms）。
 3. **D 不许取 0**：16 kHz 下渲染缓冲自带 ≥1 块固定延迟，D=0 不可表达（W0 实测 0.29 dB）。
    D=30/40/120/200 ms 各一档。
+4. **统计窗**：主档 `TOTAL_MS = 8_000` / `STEADY_FROM_MS = 4_000`（§6.3 的口径）；
+   T3 的"只有近端"那一档单独取 **8–12 s**（理由见 §7.3 的 T3 行）。
 
 **真值 ERLE**（与 W0 尖峰同口径，`out` 是经过算子延迟对齐后的）：
 
@@ -850,7 +914,9 @@ residual_echo[n] = aec_out[n] − near_end[n]
 而"没有回声"那一档近端保留 **−0.0 dB**。所以 T3 的判据是
 **`SNR(aec_out − near_end)` 相对消之前的退化 ≤ 12 dB**（给实测 10 dB 留 2 dB 余量），
 并且**必须同时钉住"只有近端的那一档近端保留 ≥ −3 dB"**——否则"把近端全消掉"
-也能让前一条变绿。
+也能让前一条变绿。**这一档的统计窗取 8–12 s**（不是主档的 4–8 s）：要等 AEC3 的透传档
+（上游 `sonora-aec3` 的 `transparent_mode.rs`，阈值 `>6 s`）打开——那一档正是为"没有回声
+（戴耳机）"准备的；4–8 s 量到的还是抑制器的衰减（约 −7 dB），是另一件事。
 
 ### 7.3 用例清单（每条都要"去掉实现即红"，RULES #7）
 
@@ -858,10 +924,10 @@ residual_echo[n] = aec_out[n] − near_end[n]
 | --- | --- | --- | --- |
 | T1 | `synthetic_echo_is_cancelled` | 合成回声（48 kHz、D=30 ms 与 120 ms、β=0.4、**int16 幅度域**）下 ERLE ≥ 15 dB，且 ≤ 1 s 达到 | `Aec` 改成直通 → ERLE ≈ 0 dB（W0 §6.2 复现过） |
 | T2 | `converges_within_one_second` | 逐帧 ERLE 曲线，**从 1 s 起不再低于 12 dB**（48 kHz 实测 0.5 s 到稳态 25 dB） | 滤波器不自适应 → 曲线平在 0 dB |
-| T3 | `near_end_survives` | 双讲（近端比回声低 14 dB）下 `aec_out − near_end` 的 SNR 相对消前退化 **≤ 12 dB**；**并且**"只有近端、无回声"那一档近端保留 **≥ −3 dB** | 过度抑制（把近端也当回声消了）→ 红。两条必须都写，否则"把近端全消掉"也能让第一条变绿 |
+| T3 | `near_end_survives` | 双讲（近端比回声低 14 dB）下 `aec_out − near_end` 的 SNR 相对消前退化 **≤ 12 dB**；**并且**"只有近端、无回声"那一档近端保留 **≥ −3 dB**（那一档的统计窗取 **8–12 s**，等 AEC3 的透传档打开，见 §7.2） | 过度抑制（把近端也当回声消了）→ 红。两条必须都写，否则"把近端全消掉"也能让第一条变绿 |
 | T4 | `a_misaligned_reference_cancels_worse` | **D=400 ms 时 ERLE 必须 < 15 dB**（W0 实测 12.66 dB），同时 D=40 ms 必须 ≥ 15 dB | **这条是 T1 的对照**：钉住"这个测试真的在测对齐，不是恒等变换"，也钉住"超窗的时延必须诚实退化" |
 | T5 | `without_the_op_the_stage_is_simply_absent` | `Op::Aec` 不进清单时，链上就没有 `ChainStage::Aec`（`chain.rs::stage_names` 不含 `"aec"`），且 `push_playback_reference` 走空 `match` 什么都不做 | 硬塞一个 AEC 进去 → 红 |
-| T6 | `the_aec_stage_adds_no_allocations_beyond_the_return_vec` | 分配计数：`Aec::process` 的分配次数 == 直通实现同一次调用的次数（只差那个返回 `Vec`）；`push_reference` **零分配** | 任何一次热路径 `Vec::new()` / `collect()` / `clone()` → 红 |
+| T6 | `the_aec_stage_adds_no_allocations_beyond_the_return_vec` | `Aec::process` **一次 20 ms 拍**的分配次数 **≤ `MAX_PROCESS_ALLOCS_PER_BLOCK = 64`**（回归护栏）；`push_reference` **零分配**。**订正（2026-10-12 按代码核）**：稿子原写的"== 直通实现同一次调用的次数"**不可实现**——上游 `EchoRemover::process_capture` **每 4 ms 块自建 11 份工作区**，实测 **62**（48 k）= **55（上游 5 块 × 11）+ 1（返回 `Vec`）+ 6（借用表 3 频带 × 2 帧）**；**16 kHz = 58**（借用表退成每帧 1 次、一拍 2 次）。详细拆项在 `crates/vox-dsp/tests/aec_synthetic.rs` 的 T6 注释与 `crates/vox-dsp/src/aec.rs` 模块头的"分配"一节 | 任何一次热路径 `Vec::new()` / `collect()` / `clone()` → 红（上限 64 抓得住"借用表每次插入都现搭"= +32 ⇒ 94、"每帧每路各搭一份" = +6 ⇒ 68，抓不住比 +2 更小的零星分配） |
 | T7 | `reference_survives_playback_jitter` | 参考写入速率与上行速率**不同**（模拟播放汇 20 ms 一段、采集 20 ms 一拍），且两者相位**不对齐**，AEC 仍收敛 | 把两路硬绑成同一拍 → 抖动一加就红 |
 | T8 | `the_chain_aec_stage_sees_the_capture_rate` | 工厂拿到的率 == `CaptureFormat.sample_rate`；`Op::Aec` 的 `out_rate` == 入口率（契约 C4） | 拿会话率建 → 红 |
 | T9 | `a_capture_rate_outside_the_supported_set_degrades` | 采集率 44.1 kHz → `AecSkip::Rate(44100)`，与 `DenoiseSkip` 同样两态、同样日志口径 | 硬跑 → 红 |
@@ -881,6 +947,12 @@ T11 是本稿推翻 S4-B §2.7 的那条决定的**回归钉**。它会因真实
 
 T13/T14 不测实现细节，测的是**接口约定与已知量级**：T13 钉幅度域，T14 钉频带开销。
 
+> **T6 的一笔记账（订正，2026-10-12）**：第一版实现用**自引用 `unsafe`** 换"借用表也零分配"，
+> **Miri 的 Stacked Borrows 与 Tree Borrows 两套模型都判 UB**，已拆掉——改成"每帧现搭、就地
+> 用完就丢"，代价就是上面那 **6 次/拍**（16 k 是 2 次/拍）。**上游公开面没有"既安全又零新增"的路**：
+> `FrameBlocker` 只收 `&[Vec<&[f32]>]`，把借用表放进 `self` 会被借用规则挡回（E0521/E0506）。
+> 现状：`crates/vox-dsp/src/` 里 `unsafe` **零命中**（`grep -rn unsafe crates/vox-dsp/src` 无输出）。
+
 ### 7.4 验收命令
 
 ```bash
@@ -891,8 +963,9 @@ cargo test -p vox-core -p vox-dsp
 cargo test -p vox-dsp --test aec_synthetic
 cargo test -p vox-core pipeline::chain::tests      # T5 / T8 / T9 / T12
 
-# 差分台不许回归（S4-B B0 建的 15 份事件轨迹金样；模块名是 `pipeline::golden`，
-# 写成 `pipeline::tests::differential` 会一条都不匹配却返回 ok——verifier 2026-10-10 踩过）
+# 差分台不许回归（S4-B B0 起的金样轨迹，今天是 **20 份** = 既有 16 + W5 新开 4；
+# 模块名是 `pipeline::golden`，写成 `pipeline::tests::differential` 会一条都不匹配却返回 ok
+# ——verifier 2026-10-10 踩过）
 cargo test -p vox-core pipeline::golden
 
 # 全门（收口前）
@@ -914,7 +987,7 @@ cargo fmt --all --check && cargo test --workspace && cargo clippy --workspace --
 | `src/capability.rs` | **改** | `HwAec = 19` / `SoftAec = 20`、`ALL` / `HOST` / `id()`、**修 `scope()`**、测试里 `19 → 21`（§4.1 逐行给了） |
 | `src/pipeline/speak.rs` | **改** | `composition()` 里 `if config.aec && bits.contains(Capability::SoftAec) { ops.push(Op::Aec) }`，位置在 `Denoise` 之后（§3.1） |
 | `src/pipeline/listen.rs` | 不改 | Listen 不装 `Op::Aec`（§3.3） |
-| `src/pipeline/chain.rs` | **改** | `ChainStage::Aec { port: Box<dyn Aec>, rate: u32, skip: Option<AecSkip> }`；`ChainStage::process` / `out_rate` / `name` / `on_disconnect` 各加一个臂；`Chain::build` 里处理 `Op::Aec`（走 `deps.aec` 工厂，降级两态照抄 `DenoiseSkip`）；**新增 `Chain::push_playback_reference`**（§5.1） |
+| `src/pipeline/chain.rs` | **改（已落地）** | `ChainStage::Aec { port: Option<Box<dyn Aec>>, rate: u32, skip: Option<AecSkip> }`——**`port` 是 `Option`（订正）**：降级两态（`AecSkip::{Rate,Factory}`）要求"装了这一节但没有 port"，与既有 `Denoise` 同形；`ChainStage::process` / `out_rate` / `name` / `on_disconnect` 各加一个臂；`Chain::build` 里处理 `Op::Aec`（走 `deps.aec` 工厂，降级两态照抄 `DenoiseSkip`）；**新增 `Chain::push_playback_reference`**（§5.1） |
 | `src/pipeline/mod.rs` | **改** | `pub type AecFactory`；`Deps` 加 `aec` 字段；`Worker::handle_server_event` 的 `AudioDelta` 分支加那一行；`Worker::boot` 照抄 `DenoiseSkip` 的两条日志口径；`Worker::feed` 跑链（`Chain::run` 内部已经按 `stages` 走，AEC 节自己处理） |
 | `src/settings.rs` | **改** | `speak.aec: bool`（缺省 `true`），按 RULES #5 迁移全部读写方（settings 持久化 + 两个入口的默认值） |
 
@@ -922,21 +995,21 @@ cargo fmt --all --check && cargo test --workspace && cargo clippy --workspace --
 
 | 文件 | 动作 | 内容 |
 | --- | --- | --- |
-| `src/lib.rs` | **改** | 加 `pub mod aec;`；**加 `[target.'cfg(...)'.dependencies] aec3`（`sonora-aec3`）**。W0 已核实：纯 Rust、无 `-sys`/`cc`/`cmake`/`bindgen`，aarch64 交叉编译零额外动作 |
-| `src/aec.rs` | **新增** | `SonoraAec`：`impl ports::Aec`；**三级流（20ms→10ms→频带→子帧→块→子帧→全带）**、`ThreeBandFilterBank` 48 k 拆/合、**余块抽干时序**、**int16 域换算（×32768）**、`REF_RING_MS` 环形缓冲 + D0、24k→48k 线性插值、`config::Delay` 调参、`reset`。**所有缓冲建链期分配**（§5.3-5.4），热路径零新增分配（T6 钉） |
-| `tests/aec_synthetic.rs` | **新增** | T1–T4、T7、T13、T14（装置见 §7.1） |
+| `src/lib.rs` | **改（已落地）** | 加 `pub mod aec;`；依赖加在 `crates/vox-dsp/Cargo.toml` 的普通 `[dependencies]`（**订正**：原文写 `[target.'cfg(...)'.dependencies]`，实情是普通依赖）：`sonora-aec3 = "=0.2.0"` + `sonora = "0.2"`（只要它的 `three_band_filter_bank`）。W0 已核实：纯 Rust、无 `-sys`/`cc`/`cmake`/`bindgen`，aarch64 交叉编译零额外动作 |
+| `src/aec.rs` | **新增（已落地）** | `SonoraAec`：`impl ports::Aec`；**三级流（20ms→10ms→频带→子帧→块→子帧→全带）**、`ThreeBandFilterBank` 48 k 拆/合、**余块抽干时序**、**int16 域换算（×32768）**、`REF_RING_MS = 200` 的 `RefRing` 环形缓冲（**没有 D0**）、24k→48k 线性插值、`config::Delay` 调参、`reset`。**所有缓冲建链期分配**（§5.3-5.4），热路径按 T6 的口径（§7.3）。**订正**：原文这一行还写着"+ D0"，D0 没落（§9 W1-f 的订正） |
+| `tests/aec_synthetic.rs` | **新增（已落地）** | T1–T4、T6、T7、T13、T14 + 一条 16 kHz 单频带的旁证（装置见 §7.1）；链上那组 T5/T8–T12 在 `crates/vox-core/src/pipeline/chain.rs::tests` |
 
 ### 8.3 平台外壳 / 装配层（shell-dev）
 
 | 文件 | 动作 | 内容 |
 | --- | --- | --- |
-| `crates/vox-host/src/dsp.rs` | **改** | `aec_factory()`（`Deps` 第 6 个工厂；与既有 `denoise_factory` / `resample_factory` 同形） |
-| `crates/vox-audio-alsa/src/registry.rs` | **改** | `same_card()` / `card_of()`（§4.3 B2 的逐字形状）；设备目录条目带上 card name |
-| `crates/vox-audio-alsa/src/platform.rs` | **改** | `host_facts()` 按 B1–B4 填 `HostFacts::off`（§4.3 那张表） |
-| `crates/vox-audio-alsa/src/playback.rs` | **改** | `PlaybackStats::device_latency_ms` **真填上**（今天是 0，`S4-C-ALSA.md` C10 允许 0——AEC 档下它是 0 就没法做 D0 了）。W0 之后这条的定位下调：D0 主要影响 CPU 档与漂移余量，不影响"AEC 能不能收敛" |
-| `crates/vox-audio-win` / `-linux` | **改** | 同一个 `aec_factory()` 注入（**位为假时根本不装**，是同一份代码的两处调用点，按 RULES #5 全迁） |
-| `app/ui/src/i18n/*` | **改** | `hw_aec` / `soft_aec` 两个 key；Speak 设置里 AEC 开关的文案（**句子在界面，芯里不带**，`capability.rs` 模块头纪律 3） |
-| `app/ui` | **改** | AEC 开关 + 按 `soft_aec` 位降级（**位假时灰掉 + 说清为什么**，`.omp/AGENTS.md` 硬约束"不许灰掉之后什么都不说"） |
+| `crates/vox-host/src/entry.rs`（**订正**：原稿写 `crates/vox-host/src/dsp.rs`，那个文件不存在） | **改（已落地）** | `aec: vox_dsp::ports::aec_factory()`（`Deps` 第 6 个工厂，与既有 `denoise_factory` / `resample_factory` 同形；工厂本体在 `crates/vox-dsp/src/ports.rs::aec_factory`） |
+| `crates/vox-audio-alsa/src/registry.rs` | **改（已落地）** | `same_card()` / `card_of()`（§4.3 B2 的逐字形状）；设备目录条目带上 card name |
+| `crates/vox-headless/src/platform/linux.rs`（**订正**：原稿写 `crates/vox-audio-alsa/src/platform.rs`，那个文件不存在） | **改（已落地）** | `host_facts()` 按 B1–B4 填 `HostFacts::off`（§4.3 那张表）：`soft_aec_unavailable_reason()` 采事实 + 纯函数 `soft_aec_reason_from(factory_ok, same_card, rate_ok)` 映射 |
+| `crates/vox-audio-alsa/src/playback.rs` | **改（已落地）** | `PlaybackStats::device_latency_ms` **真填上**了：`pcm.delay()`（`snd_pcm_delay`）→ `latency_ms(delay, rate)` 存进 `device_latency_ms`。W0 之后这条的定位下调：D0 主要影响 CPU 档与漂移余量，不影响"AEC 能不能收敛" |
+| `vox-host` / 两个入口 | **改（已落地）** | 工厂走**一处**：`vox_host::entry::HostPorts::deps` 里 `aec: vox_dsp::ports::aec_factory()`（原稿写"`vox-audio-win` / `-linux` 各注入一次"——落成共享宿主层里的同一行，两档入口不再各写一份） |
+| `app/ui/src/i18n/*` | **改（已落地）** | `hw_aec` / `soft_aec` 两个 key（三语）；Speak 设置里 AEC 开关的文案（**句子在界面，芯里不带**，`capability.rs` 模块头纪律 3） |
+| `app/ui` | **改（已落地）** | `HostCapability` 联合补齐 13 位 + AEC 开关 + 按 `soft_aec` 位降级（**位假时整个入口不渲染 + 原位一句带 reason 的说明**，`.omp/AGENTS.md` 硬约束"不许灰掉之后什么都不说"）。**各档今天这一位报什么见 §4.3 的落地回填**（桌面两档硬写 `not_wired` ⇒ 桌面今天看不到这个入口；无屏档按判据真算 ⇒ 可能为真） |
 
 ### 8.4 文档（docs）
 
@@ -954,6 +1027,28 @@ cargo fmt --all --check && cargo test --workspace && cargo clippy --workspace --
 
 > 每张工单收口时 `cargo fmt --all --check && cargo test --workspace && cargo clippy --workspace --all-targets` 全绿。
 > 依赖：`W1` 与 `W2` 可并行（不同文件）；`W3`/`W4` 依赖 `W1` 的 `Aec` trait 定型；`W5` 依赖 `W2` 的位。
+
+> **落地回填：既有用例改动清单（2026-10-12 按提交核）**
+> 稿子的收口口径（§4.1 的"同步要改（缺一即红）"表里，测试改动**只列了 `19 → 21` 一处**；
+> §4.3 也只讲判据、没提既有用例）与实情不符：**既有用例真改了 9 处**（W1 三处 + W5 六处）。
+> **每一处都是契约真变**（清单多了一节 / 规定顺序多了一格），不是为了让测试过而改测试：
+> - **W1（`5b0ec73`）改了 3 处**：`composition.rs::the_manifest_schema_is_generated_from_the_type`
+>   与 `vox-mcp/tests/protocol.rs::the_composition_cell_is_generated_from_the_manifest_type`
+>   里那份 `("Op", …)` 期望值（同一份契约在两处、两条都改）——
+>   `["mono","denoise","gate","resample"]` → `[...,"aec",...]`；以及
+>   `composition.rs::speak_manifest_names_the_virtual_mic` 的 ops 期望值**暂时**换成字面量
+>   （W1 时 `OP_ORDER` 已有 `aec`、但 Speak 清单还没有这一节，见 W1 与 W5 的分界）。
+> - **W5（`521cff7`）改了 6 处**：
+>   `composition.rs::{the_manifest_round_trips, the_manifests_match_the_design_documents_instances,
+>   speak_manifest_names_the_virtual_mic, op_order_must_be_a_subsequence_of_the_canonical_order}`
+>   ——清单多一格 `aec`，凡按**下标**找门/找 op 的地方一律改成**按 `kind` 找**；
+>   `pipeline/mod.rs::the_playback_reference_reaches_the_aec_stage_before_the_sink`
+>   （不再手插 `Op::Aec`，改由"设置 + 事实"推清单，否则 W5 之后会有两个 aec ⇒ `BadOpOrder`）；
+>   `vox-mcp/tests/endpoints.rs::editable_is_the_design_table_and_excludes_the_gate_cells`
+>   （同上：`ops[2]` 写死下标 → 按 `kind` 找门）。
+>   另**新增**两条：`speak.rs::the_aec_stage_needs_both_the_bit_and_the_setting`、
+>   `pipeline/mod.rs::the_playback_reference_goes_to_the_primary_sink_only`。
+> - **W2（`5bc1271`）只改了 `capability.rs` 里那个 `19 → 21`**（§4.1 已列）。
 
 > **W0 已完成（2026-10-09）**，产出物是 `tools/aec-spike/`（独立 crate，不进 workspace）
 > 与本稿 §6 的全部实测数字。它关掉了原 W1 的第 0 步，并把 W1 的范围按真实接口重写。
@@ -997,9 +1092,9 @@ cargo build -p vox-dsp                              # 当前工具链（1.98.1�
 | W1-c | `ChainStage::Aec`（含 `AecSkip` 两态）+ `Chain::push_playback_reference` | 不变 |
 | W1-d | `vox-dsp/src/aec.rs::SonoraAec`：**20 ms → 2×10 ms 帧 → `num_bands`×160 → 2×80 子帧 → 64 块 → 子帧 → 全带**，48 k 走 `ThreeBandFilterBank` 拆/合，**余块每 4 次抽干** | §6.1 |
 | W1-e | **幅度换算 `×32768`**（`push_reference` 与 `process` 两条路都要） | §6.2 |
-| W1-f | `REF_RING_MS` 参考环形缓冲 + D0（读 `PlaybackStats`）+ 24 k→48 k **线性插值**升采样 | §5.3/§5.4，W0 已判"不上 sinc" |
+| W1-f | `REF_RING_MS` 参考环形缓冲 + 24 k→48 k **线性插值**升采样 | §5.3/§5.4，W0 已判"不上 sinc"。**订正（2026-10-12 按代码核）**：原稿这一行写的"+ **D0**（读 `PlaybackStats`）"在 §5.2 定的 trait 面上**不可实现**——`ports::Aec` 只有 `process` / `push_reference` / `reset` 三个方法，**没有接收 `PlaybackStats` 的通道**。**D0 留给"省 CPU 档"与 W4**（W0 已判：D0 只影响 CPU 档与漂移余量，不影响 AEC 能不能收敛） |
 | W1-g | 外部 vs 内建时延估计器的档位：**缺省内建**（ERLE 无差别），把 `set_audio_buffer_delay()` 留给"省 CPU 档" | §6.4 |
-| W1-h | `tests/aec_synthetic.rs`：T1–T4、T7、**T13（int16 域）、T14（48 k 频带上限 18–35 dB）** | §7.1/§7.3 |
+| W1-h | `tests/aec_synthetic.rs`：T1–T4、**T6（分配护栏）**、T7、**T13（int16 域）、T14（48 k 频带上限 18–35 dB）** | §7.1/§7.3 |
 
 **注意 32 kHz**：`BlockProcessor` 支持 32000，但 2 频带的 QMF 分频器在 `sonora` 里是
 `pub(crate)`。W1 **只支持 16000/48000**，其余率照 `AecSkip::Rate` 降级（T9 已有）。
@@ -1007,9 +1102,9 @@ cargo build -p vox-dsp                              # 当前工具链（1.98.1�
 **验收**：
 
 ```bash
-cargo test -p vox-dsp --test aec_synthetic        # T1–T4、T7、T13、T14
+cargo test -p vox-dsp --test aec_synthetic        # T1–T4、T6、T7、T13、T14
 cargo test -p vox-core pipeline::chain::tests      # T5 / T8 / T9 / T12
-cargo test -p vox-core pipeline::golden               # 15 份金样逐字相等（+goldens_are_deterministic）
+cargo test -p vox-core pipeline::golden               # 金样逐字相等（+goldens_are_deterministic）
 ```
 
 **边界**：W1 **必须一次落完**。只加口子和枚举、把 `ChainStage::Aec` 的实现留成直通
@@ -1020,9 +1115,16 @@ cargo test -p vox-core pipeline::golden               # 15 份金样逐字相等
 
 **owner: core-dev** ｜ 依赖：与 W1 并行
 
-**内容**：`capability.rs` 的逐行改动见 §4.1；`host_ceiling` 四档**不加**这两位（§4.2）；
-`HostFacts::uninjected()` 里 `soft_aec` 报 `NotWired`（照 `VirtualMic` 的先例）；
-i18n 两个 key。
+**内容**：`capability.rs` 的逐行改动见 §4.1；`hw_aec` **任何一档的 `host_ceiling` 都不加**（§4.2）；
+`soft_aec` **进三档上限**（§4.3）；i18n 两个 key。
+
+> **订正（2026-10-12 按提交核）**：原稿在这儿写的"`HostFacts::uninjected()` 里 `soft_aec`
+> 报 `NotWired`（照 `VirtualMic` 的先例）"**当时与其它行互斥**——位不在**任何**档位的上限里
+> 的时候往 `off` 里塞它，就是外壳**谎报**（`HostFacts::excess_off_bits()` 会把它当外壳 bug 报出来，
+> 既有钉子用例会红）。W2 那一版正是这么处理的：`uninjected()` **一个字未动**
+> （见 `5bc1271` 的提交说明）。**实情是"位进上限之后才补这条"**：`(SoftAec, NotWired)` 随
+> ALSA-T7/W3（`217ffe5`）进 `uninjected()`，与 `soft_aec` 的三档上限**同一轮**落地。
+> 它是对的：位进了上限、外壳不报它就是 fail-open（`effective()` 会算成"开"）。
 
 **验收**：
 
@@ -1031,27 +1133,36 @@ cargo test -p vox-core capability::tests
 ```
 
 必须全绿，且新增/修改的用例覆盖：`ALL.len() == 21`；两位落在 `HOST` 桶里（`scope()` 修好了）；
-`host_ceiling` 四档都不含它们 → 报告恒 `off(unsupported)`；`excess_off_bits()` 对"外壳谎报
-`hw_aec`"仍能报出外壳 bug。
+`hw_aec` **四档 `host_ceiling` 都不含**（报告恒 `off(unsupported)`）；`soft_aec` 的落位**按最终口径**
+（进 `Windows` / `LinuxDesktop` / `LinuxHeadless` 三档、不进 `Android`，见 §4.3 + W3）；
+`excess_off_bits()` 对"外壳谎报 `hw_aec`"仍能报出外壳 bug。
+**订正（2026-10-12 按代码核）**：稿子这句原来把两位写在一起（"四档都不含它们"）——W2 当时确实如此
+（`soft_aec` 还没有定义者），但 **W3 给 `soft_aec` 开了三档上限**；今天的钉子用例是
+`capability::tests::the_aec_bits_are_host_bits_with_soft_aec_only_in_the_three_wired_tiers`
+（逐档断言 `hw_aec` 不在、`soft_aec` 只在三档）。
 
 ### W3 · ALSA 侧判据与 `host_facts()`
 
-**owner: shell-dev** ｜ 依赖：W1 的 `Aec` trait 定型
+**owner: shell-dev** ｜ 依赖：W1 的 `Aec` trait 定型 ｜ 状态：**已落地**（2026-10-12 按代码核；
+与 W2 同轮，提交 `217ffe5`，那一轮同时把无屏档入口切到 `vox-audio-alsa`——ALSA-T7）
 
-**内容**：`registry.rs` 的 `same_card()`；`platform.rs` 的 B1–B4 判据；
-`playback.rs` 真填 `device_latency_ms`；`vox-audio-win` / `-linux` 注入同一个 `aec_factory()`。
+**内容（已落地，两处订正）**：`registry.rs` 的 `same_card()`；
+**判据落在 `crates/vox-headless/src/platform/linux.rs::host_facts`**（原稿写的
+`crates/vox-audio-alsa/src/platform.rs` 不存在，见 §4.3 的落地回填）；
+`playback.rs` 真填 `device_latency_ms`（`pcm.delay()`）；
+`aec_factory()` 由 `vox_host::entry::HostPorts::deps` 统一注入（不再由两档入口各写一份）。
 
-**验收**：
+**验收**（本轮门禁实测，2026-10-12，`main` @ `e62cfdc`）：
 
 ```bash
 cargo test -p vox-audio-alsa registry::tests    # same_card 的真值表
-cargo test -p vox-audio-alsa -- --ignored        # snd-aloop 回环（card 3 Loopback）
-cargo test --workspace
+cargo test -p vox-audio-alsa -- --ignored        # snd-aloop 回环：lib 4 + aloop_roundtrip 4 全过（本机真回环）
+cargo test --workspace                           # 941 passed / 0 failed / 14 ignored
 ```
 
 ### W4 · 播放汇的前置量稳定化（**这才是 W1 在真板子上能不能成的关键**）
 
-**owner: shell-dev** ｜ 依赖：W3
+**owner: shell-dev** ｜ 依赖：W3 ｜ 状态：**未落地**（2026-10-12 按代码核——本轮唯一没做的一张工单）
 
 **内容**：AEC 开启时，播放汇的 `DropRing` 排队量要**近恒定**（现在"满了丢最旧"意味着
 排队量可以在 0 到满之间任意跳，直接打在 §5.3 的 D0 上）。做法是把取样点改成
@@ -1072,17 +1183,30 @@ D0 的问题，直接决定 §7 的 15 dB 守不守得住。W4 的判据因此�
 
 ### W5 · 清单接线 + 界面
 
-**owner: core-dev（清单/settings）+ shell-dev（UI）** ｜ 依赖：W1 + W2
+**owner: core-dev（清单/settings）+ shell-dev（UI）** ｜ 依赖：W1 + W2 ｜ 状态：**已落地**
+（2026-10-12 按代码核，提交 `521cff7`）
 
 **内容**：`speak::composition` 按 `soft_aec` + `config.aec` 装 `Op::Aec`（§3.3）；
 `settings.speak.aec` 按 RULES #5 迁移全部读写方；界面开关 + 按位降级。
+**落地回填**：两道闸在 `crates/vox-core/src/pipeline/speak.rs::composition`
+（`if config.aec && bits.contains(Capability::SoftAec)`）；`SessionConfig.aec` 在
+`crates/vox-core/src/runtime.rs`（**Listen 腿恒 `false`**）；差分台新开 4 条场景
+（`pipeline/golden/{speak_48k_aec_running,speak_44k_aec_rate_skipped,speak_48k_aec_off,speak_48k_aec_bit_off}.txt`
++ `golden.rs::aec_section` 的 `# aec` 段：`factory_calls` / `process_calls` / `resets` / `stages`）；
+界面 13 位 + AEC 开关按位降级（`app/ui/src/capabilities.ts` / `sections/PipelineCard.tsx` /
+`scripts/check-capabilities.mjs`）——**降级口径按 §4.3 的落地回填**：桌面两档 `soft_aec` 硬写
+`not_wired`（桌面今天看不到那个入口），无屏档按 B1–B4 真算（**可能为真**），`Android` 不在上限。
 
-**验收**：
+**验收**（本轮门禁实测，2026-10-12，`main` @ `e62cfdc`）：
 
 ```bash
 cargo test -p vox-core composition::tests    # 有位/无位各产出一份清单，ops 顺序逐条相等
-cd app/ui && npm run verify
+cargo test -p vox-core pipeline::golden      # 20 份金样（既有 16 份字节未动 + W5 新开 4 份）
+cd app/ui && npm run verify                  # exit 0（12 步）
 ```
+
+三条变异各自都有金样变红（`speak.rs::the_aec_stage_needs_both_the_bit_and_the_setting` 钉两闸、
+`pipeline/mod.rs::the_playback_reference_reaches_the_aec_stage_before_the_sink` 钉接线顺序）。
 
 ---
 
@@ -1102,6 +1226,7 @@ cd app/ui && npm run verify
 | **R10** | `AecSkip` 的日志/通知口径要不要逐字照抄 `DenoiseSkip` | 差分台会红 | 本稿定：**照抄**。`DenoiseSkip::Rate` 只 `warn!`、不发 `Notice`；`DenoiseSkip::Factory` `warn!` + `Notice::warning`。AEC 两态沿用同一口径，不发明新的 |
 | **R11** | **`Op::Aec` 无字段**（§8.1）——但用户可能想手动调 D0 / 滤波器档 | 配置无处放 | 本稿决定：**不进清单**。真要暴露，等有了板子、知道了哪些参数有用再说（`settings` 里加，不动清单）。W0 已证明"D0 主要影响 CPU 档与漂移余量，不影响能否收敛"⇒ 这条的紧迫性比原稿估的更低 |
 | **R12** | **32 kHz 采集率驱不动公开的块级 API**（W0 新账） | 若某个板子的驱动只能给 32 kHz，`Op::Aec` 只能降级 | W1 只支持 16000/48000，其余率走 `AecSkip::Rate`（T9）。真要 32 k：自己写 2 频带 QMF 分频（父 crate 的 `SplittingFilter` 是 `pub(crate)`），或整条走父 crate 的 APM |
+| **R13** | **Agent 面（MCP 控制面）今天开不了回声消除**——`crates/vox-mcp/src/endpoints.rs::SPEAK_CELLS` 是 **9 格**，`ops` 那一格只有 `ops[denoise]`；`has_op` **已经**支持 `"aec"`（`endpoints.rs::has_op` 的 `Op::Aec => wanted == "aec"`），但**没有任何 Cell 用它** | `compose_endpoint` 是**唯一**的设置写入口 ⇒ 无屏档 / 自动化路径**改不了** `speak.aec`（只能手工改 `config.json`）。桌面界面那条腿不受影响（走 Tauri 设置写） | **本轮的选择：显式记下"不进 compose"**（不是漏做）——理由是：① `speak.aec` 是**必须重启才生效的启动格**（与 `denoise` 那格的性质不同，后者可以热改）；② 补这一格要同步改 `docs/plans/S1-AGENT-FACE.md` 的设计表与 `vox-mcp/tests/endpoints.rs` 的 editable 断言（9 → 10），**那是 S1 那一轮的地盘**。另一条路（供将来选）：补一格 `ops[aec] 有无 → settings.speak.aec`，与 `denoise` 那格**同形**，一次改三处（Cell 表 + S1 设计表 + editable 断言，9 → 10） |
 
 ## 11. 与既有决策的关系
 

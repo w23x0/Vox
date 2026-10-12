@@ -1,11 +1,11 @@
 # S4 · 嵌入式优先的重构：共享宿主层 + 算子链 + 轻量化
 
-> 状态：**[部分落地]**（方向 2026-09-26 与用户拍板，见 `docs/architecture/DIRECTIONS.md` §10.9；2026-10-11 按代码回填状态）。
+> 状态：**[部分落地]**（方向 2026-09-26 与用户拍板，见 `docs/architecture/DIRECTIONS.md` §10.9；2026-10-12 按代码回填状态）。
 > **已落地**：S4-A 共享宿主层 `vox-host`、S4-B 算子链（`pipeline::chain::Chain` + 逐节自计时 `Chain::timings` / `Runtime::op_timings`）、
-> S4-C 的 `vox-audio-alsa`（crate）、半双工门、廉价重采样档，以及 **CI 交叉编译**（`.github/workflows/ci-arm64.yml`；
-> 证据见 §3 的表与 §4 的验收表）。
-> **未落地**：AEC（`Op::Aec`；选型稿 [`S4-C-AEC.md`](S4-C-AEC.md) 与 W0 尖峰 `tools/aec-spike/` 在树上，算子本体没有）、
-> 局域网控制面、S4-D 的 `deb`（`tools/package-headless.sh` 出的是 `tar.gz`）。
+> S4-C 的 `vox-audio-alsa`（crate **+ 无屏档入口**）、回声消除算子 `Op::Aec`（W0/W1/W2/W3/W5，**W4 未做**）、半双工门、廉价重采样档，
+> 以及 **CI 交叉编译**（`.github/workflows/ci-arm64.yml`；证据见 §2.2 / §3 的表与 §4 的验收表）。
+> **未落地**：局域网控制面、S4-D 的 `deb`（`tools/package-headless.sh` 出的是 `tar.gz`）；
+> AEC 只剩 **W4**（真板子上的播放汇排队量稳定化，见 `docs/plans/S4-C-AEC.md` §9）。
 > 本稿是**第 1 版概要稿**：现状证据 → 目标形状 → 改动清单 → 验收标准。各阶段开工前由 architect
 > 按本稿细化成可直接施工的版本（补全调用方清单与测试名），**不要拿本稿直接动手改公共接口**。
 >
@@ -35,6 +35,11 @@
 | 5 | **控制面只认本机，无屏盒子等于遥控不了** | `crates/vox-mcp/src/transport/http.rs`：`bind` 默认 `127.0.0.1:0`，注释"只允许回环，别的地址 `serve` 直接拒绝"。没屏幕的盒子只能 ssh 进去改 `settings.json` |
 | 6 | **性能结论全是推出来的，且目前测不了** | 唯一实测是 x86 上"整条 DSP 链 0.3% 单核"；手上**没有目标板**。重采样只有 `SincFixedIn` 一档（`crates/vox-dsp/src/resample.rs`） |
 | 7 | **一处多余的胶水** | `dsp.rs` 两份都说"孤儿规则不让直接 impl"，但 `vox-dsp` 本来就依赖 `vox-core`（`crates/vox-dsp/Cargo.toml`），`impl vox_core::ports::Denoise for Denoiser` 写在 `vox-dsp` 里是合法的，两份 newtype 可以一起删 |
+
+> **2026-10-12 注**：上表是 **2026-09-26** 的现状，别按它判断今天。第 1、2 条随 S4-A/S4-B 落地；
+> 第 3 条（没有回声消除）随 S4-C 的 `Op::Aec` 落地（W4 除外）；第 4 条（音频只押 PipeWire）已改成
+> **无屏档缺省 ALSA 并落地**；第 6 条（重采样只有一档）随廉价重采样档落地。第 5 条（控制面只认本机）
+> 仍未做。
 
 ---
 
@@ -75,7 +80,7 @@
 | 档 | 条件（能力位） | 做法 | 代价 |
 | --- | --- | --- | --- |
 | **硬件 AEC** | `hw_aec`：设备自带（会议全向麦、XMOS 类阵列） | 什么都不做，只报位 | 零 |
-| **软件 AEC** | `soft_aec`：麦克风与喇叭在**同一声卡**（共用时钟，时延稳定） | 播放路径把译音样本送进 AEC 作参考；候选 SpeexDSP（轻）/ WebRTC AEC3（好但重），**选型进 S4-C 细化稿** | 中 |
+| **软件 AEC** | `soft_aec`：麦克风与喇叭在**同一声卡**（共用时钟，时延稳定） | 播放路径把译音样本送进 AEC 作参考。**已选 `sonora-aec3`**（WebRTC AEC3 的纯 Rust 移植，BSD-3-Clause，无 C 工具链；SpeexDSP 出局，见 [`S4-C-AEC.md`](S4-C-AEC.md) §2.3）。**上限**：48 kHz 三频带 ≈ **25 dB**（16 kHz 单频带 62–72 dB），且**随时延下滑**（200 ms → 18.5 dB、400 ms → 12.7 dB；W0 实测 §6.3/§6.4）。**这一位今天各档报什么**：桌面两档外壳**硬写 `not_wired`**（`app/src-tauri/src/platform/{win.rs,linux/mod.rs}`）、**无屏档按判据真算**（`vox-headless/src/platform/linux.rs`，条件齐时**位为真**）、`Android` 不在上限（`unsupported`） | 中 |
 | **半双工** | 兜底（永远可用） | 播译音期间关掉上行，播完再放一段尾巴才重新开门；在现有 `vox_core::gate::ActivationGate` 上加"播放中"输入 | ≈零 |
 
 面对面翻译本来就近似轮流说，半双工档单独也能用，所以它是**保底**，其余两档是提升。
@@ -126,9 +131,9 @@
 
 | 模块 | 内容 | 依赖 |
 | --- | --- | --- |
-| `vox-audio-alsa` | ALSA 采集/播放/设备目录；无屏档缺省后端。**crate 已落地**：`crates/vox-audio-alsa/`（`AlsaPlayback`、`registry.rs`、`examples/{devices,loopback}.rs`、`tests/aloop_roundtrip.rs`，workspace 成员）；⚠️ **"无屏档缺省后端"这一步没落地**——`crates/vox-headless/Cargo.toml` 仍依赖 `vox-audio-linux`，全仓没有 `vox-audio-alsa` 的使用者（2026-10-11 按代码核） | S4-A |
+| `vox-audio-alsa` | ALSA 采集/播放/设备目录；无屏档缺省后端。**已落地**：`crates/vox-audio-alsa/`（`AlsaPlayback`、`registry.rs`、`examples/{devices,loopback}.rs`、`tests/aloop_roundtrip.rs`，workspace 成员）+ **无屏档入口已切过来**——`crates/vox-headless/Cargo.toml` 依赖 `vox-audio-alsa`（旧 `vox-audio-linux` 依赖已删），`Probe::Audio` / `alsa_available()`（2026-10-12 按代码核；见 [`S4-C-ALSA.md`](S4-C-ALSA.md)） | S4-A |
 | 半双工门 | `ActivationGate` 加"播放中"输入；`Op::Gate` 可配。**已落地**（2026-10-11）：`gate::HalfDuplex`（`DEFAULT_TAIL_MS = 300`）+ `GateConfig::half_duplex: Option<HalfDuplex>`（`#[serde(default, skip_serializing_if = "Option::is_none")]`）+ `GateState::PlaybackMute`（线上 `"playback_mute"`）+ `ActivationGate::set_mute_for_ms` + `Chain::{echo_guard_tail_ms, set_echo_guard_ms}` + `Worker::mark_playing`；判据在 `pipeline::speak::composition`（`audible && facts.host == HostKind::LinuxHeadless`）。**与概要稿 §2.2 的差别**：不是 `bool` 输入，是按采集率样本倒数的计数器 | S4-B |
-| 回声消除算子 | `Op::Aec` + `hw_aec` / `soft_aec` 能力位；软件实现选型（SpeexDSP vs AEC3） | S4-B |
+| 回声消除算子 | `Op::Aec` + `hw_aec` / `soft_aec` 能力位；软件实现选型（SpeexDSP vs AEC3）。**已落地**（2026-10-12 按代码核）：`Op::Aec` + `Composition::OP_ORDER` 5 项 / `ChainStage::Aec { port: Option<Box<dyn Aec>>, .. }` / `Chain::push_playback_reference`（`crates/vox-core/src/pipeline/chain.rs`）、`vox-dsp/src/aec.rs::SonoraAec` + `AEC_RATES = [16_000, 48_000]`（`sonora-aec3 = "=0.2.0"`）、`Capability::{HwAec,SoftAec}`（三档 `host_ceiling` 含 `soft_aec`、`hw_aec` 一档都不含）、`settings.speak.aec` / `SessionConfig.aec` / `speak::composition` 两道闸（`crates/vox-core/src/pipeline/speak.rs`）。**只剩 W4**（真板子排队量稳定化）——见 [`S4-C-AEC.md`](S4-C-AEC.md) 状态头与 §9 | S4-B |
 | 廉价重采样档 | `vox-dsp` 加一档便宜实现，按配置/能力选。**已落地**（2026-10-11）：`vox_dsp::resample::ResampleQuality`（`Sinc` 为 `#[default]` / `Linear`）+ `Resampler::cheap_upsampler`（`output_rate <= input_rate` → `None`）+ `vox_dsp::ports::cheap_resample_factory` + `vox_host::entry::HostPorts::resample`（新字段，`deps(self, transport)` 签名未动）+ `vox_headless::platform::{RESAMPLE_QUALITY_ENV, resample_quality_from_env, resample_factory_for}`（`VOX_RESAMPLE_QUALITY` **只无屏档读**，缺省 `cheap`）。**与概要稿 §2.3 的差别**：只做线性、且**只对升采样方向**，多相 FIR 不做 | S4-B |
 | 局域网控制面 | 绑定地址开关 + 配对码 → token；缺省仍本机 | S4-A |
 | CI 交叉编译 | `aarch64-unknown-linux-gnu` 构建 + `qemu-user` 测试。**已落地**（2026-10-11 按代码核）：`.github/workflows/ci-arm64.yml`（本机未跑，它要交叉工具链 + qemu-user） | 无 |
@@ -145,10 +150,10 @@
 | --- | --- |
 | S4-A | `cargo test --workspace` 全绿且既有测试**逐字未改**；`cargo tree -p vox-headless` 不含 tauri/gtk/webkit；两个入口 crate 里不再有 `persist` / `mcp` 胶水 / `dsp` 适配器的第二份 |
 | S4-B | 差分台（沿用 S0 做法：多组配置 × 两条流水线）事件轨迹与重构前**逐字相等**；`Plan` 里不再有"装不装某一节"的布尔 |
-| S4-C · ALSA | 本机 `snd-aloop` 回环设备上"采 → 播"跑通（ignored 用例 + example）。**crate 已落地**（2026-10-11 按代码核）：`crates/vox-audio-alsa/tests/aloop_roundtrip.rs`（`#[ignore]`，跑法 `modprobe snd-aloop` 后 `cargo test -p vox-audio-alsa --test aloop_roundtrip -- --ignored`）+ `examples/{loopback,devices}.rs` 在树上；**本轮未跑这一条**（无屏档入口也还没切到它，见 §3） |
+| S4-C · ALSA | 本机 `snd-aloop` 回环设备上"采 → 播"跑通（ignored 用例 + example）。**已落地**（2026-10-12 回填）：`crates/vox-audio-alsa/tests/aloop_roundtrip.rs`（`#[ignore]`，跑法 `modprobe snd-aloop` 后 `cargo test -p vox-audio-alsa --test aloop_roundtrip -- --ignored`)+ `examples/{loopback,devices}.rs` 在树上；**本轮实测**（`main` @ `e62cfdc`）`cargo test -p vox-audio-alsa -- --ignored` = lib 4 + `aloop_roundtrip` 4 **全过**（本机真回环）；无屏档入口也已切到它（§3） |
 | S4-C · 半双工 | 用例：播放中上行为静音、播放结束 + 尾巴后恢复；去掉该逻辑即红。**已落地**（2026-10-11 实测）：`cargo test -p vox-core` = **364 passed / 0 failed**；`cargo test -p vox-core pipeline::golden` = **17 passed**（15 旧场景 + 新场景 `speak_48k_speaker_half_duplex` + 1 条确定性自检），15 份旧金样 `git diff` 空；**去掉压制分支 ⇒ 8 条红** |
 | S4-C · 廉价重采样档 | 便宜档只在升采样方向成立、装配期由入口选、桌面档零差异。**已落地**（2026-10-11 实测）：`cargo test -p vox-dsp` = **34 passed**；桌面 `app/src-tauri` 里 `cheap_resample_factory` **零命中**（只多一行 `resample: vox_dsp::ports::resample_factory()`，`grep -rn cheap_resample_factory crates/ app/` 在 `app/` 下无命中）；`cd tools/bench-dsp && cargo run --release` **exit 0** |
-| S4-C · AEC | 合成回声（译音按固定时延衰减叠回麦克风）下，回声能量下降达标（阈值在细化稿里定）；位为假时该节不装 |
+| S4-C · AEC | 合成回声（译音按固定时延衰减叠回麦克风）下，回声能量下降达标（阈值在细化稿里定）；位为假时该节不装。**已落地**（2026-10-12 回填）：阈值 = **48 kHz 三频带 ERLE ≥ 15 dB**（[`S4-C-AEC.md`](S4-C-AEC.md) §7.2，W0 实测推导）；用例在 `crates/vox-dsp/tests/aec_synthetic.rs`（T1–T4/T6/T7/T13/T14）与 `pipeline/chain.rs::tests`（T5/T8–T12），"位为假时该节不装"钉在差分台 `speak_48k_aec_bit_off` 与 `speak.rs::the_aec_stage_needs_both_the_bit_and_the_setting`。**W4（真板子）未做** |
 | S4-C · 局域网 | 缺省不监听非回环；无 token / 错 token 一律拒；配对码一次性、过期即失效 |
 | S4-C · 自计时 | 快照里每个算子都有耗时与实时倍率；热路径零新增分配（用例或基准佐证） |
 | S4-C · CI | ARM64 交叉构建产物可在 `qemu-user` 下跑通 `cargo test -p vox-core -p vox-dsp`。**已落地**（2026-10-11 按代码核）：`.github/workflows/ci-arm64.yml` —— `aarch64-unknown-linux-gnu` 目标 + `qemu-aarch64 -L /usr/aarch64-linux-gnu` 跑 `cargo test --target aarch64-unknown-linux-gnu -p vox-core -p vox-dsp --locked`；**本机未跑它**（要交叉工具链 + qemu-user） |
@@ -165,7 +170,13 @@
 ## 6. 待细化（开工前 architect 要答）
 
 1. `vox-host` 的边界：`catalog_updater`、设备轮询、`VirtualDeviceStatus` 归不归它。
+   （**已答**：见 `docs/plans/S4-A-HOST-LAYER.md`。）
 2. 算子统一接口的形状（块大小、采样率变化、需要参考信号的算子如何接播放路径）。
+   （**已答**：见 `docs/plans/S4-B-OP-CHAIN.md` §2.6/§2.7 与 `docs/plans/S4-C-AEC.md` §5。）
 3. 软件 AEC 选型：SpeexDSP 与 WebRTC AEC3 的体积、许可证、交叉编译难度对比。
+   （**已答**：选 `sonora-aec3`（WebRTC AEC3 的纯 Rust 移植），SpeexDSP 出局——理由与逐条出处见
+   `docs/plans/S4-C-AEC.md` §2.2/§2.3。）
 4. 配对码的"物理在场"渠道在无屏盒子上具体用哪种。
 5. ALSA 与 PipeWire 同时存在时，缺省选谁、能力位怎么报。
+   （**已答**：**按档位定，不做运行时探测切换**——无屏档缺省 ALSA、桌面档仍是 PipeWire；
+   见 `docs/plans/S4-C-ALSA.md` §6.2 与已落地的 `crates/vox-headless/src/platform/linux.rs`。）
