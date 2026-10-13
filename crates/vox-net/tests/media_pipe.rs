@@ -291,13 +291,22 @@ async fn a_burst_is_reblocked_to_the_manifest_block_ms() {
     let sizes = sizes.lock().expect("锁没毒").clone();
     let heard = samples.lock().expect("锁没毒").clone();
 
-    assert_eq!(
-        sizes,
-        vec![BLOCK; 5],
-        "重切块后每块 320 样本（@16k 的 20 ms）"
+    // 每块都必须是清单块长——这是"重切块"的契约本身（@16k 的 20 ms = 320）。
+    assert!(
+        sizes.iter().all(|&s| s == BLOCK),
+        "每块都是清单块长 {BLOCK}（实际 {sizes:?}）"
     );
-    assert_eq!(heard.len(), 5 * BLOCK, "总样本数守恒");
-    assert_eq!(heard, expected, "突发的内容与顺序都要原样出来");
+    // 前 5 块逐字等于突发：内容与顺序都不许变。
+    // 静音**只允许出现在突发之后**：`pipe.rs::tick` 的"落后一拍就补一拍"是设计行为
+    // （到达追不上块排程时补一拍，防雪崩）；Windows runner 慢机上已复现尾随一块静音。
+    // "按真实节奏供给时一块静音都不该有"由同文件 `a_round_trip_is_byte_identical`
+    // （按绝对时刻表喂、`heard.len() == total` 钉"多出来就是补了静音"）与
+    // `pipe.rs::catch_up_is_capped_to_one_block_per_tick` 钉死，e2e 不背时序。
+    // 静音若插到突发中间（顺序被补丁打乱），下面的逐字比对会红。
+    assert!(sizes.len() >= 5, "5 块突发至少产出 5 块（实际 {sizes:?}）");
+    let burst: Vec<f32> = heard[..5 * BLOCK].to_vec();
+    assert_eq!(burst.len(), 5 * BLOCK, "前 5 块样本数守恒");
+    assert_eq!(burst, expected, "突发的内容与顺序都要原样出来");
     assert_eq!(
         listener.stats().dropped_ms,
         0,
