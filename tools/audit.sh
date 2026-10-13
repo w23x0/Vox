@@ -13,8 +13,8 @@
 #         那只是为了证明检测器活着，正常使用永远只跑 `tools/audit.sh`。
 #
 # 不收什么（如实说明，不造假分数）：
-#   AEC W4 / 局域网控制面 / Agent 面开 AEC / deb 打包 / S3 后半网络音频——
-#   这些的验收标准含真板子、网络行为、构建产物，脚本判不了。判不了还列就是假分数。
+#   AEC W4 / 局域网控制面 / S3 后半 NetIn（NetIn/NetOut 恒假）——
+#   这些的验收标准含真板子、网络行为，脚本判不了。判不了还列就是假分数。
 #   它们的人工台账：docs/architecture/DIRECTIONS.md §10.9“仍未落地”。
 #   产品方向待拍板：docs/architecture/DECISIONS.md B 区（现存 11 条）。
 #   施工期规约矛盾：docs/architecture/ISSUES.md。
@@ -190,7 +190,7 @@ verdict=GREEN
     echo "regress:        []"
   fi
   echo "verdict:        $verdict"
-  echo "note: 不可机器判定的未落地项不在此表：AEC W4 / 局域网控制面 / Agent 面开 AEC / deb / S3 后半"
+  echo "note: 不可机器判定的未落地项不在此表：AEC W4（真板子）/ 局域网控制面 / S3 后半 NetIn（NetIn、NetOut 恒假）"
   echo "note: 人工台账：DIRECTIONS.md §10.9“仍未落地” ｜ DECISIONS.md B 区（11 条） ｜ architecture/ISSUES.md"
 } | tee "$LOG_DIR/summary.txt"
 echo "log: $LOG_DIR/last.log"

@@ -302,6 +302,12 @@ b 的隐藏成本是**单价表会过期**——阿里云调价我们不会自�
 
 ### B9. 🔴 默认模型的流式字幕可能一直没生效（调研新发现，优先级最高）
 
+> **状态（2026-10-13 回填）：已实现。** 裁决 = A 区第 11 条（`text` + `stash`、订正整行替换），
+> 实现在 `crates/vox-core/src/cloud/protocol.rs::set_text_full`（接
+> `response.text.text` / `response.output_text.text` / `response.audio_transcript.text`）。
+> 原文保留作留痕；本节"需要你确认"两条**都已答复**：① 已加（当时动的 `protocol.rs` 已合入）；
+> ② 真 key 抓报文仍未做（`vox-net/examples/aliyun_probe.rs` 可直接抓，见该文件 §1）。
+
 **背景**
 官方《LiveTranslate 服务端事件》里，流式文字事件叫 **`response.text.text`** 和
 **`response.audio_transcript.text`**（字段 `text` + `stash`）。

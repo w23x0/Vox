@@ -878,9 +878,53 @@ clippy **0 warning**、`npm run verify` 全绿——链见 `app/ui/package.json`
   Miri（Stacked Borrows + Tree Borrows）在 `crates/vox-dsp/src/` 里 `unsafe` **零命中**的前提下均通过。
   ⚠️ 上一条 2026-10-11 记的"`cargo test --workspace` 本机跑不了（缺 `libasound2-dev`）"是**那一轮的环境**，
   本轮能跑（读数如上）。
-- **仍未落地**：AEC 的 **W4**、**Agent 面开不了 AEC**（MCP 控制面的 `SPEAK_CELLS` 9 格里没有
-  `speak.aec` 那一格 ⇒ `compose_endpoint` 改不了它；本轮选择显式记下"不进 compose"，见
-  `docs/plans/S4-C-AEC.md` §10 R13）、局域网控制面、S4-D 的 `deb`。
+- **仍未落地**：AEC 的 **W4**（真板子，硬件阻塞）、**局域网控制面**（`vox-mcp::transport::http`
+  仍明确拒绝非回环 `bind`）、S3 后半（`pipeline/mod.rs` 对 `Input::NetIn` 仍如实报错，
+  `NetIn` / `NetOut` 两位恒假）。
+  ⚠️ **2026-10-13 订正（以代码核过，两条曾记错的已删除）**：
+  本行原先还写着"**Agent 面开不了 AEC**"与"**S4-D 的 deb 未落地**"——**两条都不对**：
+  - **Agent 面 AEC 已落地**：`crates/vox-mcp/src/endpoints.rs` 的 `SPEAK_CELLS` 是 `[Cell; 10]`
+    （不是 9），其中一格 `ops[aec]` 写回 `settings.speak.aec`（`write:` 闭包里
+    `settings.speak.aec = has_op(submitted, "aec")`）；`compose_endpoint` 改得了 AEC。
+  - **S4-D deb 已落地**（2026-10-13）：`tools/package-headless.sh --format deb`，
+    详见下面同日回填。
+  另外 **B9（LiveTranslate 流式字幕 `.text` + `stash`）也已落地**，而 `DECISIONS.md` B9 一节
+  与 §10.9 台账此前还在按"未拍板/未做"记：`crates/vox-core/src/cloud/protocol.rs` 的
+  `set_text_full` 已接 `response.text.text` / `response.output_text.text` /
+  `response.audio_transcript.text`（`text` 整句替换累积 + `stash` 临时尾巴），
+  A11 的裁决与实现都在树上（pipeline 测试 `push_message(r#"{"type":"response.text.text",…}"#)`
+  钉着 LiveTranslate 形状）。**B 区那一条按已实现读**。
+
+#### 进度回填（2026-10-13）：S4-D deb 落地 + audit 工作流
+
+- **S4-D `deb` 落地**（`tools/package-headless.sh --format deb`，`EMBEDDED.md` §3.8 第 8 条）：
+  - 产物 `tools/bundle/vox-headless-<版本>_<Debian 架构>.deb`；布局
+    `/usr/local/bin/vox-headless`（= 系统单元 `ExecStart`）+ `/usr/lib/systemd/system/`（系统单元）
+    + `/usr/lib/systemd/user/`（用户单元）+ `/usr/share/vox-headless/settings.example.json`
+    + `/usr/share/doc/vox-headless/{README.md,copyright}`。
+  - `postinst`：建系统用户 `vox`、样例配置落 `/var/lib/vox/settings.json`（**已存在不碰**）、
+    **启用不启动**（没密钥空转也是如实行为）；`prerm` 停服务；`postrm` 摘 enable 状态；
+    **purge 不动 `/var/lib/vox` 数据**。`adduser` / `systemctl` / `deb-systemd-helper` 不在的
+    极简系统上全部 `command -v` 守卫，装包不因此失败。
+  - `Depends` **不手抄**：默认 `dpkg-shlibdeps` 从 ELF NEEDED 现解（本机 amd64 产出
+    `libasound2t64 (>= 1.0.16), libc6 (>= 2.43), libgcc-s1 (>= 4.2), adduser`）；
+    交叉构建（`--target ≠ host`）它解不了目标库 → 必须显式 `--depends`
+    （Debian / RPi OS 上 ALSA 包名是 `libasound2` 不是 Ubuntu 的 `libasound2t64`）。
+  - 可复现：三成员 `debian-binary` / `control.tar.gz` / `data.tar.gz` 与 tar.gz 同一套
+    tar 钉死参数 + `gzip -n` + `ar rcD`；**连打两包 sha256 相同（实测
+    `c165795b…`）**。`systemd-analyze verify` 对本机静态检查通过（唯一抱怨是本机
+    `/usr/local/bin/vox-headless` 不存在——装上即有）。
+  - 装后行为与用法写进 `crates/vox-headless/README.md` §4.1。
+- **audit 工作流落地**（`tools/audit.sh` + `docs/architecture/ISSUES.md`，2026-10-12 收口）：
+  移植 conformance 工作流**可机器判定的一半**：金样 20 场景为"规则"（SCENARIOS ↔
+  `golden/*.txt` ↔ `*_matches_its_golden`）、门禁四件套一屏汇总、GREEN 时写基线
+  （`tools/.audit-log/baseline.txt`）下次低于基线报 `regress`。**不移植**编译器式
+  完备 MUST 与无人值守循环（理由见 ISSUES.md 头）。实测全量 GREEN
+  （`949 passed / 0 failed / 14 ignored` + `npm verify` 13 步 + `20/20` 金样）。
+  ⚠️ 台账读数 941 → 949：2026-10-12 那轮记的 941 是**当日**的值，此后测试有净增。
+- **门禁读数（2026-10-13，`main` @ `4be786a` + 本节改动，`tools/audit.sh --fast` 实测）**：
+  与上面同轮读数（未新跑全量 npm verify：本轮只改脚本与文档，`--fast` 覆盖
+  fmt / clippy / workspace test / 金样；收口时以全量 `tools/audit.sh` 为准）。
 
 ---
 

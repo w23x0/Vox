@@ -11,8 +11,12 @@
 > **逐键拆成两块**：**只有「① 已落地」那张表是 unit 实文件里真有的键**，「② 设计建议」那一张
 > （`Type=notify` / `WatchdogSec=` / `SIGHUP` 重载）**两份 unit 里都没有**——别把整张表读成已落地；
 > 其余"[未核实]"口径（板上实测）不变。
-> 连带过期的还有 §3.10：第 6 条（无屏二进制 + unit + 样例配置）与第 8 条的 tar.gz 打包已落地，
-> 但第 8 条的 **`deb` 仍未加**（`app/src-tauri/tauri.conf.json` 的 `bundle.targets` 今天仍是 `["nsis"]`）——该节标题的"尚未执行"按此读。
+> 连带过期的还有 §3.10：第 6 条（无屏二进制 + unit + 样例配置）与第 8 条已落地
+> （第 8 条 2026-10-13 补齐：`tools/package-headless.sh --format deb` 出真正的 deb，
+> 装 /usr/local/bin + 两份 unit + /usr/share，`Depends` 由 `dpkg-shlibdeps` 现解、
+> 三成员 `ar rcD` 确定性组装；细节与交叉打包的 `--depends` 覆盖见
+> `crates/vox-headless/README.md` §4.1）。`app/src-tauri/tauri.conf.json` 的
+> `bundle.targets` 今天仍是 `["nsis"]`——那是**桌面档**的事，与本条无关。
 > 口径与 `docs/architecture/DECISIONS.md` 一致：**代码与本文件打架时以代码为准**，然后回头把这里改对。
 > 排期见 `docs/architecture/DIRECTIONS.md` §10.2 的 **S3 嵌入式（小主板）**；清单实例见
 > `docs/plans/S0-COMPOSITION-MANIFEST.md` §2.4（端点最简实例）与 §2.5.1（位表"无屏 ARM64"列）。
@@ -260,7 +264,7 @@ Unit 里 **`After=pipewire.service` 不要写**（PipeWire 是**用户**服务�
 5. **`sys/log.rs` 加 JSON 开关**（字段对齐 OTel Logs）。
 6. **新增无屏二进制 + systemd unit + 样例配置**（不建窗口、不建托盘、不启 overlay/热键）。
 7. **密钥降级路径**（§3.6）。
-8. **打包**：加 `deb`；无屏产物另出 tar.gz。
+8. **打包**：加 `deb`；无屏产物另出 tar.gz。（**已落地** 2026-10-13：见文件头状态注与 §3.8。）
 9. **在板上跑一次实测**：把 `docs/architecture/DIRECTIONS.md` §9.1 的基准（采集 3.03 ms/s、播放 1.73 ms/s）
    在 ARM64 上重跑，并确认 `rustfft` 那条路是否真走 NEON **[未核实]**。
 

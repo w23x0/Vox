@@ -4,8 +4,10 @@
 > **已落地**：S4-A 共享宿主层 `vox-host`、S4-B 算子链（`pipeline::chain::Chain` + 逐节自计时 `Chain::timings` / `Runtime::op_timings`）、
 > S4-C 的 `vox-audio-alsa`（crate **+ 无屏档入口**）、回声消除算子 `Op::Aec`（W0/W1/W2/W3/W5，**W4 未做**）、半双工门、廉价重采样档，
 > 以及 **CI 交叉编译**（`.github/workflows/ci-arm64.yml`；证据见 §2.2 / §3 的表与 §4 的验收表）。
-> **未落地**：局域网控制面、S4-D 的 `deb`（`tools/package-headless.sh` 出的是 `tar.gz`）；
-> AEC 只剩 **W4**（真板子上的播放汇排队量稳定化，见 `docs/plans/S4-C-AEC.md` §9）。
+> **未落地**：局域网控制面；AEC 只剩 **W4**（真板子上的播放汇排队量稳定化，见
+> `docs/plans/S4-C-AEC.md` §9）；S3 后半（`Input::NetIn` 端到端，`NetIn`/`NetOut` 恒假）。
+> （**2026-10-13 订正**：`deb` 已落地——`tools/package-headless.sh --format deb`，见 DIRECTIONS §10.9
+> 同日回填与 `crates/vox-headless/README.md` §4.1；原文"出的是 tar.gz"作废。）
 > 本稿是**第 1 版概要稿**：现状证据 → 目标形状 → 改动清单 → 验收标准。各阶段开工前由 architect
 > 按本稿细化成可直接施工的版本（补全调用方清单与测试名），**不要拿本稿直接动手改公共接口**。
 >

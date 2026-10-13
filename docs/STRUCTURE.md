@@ -73,6 +73,7 @@ tools/
   linux-verify/        已有：界面像素级验证
   bench-dsp/           已建：可复现的 DSP 算子成本表（独立 crate，不随 workspace 跑）
   audit.sh             已建（2026-10-12）：一屏审计——金样规则数/通过/失败/门禁四件套/退步检测；工作流与红线见 architecture/ISSUES.md
+  package-headless.sh  无屏档打包：`--format tar.gz`（默认，目录树）/ `--format deb`（S4-D，2026-10-13；Depends 走 dpkg-shlibdeps 或 --depends 覆盖，ar rcD 确定性组装）；用法与装后行为见 crates/vox-headless/README.md §4
 .omp/
   AGENTS.md RULES.md   项目上下文与硬规矩
   agents/*.md          代理定义（architect / core-dev / shell-dev / agent-face-dev / docs-scribe / verifier）

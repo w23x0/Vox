@@ -201,6 +201,40 @@ README.md                                  # 本文件
 tar 里刻意**不含**托盘图标之类桌面档的资源；归档参数（`--sort=name` / `--mtime=@0` /
 `--owner=0`）、`SOURCE_DATE_EPOCH` 与二进制路径都固定，同一份源码 + 同一套工具链出同一个哈希。
 
+### 4.1 deb（S4-D，`EMBEDDED.md` §3.8 第 8 条）
+
+```bash
+tools/package-headless.sh --format deb            # amd64 本机
+tools/package-headless.sh --format deb --target aarch64-unknown-linux-gnu \
+    --depends 'libc6 (>= 2.36), libasound2 (>= 1.2.6), libgcc-s1 (>= 12), adduser'   # 交叉
+```
+
+产物 `tools/bundle/vox-headless-<版本>_<架构>.deb`（架构名 = Debian 的：`amd64` / `arm64` /
+`armhf`），装的布局：
+
+| 路径 | 内容 |
+| --- | --- |
+| `/usr/local/bin/vox-headless` | 二进制（系统单元 `ExecStart` 就是它） |
+| `/usr/lib/systemd/system/vox-headless.service` | 系统单元（§2.2） |
+| `/usr/lib/systemd/user/vox-headless.service` | 用户单元（§2.1，推荐档仍是手动装） |
+| `/usr/share/vox-headless/settings.example.json` | 部分配置样例 |
+| `/usr/share/doc/vox-headless/{README.md,copyright}` | 文档 |
+
+装上的行为（`postinst`）：建系统用户 `vox`（`adduser` 在才建）、把样例配置落到
+`/var/lib/vox/settings.json`（**已存在就不碰**）、**启用** system 单元但**不启动**——
+两条腿没密钥本来也只会空转，起不起都是如实行为。要立刻起：
+`systemctl enable --now vox-headless`。用户单元那一档（推荐）装完自己照 §2.1 走，
+或者把 `/usr/lib/systemd/user/vox-headless.service` 复制到 `~/.config/systemd/user/`。
+
+**`Depends` 不手抄**：默认由 `dpkg-shlibdeps` 从二进制的 ELF NEEDED 现解。
+交叉构建（`--target` ≠ 宿主）时它解不了目标架构的库，必须显式 `--depends`；
+另外注意包名随发行版变——Ubuntu 24.04 上 ALSA 库叫 `libasound2t64`（shlibdeps 会产出这个），
+Debian / Raspberry Pi OS 上叫 `libasound2`，给那些分发时照上面例子覆盖。
+
+**可复现**：与 tar.gz 同一套纪律——三个 ar 成员（`debian-binary` / `control.tar.gz` /
+`data.tar.gz`）各自 tar 钉死排序时间戳属主 + `gzip -n`，`ar rcD` 组装。
+同一份源码 + 同一套工具链 → 同一个 sha256（连打两包实测相同）。
+
 ## 5. 还没做（**不许广告**）
 
 - `net_in` / `net_out` 两位恒假（S3 目标）：无屏档的"听人说话"要等网络入口落地；今天它的输入是
