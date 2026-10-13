@@ -797,10 +797,16 @@ async fn the_outbound_pool_reconnects_with_backoff() {
         !out.stats().connected,
         "对端还没起来，此刻不该报连上（链路状态进统计，不进能力位）"
     );
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    // Windows runner 上对"回环上一个刚关掉的端口"发 SYN 可能被静默丢弃（不是 RST），
+    // 第一次尝试要等满 3s 的握手超时才落账——400ms 墙钟假设是环境相关的，CI 上偶发
+    // 在这里红（2026-10-13 抓到）。契约是"连不上要留下原因"，不是"400ms 内留下"：
+    // 换成有界等待，后面的断言一个不松。
+    assert!(
+        until(|| out.last_error().is_some(), Duration::from_secs(5)).await,
+        "连不上要留下原因（链路状态）"
+    );
     assert!(!out.stats().connected, "对端一直不在就该一直是 false");
     assert_eq!(out.stats().reconnects, 0, "还没连上过，不算重连");
-    assert!(out.last_error().is_some(), "连不上要留下原因（链路状态）");
 
     // 绑上就算这个用例的"对端起来了"；绑完一直持有到用例结束。
     let _listener =
