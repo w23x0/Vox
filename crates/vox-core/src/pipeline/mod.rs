@@ -4030,6 +4030,9 @@ pub(crate) mod tests {
 
         // 起会话时那条 `emit_latency(true)` 已经报过一份：装几节就有几行，
         // 但还没跑过音频，所以每行 `blocks == 0`。
+        // qemu（aarch64 CI）上首报可能晚于 `Ready` 一刻：契约是"起会话后会报"，
+        // 不是" Ready 的同一微秒就有"（GitHub runner 负载波动已复现红一次）。
+        rig.wait_until(|| rig.runtime.op_timings(Pipeline::Speak).is_some());
         let fresh = rig
             .runtime
             .op_timings(Pipeline::Speak)
