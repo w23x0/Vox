@@ -1,0 +1,36 @@
+# 行尾钉死：LF 入库。
+# 没有这个文件时，Windows 上 git 默认会把文本转成 CRLF，而 `cargo test` 在 Windows 上
+# 读金样（golden/*.txt，Rust `read_to_string` 不转行尾）拿到的就是 CRLF，
+# 与 Linux 上产出的 LF 轨迹逐字节对不上——vox-core 的金样差分测试在 Windows CI 上
+# 会整组挂（2026-10-13 抓到：20 份金样全红，而同一 commit 在 Linux 全绿）。
+# 显式 `text eol=lf`：入库与工作区一律 LF，CI 与本地（Win/Linux）同字节。
+* text=auto eol=lf
+
+# 二进制一律不转（转坏一个字节哈希就全变）。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.wav binary
+*.mp3 binary
+*.deb binary
+*.gz binary
+*.zip binary
+
+# 这些行尾翻了会直接坏事的，再显式钉一遍（`text=auto` 理论上已覆盖，
+# 但 `git add --renormalize` 之后、以及有人手改仓库 `core.autocrlf=true` 时，
+# 显式声明是最后一道闸）。
+Cargo.lock text eol=lf
+*.rs text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
