@@ -27,6 +27,10 @@
 //!
 //! ### 问题 1：qwen3.8 的音色放在 `audio.output.voice` 还是老的 `voice`
 //!
+//! **2026-10-13 真 key 实测已回答：`audio.output.voice`。** 设 `"Tina"` 被 3.8 接受
+//! （`session.updated` 回显 `audio.output.voice: "Tina"`）；同轮 `--dry-run` 打印的
+//! 就是下面那份形状。老扁平形状那条腿没有复测（问题已答，不必再花真 key）。
+//!
 //! 两个形状各存一个文件，先 `--dry-run` 看清报文，再一次一个地真连。
 //! 哪一帧形状被服务端接受、译文语音（`response.audio.delta`）出不出来，就是那一条对；
 //! 被拒的那次 `error` 里的原话是最硬的证据。

@@ -307,6 +307,17 @@ b 的隐藏成本是**单价表会过期**——阿里云调价我们不会自�
 > `response.text.text` / `response.output_text.text` / `response.audio_transcript.text`）。
 > 原文保留作留痕；本节"需要你确认"两条**都已答复**：① 已加（当时动的 `protocol.rs` 已合入）；
 > ② 真 key 抓报文仍未做（`vox-net/examples/aliyun_probe.rs` 可直接抓，见该文件 §1）。
+>
+> **2026-10-13 真 key 冒烟（做了一半，用户叫停）**：拿真 key 跑通了
+> `aliyun_probe`（北京端点直连、`session.update` 被 3.8 接受、`session.created` 返回
+> `input_audio_transcription.model: "gummy-realtime-v1"` + `server_vad`
+> （threshold 0.5 / 静音 800ms / `create_response: true`）；顺带钉住探针问题 1：
+> 3.8 的音色**收在 `audio.output.voice`**（设 `"Tina"` 被接受）。
+> **没做完的那一半**：静音产不出文字，所以"流式文字事件到底叫
+> `.delta` 还是 `.text`+`stash`"依旧**没有真实报文证据**——需要 8 秒中文语音
+> （`arecord -f S16_LE -r 16000 -c 1 -d 8 /tmp/speech.wav` 后
+> `--send-audio /tmp/speech.wav --listen 12`）。这是一条**未兑现的确认**：
+> A11 的实现按官方文档走，但线上事件名未抓过实报文；下轮有语音素材时补。
 
 **背景**
 官方《LiveTranslate 服务端事件》里，流式文字事件叫 **`response.text.text`** 和
