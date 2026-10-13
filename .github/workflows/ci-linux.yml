@@ -77,6 +77,14 @@ jobs:
       # 这一步是对 `ci-windows.yml` 文件头那段"要在 Windows 上连它们一起编，得先给
       # 它们补 cfg 门控"的**部分收口**：`vox-headless` 现在补完了，别的成员没有，
       # 所以这里只检它一个，别扩。
+      # `ring`（rustls → ring，vox-headless 经 vox-net 间接依赖）的 build script 用 `cc`
+      # 编译 C 源码，交叉到 windows-gnu 时找 `x86_64-w64-mingw32-gcc`——runner 镜像里没有，
+      # 装它。只 check 不链接，所以装个编译器就够了，不用整套 winpthreads。
+      - name: Install mingw-w64 (ring's build script needs a cross compiler)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64
+
       - name: Cross-check the headless shell's non-Linux branch
         run: |
           rustup target add x86_64-pc-windows-gnu

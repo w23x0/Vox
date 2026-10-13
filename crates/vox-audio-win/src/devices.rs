@@ -133,13 +133,13 @@ pub(crate) fn find_device(flow: EDataFlow, name: Option<&str>) -> PortResult<IMM
         }
         fallback.ok_or_else(|| {
             let (user_key, kind) = if flow == eRender {
-                (key::OUTPUT_DEVICE_NOT_FOUND, "output")
+                (key::OUTPUT_DEVICE_NOT_FOUND, "输出")
             } else {
-                (key::INPUT_DEVICE_NOT_FOUND, "input")
+                (key::INPUT_DEVICE_NOT_FOUND, "输入")
             };
             PortError::user(
                 Msg::new(user_key).param("name", wanted),
-                format!("no {kind} device named '{wanted}' (it may be disabled or unplugged)"),
+                format!("找不到{kind}设备 '{wanted}'（可能被停用或没插好）"),
             )
         })
     }

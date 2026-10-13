@@ -282,7 +282,7 @@ fn resolve_pid(executable: &str, include_tree: bool) -> PortResult<u32> {
     if candidates.is_empty() {
         return Err(PortError::user(
             Msg::new(key::PROGRAM_NOT_RUNNING).param("name", executable),
-            format!("no running process named {executable} (not started, or the name is wrong)"),
+            format!("没找到正在运行的进程 {executable}（没启动，或者名字不对）"),
         ));
     }
     let hints = sessions::session_hints(&candidates);

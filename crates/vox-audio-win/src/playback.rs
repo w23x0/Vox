@@ -105,9 +105,7 @@ impl PlaybackSink for WinPlayback {
     fn open(&mut self, device: Option<&str>, source_rate: u32) -> PortResult<u32> {
         self.close();
         if source_rate == 0 {
-            return Err(PortError::new(
-                "the playback source sample rate cannot be 0",
-            ));
+            return Err(PortError::new("播放源的采样率不能是 0"));
         }
 
         // SAFETY: 手动复位事件，句柄交给 OwnedHandle 独占。
